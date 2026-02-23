@@ -14,11 +14,12 @@ VS Code's built-in Git conflict resolution is excellent, but it often presents c
 ### ✨ Meld: Auto-Merge Current File
 The core command of this extension. It extracts the **LOCAL**, **BASE**, and **REMOTE** versions of the current conflicted file via Git and runs them through the Meld `AutoMergeDiffer`. It then applies the merged result directly to your editor, leaving only the truly unresolvable conflicts for you to handle manually.
 
-### 🛠️ Quality of Life Git Tools
-- 🚀 **Meld: Checkout Conflicted (-m)**: Quickly reset a botched merge attempt in the active file back to its original conflicted state with `git checkout -m`.
-- 🧠 **Meld: Rerere Forget File**: Tell Git to forget any automatically recorded resolution for the current file using `git rerere forget`.
-- 🔍 **Meld: List Conflicted Files**: See a list of all current merge conflicts in your repository and jump directly to them.
-- ✅ **Meld: Smart Git Add**: A safer `git add` that verifies absolutely no conflict markers (`<<<<<<<`) remain in the file before staging it.
+### 🛠️ Quality of Life Git Tools (Source Control UI)
+The extension contributes a **Meld Conflicted Files** view to the native Source Control (SCM) panel, displaying all current conflicts. Each file has inline actions:
+- 🚀 **Checkout Conflicted (-m)**: Quickly reset a botched merge attempt in the active file back to its original conflicted state with `git checkout -m`. (Asks for confirmation)
+- 🧠 **Rerere Forget File**: Tell Git to forget any automatically recorded resolution for the file using `git rerere forget`. (Asks for confirmation)
+- ✅ **Smart Git Add**: A safer `git add` that verifies absolutely no conflict markers (`<<<<<<<`) remain in the file before staging it.
+- 🔀 **Open 3-Way Merge Editor**: Opens the file in VS Code's native 3-way merge editor.
 
 ## How It Works
 

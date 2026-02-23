@@ -1,0 +1,156 @@
+import * as vscode from 'vscode';
+import * as cp from 'child_process';
+import * as path from 'path';
+import * as fs from 'fs';
+
+export class ConflictedFilesProvider implements vscode.TreeDataProvider<GitFile> {
+    private _onDidChangeTreeData: vscode.EventEmitter<GitFile | undefined | null | void> = new vscode.EventEmitter<GitFile | undefined | null | void>();
+    readonly onDidChangeTreeData: vscode.Event<GitFile | undefined | null | void> = this._onDidChangeTreeData.event;
+
+    constructor() {}
+
+    refresh(): void {
+        this._onDidChangeTreeData.fire();
+    }
+
+    getTreeItem(element: GitFile): vscode.TreeItem {
+        return element;
+    }
+
+    async getChildren(element?: GitFile): Promise<GitFile[]> {
+        if (element) {
+            return Promise.resolve([]);
+        }
+
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders || workspaceFolders.length === 0) {
+            return Promise.resolve([]);
+        }
+
+        const repoPath = workspaceFolders[0].uri.fsPath;
+        try {
+            const items: GitFile[] = [];
+
+            // Get unmerged (conflicted) files first.
+            // This guarantees we ALWAYS show currently conflicted files, even if MERGE_MSG is missing/corrupt.
+            const unmergedOutput = await this.execShell(`git diff --name-only --diff-filter=U`, repoPath);
+            const unmergedFiles = unmergedOutput.trim().split('\n').filter(f => f);
+            
+            items.push(...unmergedFiles.map(file => {
+                return new ConflictedFile(
+                    file,
+                    vscode.TreeItemCollapsibleState.None,
+                    vscode.Uri.file(path.join(repoPath, file)),
+                    repoPath
+                );
+            }));
+
+            // Check if we are in a merge, rebase, or cherry-pick state
+            const mergeHeadPath = path.join(repoPath, '.git', 'MERGE_HEAD');
+            const rebaseMergePath = path.join(repoPath, '.git', 'rebase-merge');
+            const rebaseApplyPath = path.join(repoPath, '.git', 'rebase-apply');
+            const cherryPickPath = path.join(repoPath, '.git', 'CHERRY_PICK_HEAD');
+            
+            if (fs.existsSync(mergeHeadPath) || fs.existsSync(rebaseMergePath) || fs.existsSync(rebaseApplyPath) || fs.existsSync(cherryPickPath)) {
+                
+                // Parse MERGE_MSG or similar to find originally conflicted files
+                let originallyConflicted: string[] = [];
+                const mergeMsgPath = path.join(repoPath, '.git', 'MERGE_MSG');
+                
+                // standard git merge writes to MERGE_MSG
+                if (fs.existsSync(mergeMsgPath)) {
+                    const msg = fs.readFileSync(mergeMsgPath, 'utf8');
+                    const lines = msg.split('\n');
+                    let inConflicts = false;
+                    for (const line of lines) {
+                        if (line.trim() === 'Conflicts:' || line.trim() === '# Conflicts:') {
+                            inConflicts = true;
+                            continue;
+                        }
+                        if (inConflicts) {
+                            if (line.startsWith('\t') || line.startsWith('#\t')) {
+                                originallyConflicted.push(line.replace(/^#?\t/, '').trim());
+                            } else if (line.trim() === '' || line.startsWith('#')) {
+                                continue;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Any file that was originally conflicted but is NOT currently unmerged is considered "Resolved"
+                const resolvedFiles = originallyConflicted.filter(f => !unmergedFiles.includes(f));
+                
+                items.push(...resolvedFiles.map(file => {
+                    return new ResolvedFile(
+                        file,
+                        vscode.TreeItemCollapsibleState.None,
+                        vscode.Uri.file(path.join(repoPath, file)),
+                        repoPath
+                    );
+                }));
+            }
+
+            return items;
+        } catch (e) {
+            return Promise.resolve([]);
+        }
+    }
+
+    private execShell(cmd: string, cwd: string): Promise<string> {
+        return new Promise((resolve, reject) => {
+            cp.exec(cmd, { cwd }, (err, stdout, stderr) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(stdout);
+                }
+            });
+        });
+    }
+}
+
+export abstract class GitFile extends vscode.TreeItem {
+    constructor(
+        public readonly label: string,
+        public readonly collapsibleState: vscode.TreeItemCollapsibleState,
+        public readonly uri: vscode.Uri,
+        public readonly repoPath: string
+    ) {
+        super(label, collapsibleState);
+        this.resourceUri = uri;
+        this.tooltip = `${this.label}`;
+        this.command = {
+            command: 'meld-auto-merge.openConflictedFile',
+            title: 'Open File',
+            arguments: [this]
+        };
+    }
+}
+
+export class ConflictedFile extends GitFile {
+    constructor(
+        label: string,
+        collapsibleState: vscode.TreeItemCollapsibleState,
+        uri: vscode.Uri,
+        repoPath: string
+    ) {
+        super(label, collapsibleState, uri, repoPath);
+        this.description = 'Conflicted';
+        this.contextValue = 'conflictedFile';
+    }
+}
+
+export class ResolvedFile extends GitFile {
+    constructor(
+        label: string,
+        collapsibleState: vscode.TreeItemCollapsibleState,
+        uri: vscode.Uri,
+        repoPath: string
+    ) {
+        super(label, collapsibleState, uri, repoPath);
+        this.description = 'Resolved';
+        this.contextValue = 'resolvedFile';
+    }
+}

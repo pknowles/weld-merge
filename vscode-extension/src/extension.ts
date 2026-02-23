@@ -3,6 +3,7 @@ import * as cp from 'child_process';
 import * as path from 'path';
 import { Merger } from './matchers/merge';
 import { DiffChunk } from './matchers/myers';
+import { ConflictedFilesProvider, GitFile } from './treeView';
 
 class GitTextMerger extends Merger {
     *merge_3_files_git(mark_conflicts: boolean = true) {
@@ -96,27 +97,48 @@ async function getGitFileContent(repoPath: string, relativeFilePath: string, sta
 }
 
 export function activate(context: vscode.ExtensionContext) {
-    let disposable = vscode.commands.registerCommand('meld-auto-merge.autoMerge', async () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-            vscode.window.showErrorMessage('No active text editor found.');
-            return;
+    const conflictedFilesProvider = new ConflictedFilesProvider();
+    vscode.window.registerTreeDataProvider('meldConflictedFiles', conflictedFilesProvider);
+
+    let disposableRefresh = vscode.commands.registerCommand('meld-auto-merge.refreshConflicted', () => {
+        conflictedFilesProvider.refresh();
+    });
+
+    let disposableOpenConflicted = vscode.commands.registerCommand('meld-auto-merge.openConflictedFile', (file: GitFile) => {
+        vscode.window.showTextDocument(file.uri);
+    });
+
+    let disposableOpenMergeEditor = vscode.commands.registerCommand('meld-auto-merge.openMergeEditor', (file?: GitFile) => {
+        let uri = file?.uri;
+        if (!uri) {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) return;
+            uri = editor.document.uri;
+        }
+        vscode.commands.executeCommand('git.openMergeEditor', uri);
+    });
+
+    let disposable = vscode.commands.registerCommand('meld-auto-merge.autoMerge', async (file?: GitFile) => {
+        let documentUri: vscode.Uri;
+        if (file) {
+            documentUri = file.uri;
+        } else {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) {
+                vscode.window.showErrorMessage('No active text editor found.');
+                return;
+            }
+            documentUri = editor.document.uri;
         }
 
-        const document = editor.document;
-        if (document.isUntitled) {
-            vscode.window.showErrorMessage('Cannot merge untitled files.');
-            return;
-        }
-
-        const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(documentUri);
         if (!workspaceFolder) {
             vscode.window.showErrorMessage('File must be in a workspace to use git commands.');
             return;
         }
 
         const repoPath = workspaceFolder.uri.fsPath;
-        const relativeFilePath = getRelativeRepoPath(document.uri);
+        const relativeFilePath = getRelativeRepoPath(documentUri);
         if (!relativeFilePath) {
             vscode.window.showErrorMessage('Could not determine relative file path.');
             return;
@@ -164,17 +186,19 @@ export function activate(context: vscode.ExtensionContext) {
                 throw new Error("Merge generation failed to produce text.");
             }
 
+            const document = await vscode.workspace.openTextDocument(documentUri);
             const fullRange = new vscode.Range(
                 document.positionAt(0),
                 document.positionAt(document.getText().length)
             );
 
-            const success = await editor.edit(editBuilder => {
-                editBuilder.replace(fullRange, finalMergedText as string);
-            });
+            const edit = new vscode.WorkspaceEdit();
+            edit.replace(documentUri, fullRange, finalMergedText as string);
+            const success = await vscode.workspace.applyEdit(edit);
 
             if (success) {
                 vscode.window.showInformationMessage(`Meld Auto-Merge complete! Unresolved conflicts marked.`);
+                conflictedFilesProvider.refresh();
             } else {
                 vscode.window.showErrorMessage(`Failed to apply merged text to editor.`);
             }
@@ -184,10 +208,50 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    let disposableCheckout = vscode.commands.registerCommand('meld-auto-merge.checkoutConflicted', async () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor || !editor.document || editor.document.isUntitled) return;
-        const documentUri = editor.document.uri;
+    let disposableAutoMergeAll = vscode.commands.registerCommand('meld-auto-merge.autoMergeAll', async () => {
+        const files = await conflictedFilesProvider.getChildren();
+        const unmergedFiles = files.filter(f => f.contextValue === 'conflictedFile');
+        if (unmergedFiles.length === 0) {
+            vscode.window.showInformationMessage('No unmerged files to auto-merge.');
+            return;
+        }
+
+        let successCount = 0;
+        let errorCount = 0;
+
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: "Meld Auto-Merge All",
+            cancellable: false
+        }, async (progress) => {
+            for (const file of unmergedFiles) {
+                try {
+                    progress.report({ message: `Merging ${file.label}...` });
+                    await vscode.commands.executeCommand('meld-auto-merge.autoMerge', file);
+                    successCount++;
+                } catch (e) {
+                    errorCount++;
+                }
+            }
+        });
+
+        vscode.window.showInformationMessage(`Auto-merge finished: ${successCount} succeeded, ${errorCount} failed.`);
+    });
+
+    let disposableCheckout = vscode.commands.registerCommand('meld-auto-merge.checkoutConflicted', async (file?: GitFile) => {
+        let documentUri: vscode.Uri;
+        if (file) {
+            documentUri = file.uri;
+        } else {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || !editor.document || editor.document.isUntitled) return;
+            documentUri = editor.document.uri;
+        }
+
+        const relativePath = getRelativeRepoPath(documentUri) || documentUri.fsPath;
+        const confirm = await vscode.window.showWarningMessage(`Are you sure you want to checkout the conflicted version of ${relativePath} (-m)? This will overwrite your current file.`, { modal: true }, 'Yes');
+        if (confirm !== 'Yes') return;
+
         const workspaceFolder = vscode.workspace.getWorkspaceFolder(documentUri);
         if (!workspaceFolder) return;
 
@@ -198,15 +262,26 @@ export function activate(context: vscode.ExtensionContext) {
         try {
             await execShell(`git checkout -m -- "${relativeFilePath}"`, repoPath);
             vscode.window.showInformationMessage(`Checked out conflicted version of ${relativeFilePath}`);
+            conflictedFilesProvider.refresh();
         } catch (e: any) {
             vscode.window.showErrorMessage(`Checkout failed: ${e.message}`);
         }
     });
 
-    let disposableRerere = vscode.commands.registerCommand('meld-auto-merge.rerereForget', async () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor || !editor.document || editor.document.isUntitled) return;
-        const documentUri = editor.document.uri;
+    let disposableRerere = vscode.commands.registerCommand('meld-auto-merge.rerereForget', async (file?: GitFile) => {
+        let documentUri: vscode.Uri;
+        if (file) {
+            documentUri = file.uri;
+        } else {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || !editor.document || editor.document.isUntitled) return;
+            documentUri = editor.document.uri;
+        }
+
+        const relativePath = getRelativeRepoPath(documentUri) || documentUri.fsPath;
+        const confirm = await vscode.window.showWarningMessage(`Are you sure you want to forget the recorded rerere resolution for ${relativePath}?`, { modal: true }, 'Yes');
+        if (confirm !== 'Yes') return;
+
         const workspaceFolder = vscode.workspace.getWorkspaceFolder(documentUri);
         if (!workspaceFolder) return;
 
@@ -217,24 +292,34 @@ export function activate(context: vscode.ExtensionContext) {
         try {
             await execShell(`git rerere forget "${relativeFilePath}"`, repoPath);
             vscode.window.showInformationMessage(`Forgot recorded resolution for ${relativeFilePath}`);
+            conflictedFilesProvider.refresh();
         } catch (e: any) {
             vscode.window.showErrorMessage(`Rerere forget failed: ${e.message}`);
         }
     });
 
-    let disposableSmartAdd = vscode.commands.registerCommand('meld-auto-merge.smartAdd', async () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor || !editor.document || editor.document.isUntitled) return;
-        
-        await editor.document.save(); // ensure saved
-        const text = editor.document.getText();
+    let disposableSmartAdd = vscode.commands.registerCommand('meld-auto-merge.smartAdd', async (file?: GitFile) => {
+        let documentUri: vscode.Uri;
+        let text: string;
+
+        if (file) {
+            documentUri = file.uri;
+            const doc = await vscode.workspace.openTextDocument(documentUri);
+            await doc.save();
+            text = doc.getText();
+        } else {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || !editor.document || editor.document.isUntitled) return;
+            await editor.document.save(); // ensure saved
+            documentUri = editor.document.uri;
+            text = editor.document.getText();
+        }
         
         if (text.includes('<<<<<<<') || text.includes('=======') || text.includes('>>>>>>>')) {
             vscode.window.showErrorMessage('Cannot add file: Conflict markers still remain in the text.');
             return;
         }
 
-        const documentUri = editor.document.uri;
         const workspaceFolder = vscode.workspace.getWorkspaceFolder(documentUri);
         if (!workspaceFolder) return;
 
@@ -245,38 +330,38 @@ export function activate(context: vscode.ExtensionContext) {
         try {
             await execShell(`git add "${relativeFilePath}"`, repoPath);
             vscode.window.showInformationMessage(`Successfully added ${relativeFilePath}`);
+            conflictedFilesProvider.refresh();
         } catch (e: any) {
             vscode.window.showErrorMessage(`Git Add failed: ${e.message}`);
         }
     });
 
-    let disposableListFiles = vscode.commands.registerCommand('meld-auto-merge.listConflicted', async () => {
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders || workspaceFolders.length === 0) return;
+    context.subscriptions.push(
+        disposable,
+        disposableAutoMergeAll,
+        disposableCheckout,
+        disposableRerere,
+        disposableSmartAdd,
+        disposableRefresh,
+        disposableOpenConflicted,
+        disposableOpenMergeEditor
+    );
 
+    // Watch for .git/index changes to auto-refresh the TreeView
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (workspaceFolders && workspaceFolders.length > 0) {
         const repoPath = workspaceFolders[0].uri.fsPath;
-        try {
-            const output = await execShell(`git diff --name-only --diff-filter=U`, repoPath);
-            const files = output.trim().split('\n').filter(f => f);
-            if (files.length === 0) {
-                vscode.window.showInformationMessage('No conflicted files found.');
-                return;
-            }
-            
-            const selected = await vscode.window.showQuickPick(files, {
-                placeHolder: 'Select a conflicted file to open'
-            });
+        const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(repoPath, '.git/index'));
+        context.subscriptions.push(watcher);
+        watcher.onDidChange(() => conflictedFilesProvider.refresh());
+        watcher.onDidCreate(() => conflictedFilesProvider.refresh());
+        watcher.onDidDelete(() => conflictedFilesProvider.refresh());
+    }
 
-            if (selected) {
-                const uri = vscode.Uri.file(path.join(repoPath, selected));
-                vscode.window.showTextDocument(uri);
-            }
-        } catch (e: any) {
-            vscode.window.showErrorMessage(`Failed to list conflicted files: ${e.message}`);
-        }
-    });
-
-    context.subscriptions.push(disposable, disposableCheckout, disposableRerere, disposableSmartAdd, disposableListFiles);
+    // Fallback refresh when user saves any document
+    context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(() => {
+        conflictedFilesProvider.refresh();
+    }));
 }
 
 export function deactivate() {}

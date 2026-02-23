@@ -12,26 +12,100 @@
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "meld-auto-merge",
+          "title": "Meld",
+          "icon": "$(git-merge)"
+        }
+      ]
+    },
+    "views": {
+      "scm": [
+        {
+          "id": "meldConflictedFiles",
+          "name": "Meld Conflicted Files",
+          "icon": "$(warning)"
+        }
+      ]
+    },
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "meld-auto-merge.autoMerge",
+          "when": "view == meldConflictedFiles && viewItem == conflictedFile",
+          "group": "inline@1"
+        },
+        {
+          "command": "meld-auto-merge.smartAdd",
+          "when": "view == meldConflictedFiles && viewItem == conflictedFile",
+          "group": "inline@2"
+        },
+        {
+          "command": "meld-auto-merge.checkoutConflicted",
+          "when": "view == meldConflictedFiles && (viewItem == conflictedFile || viewItem == resolvedFile)",
+          "group": "inline@3"
+        },
+        {
+          "command": "meld-auto-merge.rerereForget",
+          "when": "view == meldConflictedFiles && viewItem == conflictedFile",
+          "group": "inline@4"
+        },
+        {
+          "command": "meld-auto-merge.openMergeEditor",
+          "when": "view == meldConflictedFiles && viewItem == conflictedFile",
+          "group": "inline@5"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "meld-auto-merge.autoMergeAll",
+          "when": "view == meldConflictedFiles",
+          "group": "navigation@1"
+        },
+        {
+          "command": "meld-auto-merge.refreshConflicted",
+          "when": "view == meldConflictedFiles",
+          "group": "navigation@2"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "meld-auto-merge.autoMerge",
-        "title": "Meld: Auto-Merge Current File"
+        "title": "Meld: Auto-Merge Current File",
+        "icon": "$(merge)"
+      },
+      {
+        "command": "meld-auto-merge.autoMergeAll",
+        "title": "Meld: Auto-Merge All Conflicted Files",
+        "icon": "$(check-all)"
       },
       {
         "command": "meld-auto-merge.checkoutConflicted",
-        "title": "Meld: Checkout Conflicted (-m)"
+        "title": "Meld: Checkout Conflicted (-m)",
+        "icon": "$(history)"
       },
       {
         "command": "meld-auto-merge.rerereForget",
-        "title": "Meld: Rerere Forget File"
+        "title": "Meld: Rerere Forget File",
+        "icon": "$(trash)"
       },
       {
         "command": "meld-auto-merge.smartAdd",
-        "title": "Meld: Smart Git Add (Verify no conflicts)"
+        "title": "Meld: Git Add Resolved",
+        "icon": "$(add)"
       },
       {
-        "command": "meld-auto-merge.listConflicted",
-        "title": "Meld: List Conflicted Files"
+        "command": "meld-auto-merge.openMergeEditor",
+        "title": "Meld: Open 3-Way Merge Editor",
+        "icon": "$(git-merge)"
+      },
+      {
+        "command": "meld-auto-merge.refreshConflicted",
+        "title": "Meld: Refresh Conflicted Files",
+        "icon": "$(refresh)"
       }
     ]
   },
