@@ -66,10 +66,13 @@ export function activate(context: vscode.ExtensionContext) {
 
             const merger = new Merger();
             
-            // Meld sequences are expected to be arrays of lines (with trailing newlines)
+            // Meld sequences are expected to be arrays of lines WITHOUT trailing newlines (joined by \n later)
             const splitLines = (text: string) => {
                 const lines = text.split('\n');
-                return lines.map((line, i) => i === lines.length - 1 ? line : line + '\n');
+                if (lines.length > 0 && lines[lines.length - 1] === '') {
+                    lines.pop(); // remove trailing empty string from trailing newline
+                }
+                return lines;
             };
 
             const localLines = splitLines(localContent);

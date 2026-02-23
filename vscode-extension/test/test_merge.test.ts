@@ -48,4 +48,29 @@ describe('Merger', () => {
         
         expect(finalMergedText).not.toBeNull();
     });
+
+    it('generates standard git conflict markers on unresolvable merge', () => {
+        const local = ["1", "3"];
+        const base = ["1"];
+        const remote = ["1", "2"];
+        
+        const sequences = [local, base, remote];
+        const init = merger.initialize(sequences, sequences);
+        let val = init.next();
+        while (!val.done && val.value === null) {
+            val = init.next();
+        }
+        
+        const mergeGen = merger.merge_3_files(true);
+        let finalMergedText: string | null = null;
+        for (const res of mergeGen) {
+            if (res !== null && typeof res === 'string') {
+                finalMergedText = res;
+            }
+        }
+        
+        expect(finalMergedText).not.toBeNull();
+        expect(finalMergedText).toBe("1\n<<<<<<< HEAD\n3\n||||||| BASE\n=======\n2\n>>>>>>> REMOTE");
+    });
 });
+
