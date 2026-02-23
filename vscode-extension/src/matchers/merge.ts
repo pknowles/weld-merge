@@ -215,33 +215,21 @@ export class Merger extends Differ {
             lastline = low_mark;
 
             if (change[0] !== null && change[1] !== null && change[0].tag === 'conflict') {
-                const min_mark = Math.min(change[0].start_a, change[1].start_a);
                 const high_mark = Math.max(change[0].end_a, change[1].end_a);
                 if (mark_conflicts) {
-                    mergedtext.push("<<<<<<< HEAD");
-                    for (let i = change[0].start_b; i < change[0].end_b; i++) {
-                        mergedtext.push(this.texts[0][i]);
-                    }
-                    mergedtext.push("||||||| BASE");
-                    for (let i = min_mark; i < high_mark; i++) {
-                        mergedtext.push(this.texts[1][i]);
-                    }
-                    mergedtext.push("=======");
-                    for (let i = change[1].start_b; i < change[1].end_b; i++) {
-                        mergedtext.push(this.texts[2][i]);
-                    }
-                    mergedtext.push(">>>>>>> REMOTE");
-                    
-                    // We just treat the entire block as 'unresolved' lines
-                    for (let i = min_mark; i < high_mark; i++) {
+                    if (low_mark < high_mark) {
+                        for (let i = low_mark; i < high_mark; i++) {
+                            mergedtext.push("(??)" + this.texts[1][i]);
+                            this.differ.unresolved.push(mergedline);
+                            mergedline += 1;
+                        }
+                    } else {
+                        mergedtext.push("(??)");
                         this.differ.unresolved.push(mergedline);
                         mergedline += 1;
                     }
-                    // +4 for the marker lines themselves
-                    mergedline += 4;
                     lastline = high_mark;
                 }
-
             } else if (change[0] !== null) {
                 lastline += this._apply_change(this.texts[0], change[0], mergedtext);
                 mergedline += change[0].end_b - change[0].start_b;
