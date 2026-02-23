@@ -16,3 +16,179 @@ c
 2
 3
 4
+---
+A
+B
+---
+X
+B
+---
+A
+Y
+---
+X
+B
+---
+B
+---
+B
+---
+B
+---
+(??)A
+B
+---
+A
+B
+C
+---
+A
+B
+C
+---
+A
+B
+C
+---
+A
+B
+(??)
+---
+(??)A
+---
+Amod
+Bmod
+C
+D
+---
+A
+Bmod
+Cmod
+---
+Item1
+Item2
+(??)
+---
+a=1
+(??)
+---
+imp1
+imp2
+(??)
+---
+A,
+(??)
+---
+A
+---
+A
+B
+(??)
+---
+{
+  "name": "meld",
+(??)  "version": "1.0"
+}
+---
+.button {
+  color: red;
+(??)
+  padding: 10px;
+}
+---
+import math
+import os
+import sys
+import time
+---
+function init() {
+  const x = 1;
+(??)
+}
+---
+Line 1
+(??)Line 2
+(??)Line 4
+Line 5
+---
+this.a = 1;
+(??)
+---
+[
+  "A",
+(??)  "B"
+]
+---
+indented
+---
+Line 1
+DELETED
+MODIFIED
+Line 4
+---
+Line 1
+Line 2
+Line 3
+---
+MODIFIED
+---
+MODIFIED
+---
+SAME
+---
+(??)BASE
+---
+(??)
+function foo() {}
+---
+(??)import { a, b } from 'mod'
+---
+.a { color: red; }
+(??)
+---
+const x = {
+(??)  a: 1
+};
+---
+1
+5
+2
+3
+---
+1
+2
+5
+3
+---
+(??)=
+(??)Base
+(??)>>>>
+(??)Right
+---
+(??)Base Top
+Common Middle
+(??)Base Bottom
+---
+// Case: Overlapping delete/delete (split resolution)
+Line 1
+(??)Line 2
+(??)Line 4
+Line 5
+---
+// Case: Insertion vs Substitution sharing common strings
+function run() {
+  setUp();
+  execute();
+(??)
+}
+---
+(??)
+if (condition) {
+    doTask();
+}
+---
+// Case: Criss-cross virtual base simulation
+A
+B
+(??)C
+D

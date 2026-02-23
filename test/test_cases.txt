@@ -47,3 +47,500 @@ c
 5
 2
 4
+---
+A
+B
+===
+A
+B
+===
+A
+B
+---
+X
+B
+===
+A
+B
+===
+A
+B
+---
+A
+B
+===
+A
+B
+===
+A
+Y
+---
+X
+B
+===
+A
+B
+===
+X
+B
+---
+B
+===
+A
+B
+===
+A
+B
+---
+A
+B
+===
+A
+B
+===
+B
+---
+B
+===
+A
+B
+===
+B
+---
+X
+B
+===
+A
+B
+===
+B
+---
+A
+B
+C
+===
+A
+B
+===
+A
+B
+---
+A
+B
+===
+A
+B
+===
+A
+B
+C
+---
+A
+B
+C
+===
+A
+B
+===
+A
+B
+C
+---
+A
+B
+X
+===
+A
+B
+===
+A
+B
+Y
+---
+X
+===
+A
+===
+Y
+---
+A
+Bmod
+C
+D
+===
+A
+B
+C
+D
+===
+Amod
+B
+C
+D
+---
+A
+Bmod
+===
+A
+B
+===
+A
+B
+Cmod
+---
+Item1
+Item2
+ItemL
+===
+Item1
+Item2
+===
+Item1
+Item2
+ItemR
+---
+a=1
+b=2
+===
+a=1
+===
+a=1
+c=3
+---
+imp1
+imp2
+impL
+===
+imp1
+imp2
+===
+imp1
+imp2
+impR
+---
+A,
+B,
+===
+A,
+===
+A,
+C,
+---
+  A
+===
+A
+===
+A
+---
+A
+B
+L
+===
+A
+B
+===
+A
+B
+R
+---
+{
+  "name": "meld",
+  "version": "2.0",
+  "author": "Kai"
+}
+===
+{
+  "name": "meld",
+  "version": "1.0"
+}
+===
+{
+  "name": "meld",
+  "version": "2.0",
+  "license": "GPL"
+}
+---
+.button {
+  color: red;
+  margin: 5px;
+  padding: 10px;
+}
+===
+.button {
+  color: red;
+  padding: 10px;
+}
+===
+.button {
+  color: red;
+  border: 1px;
+  padding: 10px;
+}
+---
+import math
+import os
+import sys
+===
+import os
+import sys
+===
+import os
+import sys
+import time
+---
+function init() {
+  const x = 1;
+  const y = 2;
+  return x + y;
+}
+===
+
+===
+function init() {
+  const x = 1;
+  const z = 3;
+  return x + z;
+}
+---
+Line 1
+Line 4
+Line 5
+===
+Line 1
+Line 2
+Line 3
+Line 4
+Line 5
+===
+Line 1
+Line 2
+Line 5
+---
+this.a = 1;
+this.b = 2;
+this.c = 3;
+===
+this.a = 1;
+===
+this.a = 1;
+this.d = 4;
+---
+[
+  "A",
+  "B",
+  "L"
+]
+===
+[
+  "A",
+  "B"
+]
+===
+[
+  "A",
+  "B",
+  "R"
+]
+---
+  indented
+===
+indented
+===
+indented
+---
+Line 1
+Line 2
+MODIFIED
+Line 4
+===
+Line 1
+Line 2
+Line 3
+Line 4
+===
+Line 1
+DELETED
+Line 3
+Line 4
+---
+Line 1
+Line 2
+Line 3
+===
+Line 1
+Line 2
+Line 3
+===
+Line 1
+Line 2
+Line 3
+---
+MODIFIED
+===
+BASE
+===
+BASE
+---
+BASE
+===
+BASE
+===
+MODIFIED
+---
+SAME
+===
+BASE
+===
+SAME
+---
+MOD
+===
+BASE
+===
+OTHER
+---
+// Comment L
+function foo() {}
+===
+function foo() {}
+===
+// Comment R
+function foo() {}
+---
+import { a, b, c } from 'mod'
+===
+import { a, b } from 'mod'
+===
+import { a, b, d } from 'mod'
+---
+.a { color: red; }
+.b { color: blue; }
+===
+.a { color: red; }
+===
+.a { color: red; }
+.c { color: green; }
+---
+const x = {
+  a: 1,
+  b: 2
+};
+===
+const x = {
+  a: 1
+};
+===
+const x = {
+  a: 1,
+  c: 3
+};
+---
+1
+2
+3
+===
+1
+2
+3
+===
+1
+5
+2
+3
+---
+1
+2
+3
+===
+1
+2
+3
+===
+1
+2
+5
+3
+---
+<<<<
+Left
+====
+Base
+>>>>
+Right
+===
+Base
+===
+Remote
+---
+// Case: Sub-hunk matching with common middle
+Left Top
+Common Middle
+Left Bottom
+===
+Base Top
+Common Middle
+Base Bottom
+===
+Right Top
+Common Middle
+Right Bottom
+---
+// Case: Overlapping delete/delete (split resolution)
+Line 1
+Line 4
+Line 5
+===
+Line 1
+Line 2
+Line 3
+Line 4
+Line 5
+===
+Line 1
+Line 2
+Line 5
+---
+// Case: Insertion vs Substitution sharing common strings
+function run() {
+  setUp();
+  execute();
+  tearDown();
+}
+===
+function run() {
+  execute();
+}
+===
+function run() {
+  execute();
+  cleanUp();
+}
+---
+// Case: Multi-way whitespace normalization check
+if (condition) {
+    doTask();
+}
+===
+if(condition){
+doTask();
+}
+===
+if (condition) {
+    doTask();
+}
+---
+// Case: Criss-cross virtual base simulation
+A
+B
+C_mod_L
+D
+===
+A
+B
+C
+D
+===
+A
+B
+C_mod_R
+D
