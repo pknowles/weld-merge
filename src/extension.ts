@@ -1,4 +1,5 @@
 import * as cp from "node:child_process";
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { GitTextMerger } from "./matchers/gitTextMerger";
@@ -41,6 +42,27 @@ async function getGitFileContent(
 			`Could not get git content for stage ${stage} of ${relativeFilePath}. Is it in conflict?`,
 		);
 	}
+}
+
+async function updateIfOpen(uri: vscode.Uri, newContent: string) {
+	const doc = vscode.workspace.textDocuments.find(
+		(d) => d.uri.toString() === uri.toString(),
+	);
+
+	if (!doc) {
+		// Not open — nothing to update in editor
+		return;
+	}
+
+	const edit = new vscode.WorkspaceEdit();
+
+	edit.replace(
+		uri,
+		new vscode.Range(0, 0, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
+		newContent,
+	);
+
+	await vscode.workspace.applyEdit(edit);
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -290,6 +312,11 @@ export function activate(context: vscode.ExtensionContext) {
 
 			try {
 				await execShell(`git checkout -m -- "${relativeFilePath}"`, repoPath);
+
+				// After disk updated, read back and apply to editor if open to preserve undo
+				const newContent = await fs.readFile(documentUri.fsPath, "utf8");
+				await updateIfOpen(documentUri, newContent);
+
 				vscode.window.showInformationMessage(
 					`Checked out conflicted version of ${relativeFilePath}`,
 				);
