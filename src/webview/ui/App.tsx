@@ -7,11 +7,28 @@ import type { editor } from "monaco-editor";
 import { MyersSequenceMatcher } from "../../matchers/myers";
 import debounce from "lodash.debounce";
 
+interface VsCodeApi {
+	postMessage: (msg: unknown) => void;
+}
+
+let vscodeApi: VsCodeApi | null = null;
+try {
+	vscodeApi = (
+		window as unknown as { acquireVsCodeApi: () => VsCodeApi }
+	).acquireVsCodeApi();
+} catch (_e) {
+	// Not in a VS Code webview
+}
+
 const App: React.FC = () => {
 	const [files, setFiles] = useState<FileState[]>([]);
 	const [diffs, setDiffs] = useState<DiffChunk[][]>([]);
+	const diffsRef = useRef<DiffChunk[][]>([]);
 	const [renderTrigger, setRenderTrigger] = useState(0);
 	const editorRefs = useRef<editor.IStandaloneCodeEditor[]>([]);
+	// Index of the editor that initiated the current scroll sync.
+	// While set, other editors' scroll handlers skip to avoid feedback loops.
+	const syncingFrom = useRef<number | null>(null);
 
 	useEffect(() => {
 		const handleMessage = (event: MessageEvent) => {
@@ -19,57 +36,108 @@ const App: React.FC = () => {
 			if (message.command === "loadDiff") {
 				setFiles(message.data.files);
 				setDiffs(message.data.diffs);
+				diffsRef.current = message.data.diffs;
 				// Trigger an initial render to draw SVGs once editors mount
 				setTimeout(() => setRenderTrigger((prev) => prev + 1), 500);
 			}
 		};
 		window.addEventListener("message", handleMessage);
 
-		// Signal the extension host that we are ready to receive the payload
-		// Use acquireVsCodeApi if available (it is in the Webview environment)
-		try {
-			const vscode = (
-				window as unknown as { acquireVsCodeApi: () => unknown }
-			).acquireVsCodeApi() as { postMessage: (msg: unknown) => void };
-			vscode.postMessage({ command: "ready" });
-		} catch (_e) {
-			console.error("VS Code API not available");
+		if (vscodeApi) {
+			vscodeApi.postMessage({ command: "ready" });
 		}
 
 		return () => window.removeEventListener("message", handleMessage);
 	}, []);
+
+	const attachScrollListener = (ed: editor.IStandaloneCodeEditor, edIndex: number) => {
+		return ed.onDidScrollChange((e: any) => {
+			setRenderTrigger((prev) => prev + 1);
+
+			// If another editor is currently driving sync, we're a passenger — skip.
+			if (syncingFrom.current !== null && syncingFrom.current !== edIndex) return;
+
+			const dRef = diffsRef.current;
+
+			const mapLineWithDiff = (sLine: number, diff: DiffChunk[], sourceIsA: boolean): number => {
+				if (!diff || diff.length === 0) return sLine;
+				let lastChunk = diff[0];
+				for (const chunk of diff) {
+					const sStart = sourceIsA ? chunk.start_a : chunk.start_b;
+					const sEnd = sourceIsA ? chunk.end_a : chunk.end_b;
+					const tStart = sourceIsA ? chunk.start_b : chunk.start_a;
+					const tEnd = sourceIsA ? chunk.end_b : chunk.end_a;
+
+					if (sLine >= sStart && sLine < sEnd) {
+						if (chunk.tag === "equal") {
+							return tStart + (sLine - sStart);
+						} else {
+							const sLen = sEnd - sStart;
+							const tLen = tEnd - tStart;
+							const ratio = sLen > 0 ? (sLine - sStart) / sLen : 0;
+							return tStart + ratio * tLen;
+						}
+					}
+					lastChunk = chunk;
+				}
+				const sEnd = sourceIsA ? lastChunk.end_a : lastChunk.end_b;
+				const tEnd = sourceIsA ? lastChunk.end_b : lastChunk.end_a;
+				return tEnd + (sLine - sEnd);
+			};
+
+			const mapLine = (sLine: number, sIdx: number, tIdx: number): number => {
+				if (sIdx === 0 && tIdx === 1) return mapLineWithDiff(sLine, dRef[0], true);
+				if (sIdx === 1 && tIdx === 0) return mapLineWithDiff(sLine, dRef[0], false);
+				if (sIdx === 1 && tIdx === 2) return mapLineWithDiff(sLine, dRef[1], true);
+				if (sIdx === 2 && tIdx === 1) return mapLineWithDiff(sLine, dRef[1], false);
+				return sLine;
+			};
+
+			if (e.scrollTopChanged) {
+				let lineHeight = ed.getTopForLineNumber(2) - ed.getTopForLineNumber(1);
+				if (lineHeight <= 0) lineHeight = 19;
+				const sourceLine = Math.max(0, e.scrollTop) / lineHeight;
+
+				syncingFrom.current = edIndex;
+				editorRefs.current.forEach((otherEditor, i) => {
+					if (i !== edIndex && otherEditor) {
+						let targetLine = sourceLine;
+						if (edIndex === 0 && i === 1) targetLine = mapLine(sourceLine, 0, 1);
+						else if (edIndex === 0 && i === 2) targetLine = mapLine(mapLine(sourceLine, 0, 1), 1, 2);
+						else if (edIndex === 1 && i === 0) targetLine = mapLine(sourceLine, 1, 0);
+						else if (edIndex === 1 && i === 2) targetLine = mapLine(sourceLine, 1, 2);
+						else if (edIndex === 2 && i === 1) targetLine = mapLine(sourceLine, 2, 1);
+						else if (edIndex === 2 && i === 0) targetLine = mapLine(mapLine(sourceLine, 2, 1), 1, 0);
+
+						const targetScrollTop = targetLine * lineHeight;
+						if (Math.abs(otherEditor.getScrollTop() - targetScrollTop) > 2) {
+							otherEditor.setScrollTop(targetScrollTop);
+						}
+					}
+				});
+				syncingFrom.current = null;
+			}
+
+			if (e.scrollLeftChanged) {
+				syncingFrom.current = edIndex;
+				editorRefs.current.forEach((otherEditor, i) => {
+					if (i !== edIndex && otherEditor) {
+						if (Math.abs(otherEditor.getScrollLeft() - e.scrollLeft) > 2) {
+							otherEditor.setScrollLeft(e.scrollLeft);
+						}
+					}
+				});
+				syncingFrom.current = null;
+			}
+		});
+	};
 
 	const handleEditorMount = (
 		editor: editor.IStandaloneCodeEditor,
 		index: number,
 	) => {
 		editorRefs.current[index] = editor;
-
-		// Trigger SVG redraw and proportional scroll sync
-		editor.onDidScrollChange((e: any) => {
-			setRenderTrigger((prev) => prev + 1);
-			
-			if (!e.scrollTopChanged) return;
-
-			const layoutInfo = editor.getLayoutInfo();
-			const sourceScrollHeight = editor.getScrollHeight() - layoutInfo.height;
-			if (sourceScrollHeight <= 0) return;
-
-			const scrollPercentage = e.scrollTop / sourceScrollHeight;
-
-			editorRefs.current.forEach((otherEditor, i) => {
-				if (i !== index && otherEditor) {
-					const targetLayoutInfo = otherEditor.getLayoutInfo();
-					const targetScrollHeight =
-						otherEditor.getScrollHeight() - targetLayoutInfo.height;
-					const targetScrollTop = scrollPercentage * targetScrollHeight;
-
-					if (Math.abs(otherEditor.getScrollTop() - targetScrollTop) > 2) {
-						otherEditor.setScrollTop(targetScrollTop);
-					}
-				}
-			});
-		});
+		attachScrollListener(editor, index);
 	};
 
 	const handleEditorChange = debounce(
@@ -87,16 +155,17 @@ const App: React.FC = () => {
 
 				const leftDiffs = new MyersSequenceMatcher(
 					null,
-					midLines,
 					leftLines,
+					midLines,
 				).get_difference_opcodes();
-				const rightDiffs = new MyersSequenceMatcher(
+				const rDiffs = new MyersSequenceMatcher(
 					null,
 					midLines,
 					rightLines,
 				).get_difference_opcodes();
 
-				setDiffs([leftDiffs, rightDiffs]);
+				setDiffs([leftDiffs, rDiffs]);
+				diffsRef.current = [leftDiffs, rDiffs];
 				setRenderTrigger((p) => p + 1);
 				return newFiles;
 			});
@@ -138,25 +207,15 @@ const App: React.FC = () => {
 	};
 
 	const handleShowCommit = (hash: string) => {
-		try {
-			const vscode = (
-				window as unknown as { acquireVsCodeApi: () => unknown }
-			).acquireVsCodeApi() as { postMessage: (msg: unknown) => void };
-			vscode.postMessage({ command: "showCommit", hash });
-		} catch (_e) {
-			console.error("VS Code API not available");
-		}
+		vscodeApi?.postMessage({ command: "showCommit", hash });
 	};
 
 	const handleSave = (value: string) => {
-		try {
-			const vscode = (
-				window as unknown as { acquireVsCodeApi: () => unknown }
-			).acquireVsCodeApi() as { postMessage: (msg: unknown) => void };
-			vscode.postMessage({ command: "save", text: value });
-		} catch (_e) {
-			console.error("VS Code API not available");
-		}
+		vscodeApi?.postMessage({ command: "save", text: value });
+	};
+
+	const handleCompleteMerge = () => {
+		vscodeApi?.postMessage({ command: "completeMerge" });
 	};
 
 	return (
@@ -172,8 +231,9 @@ const App: React.FC = () => {
 		>
 			<style>{`
 				.diff-insert { background-color: rgba(0, 200, 0, 0.15) !important; }
+				.diff-delete { background-color: rgba(0, 200, 0, 0.15) !important; }
 				.diff-replace { background-color: rgba(0, 100, 255, 0.15) !important; }
-				.diff-delete { background-color: rgba(255, 0, 0, 0.15) !important; }
+				.diff-conflict { background-color: rgba(255, 0, 0, 0.15) !important; }
 			`}</style>
 			{files.length === 0 ? (
 				<div
@@ -193,6 +253,7 @@ const App: React.FC = () => {
 							highlights={getHighlights(index)}
 							onSave={index === 1 ? handleSave : undefined}
 							onShowCommit={handleShowCommit}
+							onCompleteMerge={index === 1 ? handleCompleteMerge : undefined}
 						/>
 						{/* SVG Canvas Gap */}
 						{index < files.length - 1 && (

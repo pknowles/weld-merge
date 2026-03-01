@@ -97,16 +97,16 @@ export const DiffCurtain: React.FC<DiffCurtainProps> = ({
 					const color =
 						chunk.tag === "replace"
 							? "rgba(0, 100, 255, 0.2)"
-							: chunk.tag === "insert"
-								? "rgba(0, 200, 0, 0.2)"
-								: "rgba(255, 0, 0, 0.2)";
+							: chunk.tag === "conflict"
+								? "rgba(255, 0, 0, 0.2)"
+								: "rgba(0, 200, 0, 0.2)";
 
 					const strokeColor =
 						chunk.tag === "replace"
 							? "rgba(0, 100, 255, 0.5)"
-							: chunk.tag === "insert"
-								? "rgba(0, 200, 0, 0.5)"
-								: "rgba(255, 0, 0, 0.5)";
+							: chunk.tag === "conflict"
+								? "rgba(255, 0, 0, 0.5)"
+								: "rgba(0, 200, 0, 0.5)";
 
 					return (
 						<path

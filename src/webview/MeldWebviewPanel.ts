@@ -74,6 +74,12 @@ export class MeldWebviewPanel {
 					repoPath,
 					msg.hash,
 				);
+			} else if (msg.command === "completeMerge") {
+				vscode.commands.executeCommand(
+					"meld-auto-merge.smartAdd",
+					{ uri: documentUri }
+				);
+				this._panel.dispose();
 			}
 		});
 

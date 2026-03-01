@@ -12,6 +12,7 @@ interface CodePaneProps {
 	highlights?: { start: number; end: number; tag: string }[];
 	onSave?: (value: string) => void;
 	onShowCommit?: (hash: string) => void;
+	onCompleteMerge?: () => void;
 }
 
 export const CodePane: React.FC<CodePaneProps> = ({
@@ -23,9 +24,12 @@ export const CodePane: React.FC<CodePaneProps> = ({
 	highlights,
 	onSave,
 	onShowCommit,
+	onCompleteMerge,
 }) => {
 	const [editorInstance, setEditorInstance] =
 		React.useState<editor.IStandaloneCodeEditor | null>(null);
+	const [isDirty, setIsDirty] = React.useState(false);
+	const originalContentRef = React.useRef(file.content);
 	const decorationsRef = React.useRef<string[]>([]);
 
 	React.useEffect(() => {
@@ -59,7 +63,10 @@ export const CodePane: React.FC<CodePaneProps> = ({
 			// monaco typing can be tricky but addCommand works dynamically if we use any
 			const monacoLib = monaco as typeof import("monaco-editor");
 			editor.addCommand(monacoLib.KeyMod.CtrlCmd | monacoLib.KeyCode.KeyS, () => {
-				onSave(editor.getValue());
+				const val = editor.getValue();
+				originalContentRef.current = val;
+				onSave(val);
+				setIsDirty(false);
 			});
 		}
 		
@@ -85,7 +92,7 @@ export const CodePane: React.FC<CodePaneProps> = ({
 				}}
 			>
 				<span style={{ flexShrink: 0 }}>
-					{file.label.replace("BASE", "Merge Result")}
+					{file.label}
 				</span>
 				{file.commit && (
 					<span
@@ -108,7 +115,7 @@ export const CodePane: React.FC<CodePaneProps> = ({
 			<div style={{ flex: 1, position: "relative", minHeight: 0 }}>
 				<Editor
 					defaultLanguage="typescript"
-					value={file.content}
+					defaultValue={file.content}
 					theme="vs-dark"
 					options={{
 						minimap: { enabled: false },
@@ -118,9 +125,87 @@ export const CodePane: React.FC<CodePaneProps> = ({
 						renderWhitespace: "all",
 					}}
 					onMount={handleMount}
-					onChange={(value) => onChange(value, index)}
+					onChange={(value) => {
+						setIsDirty(value !== originalContentRef.current);
+						onChange(value, index);
+					}}
 				/>
 			</div>
+			{isMiddle && (
+				<div
+					style={{
+						backgroundColor: "#252526",
+						padding: "8px 12px",
+						borderTop: "1px solid #444",
+						display: "flex",
+						justifyContent: "space-between",
+						alignItems: "center",
+						fontFamily: "sans-serif",
+						fontSize: "13px",
+					}}
+				>
+					<div>
+						<button
+							onClick={() => {
+								if (editorInstance && onSave) {
+									const val = editorInstance.getValue();
+									originalContentRef.current = val;
+									onSave(val);
+									setIsDirty(false);
+								}
+							}}
+							style={{
+								marginRight: "8px",
+								padding: "4px 12px",
+								backgroundColor: "#0e639c",
+								color: "white",
+								border: "none",
+								cursor: "pointer",
+								borderRadius: "2px",
+							}}
+						>
+							Save
+						</button>
+						<button
+							onClick={() => {
+								if (editorInstance && onSave && onCompleteMerge) {
+									const val = editorInstance.getValue();
+									originalContentRef.current = val;
+									onSave(val);
+									setIsDirty(false);
+									onCompleteMerge();
+								}
+							}}
+							style={{
+								padding: "4px 12px",
+								backgroundColor: "#2ea043",
+								color: "white",
+								border: "none",
+								cursor: "pointer",
+								borderRadius: "2px",
+							}}
+						>
+							Save & Complete Merge
+						</button>
+					</div>
+					{isDirty && (
+						<div
+							style={{ display: "flex", alignItems: "center", color: "#cccccc" }}
+						>
+							<div
+								style={{
+									width: "8px",
+									height: "8px",
+									backgroundColor: "#007acc",
+									borderRadius: "50%",
+									marginRight: "6px",
+								}}
+							/>
+							Unsaved Changes
+						</div>
+					)}
+				</div>
+			)}
 		</div>
 	);
 };
