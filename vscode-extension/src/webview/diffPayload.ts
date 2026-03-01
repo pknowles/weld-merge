@@ -1,4 +1,5 @@
 import * as cp from "node:child_process";
+import { Merger } from "../matchers/merge";
 import { MyersSequenceMatcher } from "../matchers/myers";
 
 export async function buildDiffPayload(
@@ -52,12 +53,6 @@ export async function buildDiffPayload(
 	if (!incomingCommit) incomingCommit = await getCommitInfo("REVERT_HEAD");
 	if (!incomingCommit) incomingCommit = await getCommitInfo("REBASE_HEAD");
 
-	const contents = [
-		{ label: "Local (Ours)", content: local, commit: localCommit },
-		{ label: "Base", content: base },
-		{ label: "Incoming (Theirs)", content: incoming, commit: incomingCommit },
-	];
-
 	const splitLines = (text: string) => {
 		const lines = text.split("\n");
 		if (lines.length > 0 && lines[lines.length - 1] === "") {
@@ -70,6 +65,35 @@ export async function buildDiffPayload(
 	const baseLines = splitLines(base);
 	const incomingLines = splitLines(incoming);
 
+	// Run the auto-merger to produce the merged text for the middle column
+	const merger = new Merger();
+	const sequences = [localLines, baseLines, incomingLines];
+	const initGen = merger.initialize(sequences, sequences);
+	let val = initGen.next();
+	while (!val.done) {
+		val = initGen.next();
+	}
+
+	const mergeGen = merger.merge_3_files(true);
+	let mergedContent = base; // fallback to base if merge fails
+	for (const res of mergeGen) {
+		if (res !== null && typeof res === "string") {
+			mergedContent = res;
+		}
+	}
+
+	const mergedLines = splitLines(mergedContent);
+
+	// Build a Set of unresolved (conflict) line indices in the merged text
+	// for fast lookup when marking diff chunks as conflicts
+	const unresolvedSet = new Set(merger.differ.unresolved);
+
+	const contents = [
+		{ label: "Local (Ours)", content: local, commit: localCommit },
+		{ label: "Merged", content: mergedContent },
+		{ label: "Incoming (Theirs)", content: incoming, commit: incomingCommit },
+	];
+
 	const getDiff = (linesA: string[], linesB: string[]) => {
 		const matcher = new MyersSequenceMatcher(null, linesA, linesB);
 		const initGen = matcher.initialise();
@@ -80,10 +104,30 @@ export async function buildDiffPayload(
 		return matcher.get_opcodes();
 	};
 
-	// Diff 0->1 (Local vs Base)
-	const diff1 = getDiff(localLines, baseLines);
-	// Diff 1->2 (Base vs Incoming)
-	const diff2 = getDiff(baseLines, incomingLines);
+	// Mark diff chunks as 'conflict' if their merged-side line range
+	// overlaps with unresolved lines from the three-way merge.
+	// Two-way Myers diffs can't produce 'conflict' tags, so we inject
+	// them based on the merge result.
+	const markConflicts = (
+		opcodes: ReturnType<typeof getDiff>,
+		mergedStart: "start_a" | "start_b",
+		mergedEnd: "end_a" | "end_b",
+	) => {
+		return opcodes.map((chunk) => {
+			if (chunk.tag === "equal") return chunk;
+			for (let i = chunk[mergedStart]; i < chunk[mergedEnd]; i++) {
+				if (unresolvedSet.has(i)) {
+					return { ...chunk, tag: "conflict" as const };
+				}
+			}
+			return chunk;
+		});
+	};
+
+	// diffs[0]: a=Local(pane0), b=Merged(pane1) — merged side is b
+	const diff1 = markConflicts(getDiff(localLines, mergedLines), "start_b", "end_b");
+	// diffs[1]: a=Merged(pane1), b=Incoming(pane2) — merged side is a
+	const diff2 = markConflicts(getDiff(mergedLines, incomingLines), "start_a", "end_a");
 
 	return {
 		command: "loadDiff",
