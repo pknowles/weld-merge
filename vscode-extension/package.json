@@ -17,6 +17,14 @@
 	"activationEvents": [],
 	"main": "./out/extension.js",
 	"contributes": {
+		"customEditors": [
+			{
+				"viewType": "meld.mergeEditor",
+				"displayName": "Meld 3-Way Merge",
+				"selector": [{ "filenamePattern": "*" }],
+				"priority": "option"
+			}
+		],
 		"viewsContainers": {
 			"activitybar": [
 				{

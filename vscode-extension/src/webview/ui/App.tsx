@@ -1,11 +1,11 @@
+import debounce from "lodash.debounce";
+import type { editor } from "monaco-editor";
 import * as React from "react";
-import { useState, useEffect, useRef } from "react";
-import type { FileState, DiffChunk } from "./types";
+import { useEffect, useRef, useState } from "react";
+import { Differ } from "../../matchers/diffutil";
 import { CodePane } from "./CodePane";
 import { DiffCurtain } from "./DiffCurtain";
-import type { editor } from "monaco-editor";
-import { Differ } from "../../matchers/diffutil";
-import debounce from "lodash.debounce";
+import type { DiffChunk, FileState } from "./types";
 
 interface VsCodeApi {
 	postMessage: (msg: unknown) => void;
@@ -25,6 +25,7 @@ const App: React.FC = () => {
 	const [diffs, setDiffs] = useState<DiffChunk[][]>([]);
 	const diffsRef = useRef<DiffChunk[][]>([]);
 	const differRef = useRef<Differ | null>(null);
+	const [externalSyncId, setExternalSyncId] = useState(0);
 	const [renderTrigger, setRenderTrigger] = useState(0);
 	const editorRefs = useRef<editor.IStandaloneCodeEditor[]>([]);
 	// Index of the editor that initiated the current scroll sync.
@@ -55,7 +56,11 @@ const App: React.FC = () => {
 				const rightLines = splitLines(message.data.files[2].content);
 
 				const differ = new Differ();
-				const init = differ.set_sequences_iter([localLines, midLines, rightLines]);
+				const init = differ.set_sequences_iter([
+					localLines,
+					midLines,
+					rightLines,
+				]);
 				let step = init.next();
 				while (!step.done) {
 					step = init.next();
@@ -64,6 +69,9 @@ const App: React.FC = () => {
 
 				// Trigger an initial render to draw SVGs once editors mount
 				setTimeout(() => setRenderTrigger((prev) => prev + 1), 500);
+			} else if (message.command === "updateContent") {
+				setExternalSyncId((id) => id + 1);
+				commitModelUpdate(message.text);
 			}
 		};
 		window.addEventListener("message", handleMessage);
@@ -75,18 +83,26 @@ const App: React.FC = () => {
 		return () => window.removeEventListener("message", handleMessage);
 	}, []);
 
-	const attachScrollListener = (ed: editor.IStandaloneCodeEditor, edIndex: number) => {
+	const attachScrollListener = (
+		ed: editor.IStandaloneCodeEditor,
+		edIndex: number,
+	) => {
 		return ed.onDidScrollChange((e: any) => {
 			setRenderTrigger((prev) => prev + 1);
 
 			// If another editor is currently driving sync, we're a passenger — skip.
-			if (syncingFrom.current !== null && syncingFrom.current !== edIndex) return;
+			if (syncingFrom.current !== null && syncingFrom.current !== edIndex)
+				return;
 
 			const dRef = diffsRef.current;
 
 			// Differ convention: a=Merged(pane1), b=Outer(pane0 or pane2)
 			// mapLine maps a source line to the corresponding target line using a diff.
-			const mapLineWithDiff = (sLine: number, diff: DiffChunk[], sourceIsA: boolean): number => {
+			const mapLineWithDiff = (
+				sLine: number,
+				diff: DiffChunk[],
+				sourceIsA: boolean,
+			): number => {
 				if (!diff || diff.length === 0) return sLine;
 				let lastChunk = diff[0];
 				for (const chunk of diff) {
@@ -114,11 +130,15 @@ const App: React.FC = () => {
 			// Differ: diffs[0] a=Merged b=Local, diffs[1] a=Merged b=Incoming
 			const mapLine = (sLine: number, sIdx: number, tIdx: number): number => {
 				// pane0(Local) ↔ pane1(Merged): diffs[0], b=Local a=Merged
-				if (sIdx === 0 && tIdx === 1) return mapLineWithDiff(sLine, dRef[0], false); // src=b(Local) → tgt=a(Merged)
-				if (sIdx === 1 && tIdx === 0) return mapLineWithDiff(sLine, dRef[0], true);  // src=a(Merged) → tgt=b(Local)
+				if (sIdx === 0 && tIdx === 1)
+					return mapLineWithDiff(sLine, dRef[0], false); // src=b(Local) → tgt=a(Merged)
+				if (sIdx === 1 && tIdx === 0)
+					return mapLineWithDiff(sLine, dRef[0], true); // src=a(Merged) → tgt=b(Local)
 				// pane1(Merged) ↔ pane2(Incoming): diffs[1], a=Merged b=Incoming
-				if (sIdx === 1 && tIdx === 2) return mapLineWithDiff(sLine, dRef[1], true);  // src=a(Merged) → tgt=b(Incoming)
-				if (sIdx === 2 && tIdx === 1) return mapLineWithDiff(sLine, dRef[1], false); // src=b(Incoming) → tgt=a(Merged)
+				if (sIdx === 1 && tIdx === 2)
+					return mapLineWithDiff(sLine, dRef[1], true); // src=a(Merged) → tgt=b(Incoming)
+				if (sIdx === 2 && tIdx === 1)
+					return mapLineWithDiff(sLine, dRef[1], false); // src=b(Incoming) → tgt=a(Merged)
 				return sLine;
 			};
 
@@ -131,12 +151,18 @@ const App: React.FC = () => {
 				editorRefs.current.forEach((otherEditor, i) => {
 					if (i !== edIndex && otherEditor) {
 						let targetLine = sourceLine;
-						if (edIndex === 0 && i === 1) targetLine = mapLine(sourceLine, 0, 1);
-						else if (edIndex === 0 && i === 2) targetLine = mapLine(mapLine(sourceLine, 0, 1), 1, 2);
-						else if (edIndex === 1 && i === 0) targetLine = mapLine(sourceLine, 1, 0);
-						else if (edIndex === 1 && i === 2) targetLine = mapLine(sourceLine, 1, 2);
-						else if (edIndex === 2 && i === 1) targetLine = mapLine(sourceLine, 2, 1);
-						else if (edIndex === 2 && i === 0) targetLine = mapLine(mapLine(sourceLine, 2, 1), 1, 0);
+						if (edIndex === 0 && i === 1)
+							targetLine = mapLine(sourceLine, 0, 1);
+						else if (edIndex === 0 && i === 2)
+							targetLine = mapLine(mapLine(sourceLine, 0, 1), 1, 2);
+						else if (edIndex === 1 && i === 0)
+							targetLine = mapLine(sourceLine, 1, 0);
+						else if (edIndex === 1 && i === 2)
+							targetLine = mapLine(sourceLine, 1, 2);
+						else if (edIndex === 2 && i === 1)
+							targetLine = mapLine(sourceLine, 2, 1);
+						else if (edIndex === 2 && i === 0)
+							targetLine = mapLine(mapLine(sourceLine, 2, 1), 1, 0);
 
 						const targetScrollTop = targetLine * lineHeight;
 						if (Math.abs(otherEditor.getScrollTop() - targetScrollTop) > 2) {
@@ -169,53 +195,59 @@ const App: React.FC = () => {
 		attachScrollListener(editor, index);
 	};
 
+	const commitModelUpdate = (value: string) => {
+		setFiles((prev) => {
+			if (prev.length !== 3) return prev;
+
+			const newFiles = [...prev];
+			const oldMidLines = newFiles[1].content.split("\n");
+			newFiles[1] = { ...newFiles[1], content: value };
+			const newMidLines = value.split("\n");
+
+			const differ = differRef.current;
+			if (differ) {
+				let startidx = 0;
+				const minLen = Math.min(oldMidLines.length, newMidLines.length);
+				while (startidx < minLen && oldMidLines[startidx] === newMidLines[startidx]) {
+					startidx++;
+				}
+				const sizechange = newMidLines.length - oldMidLines.length;
+
+				const leftLines = newFiles[0].content.split("\n");
+				const rightLines = newFiles[2].content.split("\n");
+
+				differ.change_sequence(
+					1,
+					startidx,
+					sizechange,
+					[leftLines, newMidLines, rightLines],
+				);
+
+				const leftDiffs = differ._merge_cache
+					.map((pair) => pair[0])
+					.filter((c): c is NonNullable<typeof c> => c !== null);
+				const rightDiffs = differ._merge_cache
+					.map((pair) => pair[1])
+					.filter((c): c is NonNullable<typeof c> => c !== null);
+				const newDiffs = [leftDiffs, rightDiffs];
+				setDiffs(newDiffs);
+				diffsRef.current = newDiffs;
+			}
+
+			setRenderTrigger((p) => p + 1);
+			return newFiles;
+		});
+	};
+
 	const handleEditorChange = debounce(
 		(value: string | undefined, index: number) => {
 			if (value === undefined || index !== 1 || files.length !== 3) return;
 
-			setFiles((prev) => {
-				const newFiles = [...prev];
-				const oldMidLines = newFiles[1].content.split("\n");
-				newFiles[1] = { ...newFiles[1], content: value };
-				const newMidLines = value.split("\n");
+			commitModelUpdate(value);
 
-				const differ = differRef.current;
-				if (differ) {
-					// Compute startidx and sizechange for change_sequence,
-					// matching Meld's _after_text_modified approach.
-					let startidx = 0;
-					const minLen = Math.min(oldMidLines.length, newMidLines.length);
-					while (startidx < minLen && oldMidLines[startidx] === newMidLines[startidx]) {
-						startidx++;
-					}
-					const sizechange = newMidLines.length - oldMidLines.length;
-
-					const leftLines = newFiles[0].content.split("\n");
-					const rightLines = newFiles[2].content.split("\n");
-
-					differ.change_sequence(
-						1,
-						startidx,
-						sizechange,
-						[leftLines, newMidLines, rightLines],
-					);
-
-						// Extract from _merge_cache — this has conflict tags.
-					// differ.diffs is raw Myers output (no conflict tags).
-					const leftDiffs = differ._merge_cache
-						.map((pair) => pair[0])
-						.filter((c): c is NonNullable<typeof c> => c !== null);
-					const rightDiffs = differ._merge_cache
-						.map((pair) => pair[1])
-						.filter((c): c is NonNullable<typeof c> => c !== null);
-					const newDiffs = [leftDiffs, rightDiffs];
-					setDiffs(newDiffs);
-					diffsRef.current = newDiffs;
-				}
-
-				setRenderTrigger((p) => p + 1);
-				return newFiles;
-			});
+			// Notify the extension so it can apply a WorkspaceEdit and drive
+			// VS Code's dirty state (tab dot, Ctrl+S, overwrite-conflict dialog).
+			vscodeApi?.postMessage({ command: "contentChanged", text: value });
 		},
 		150,
 	);
@@ -257,12 +289,12 @@ const App: React.FC = () => {
 		return highlights;
 	};
 
-	const handleShowCommit = (hash: string) => {
-		vscodeApi?.postMessage({ command: "showCommit", hash });
+	const handleCopyHash = (hash: string) => {
+		vscodeApi?.postMessage({ command: "copyHash", hash });
 	};
 
-	const handleSave = (value: string) => {
-		vscodeApi?.postMessage({ command: "save", text: value });
+	const handleShowDiff = (paneIndex: number) => {
+		vscodeApi?.postMessage({ command: "showDiff", paneIndex });
 	};
 
 	const handleCompleteMerge = () => {
@@ -302,9 +334,10 @@ const App: React.FC = () => {
 							onChange={handleEditorChange}
 							isMiddle={index === 1}
 							highlights={getHighlights(index)}
-							onSave={index === 1 ? handleSave : undefined}
-							onShowCommit={handleShowCommit}
 							onCompleteMerge={index === 1 ? handleCompleteMerge : undefined}
+							onCopyHash={handleCopyHash}
+							onShowDiff={() => handleShowDiff(index)}
+							externalSyncId={index === 1 ? externalSyncId : undefined}
 						/>
 						{/* SVG Canvas Gap */}
 						{index < files.length - 1 && (

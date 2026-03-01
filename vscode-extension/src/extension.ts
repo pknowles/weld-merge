@@ -1,9 +1,9 @@
-import * as vscode from "vscode";
 import * as cp from "node:child_process";
 import * as path from "node:path";
+import * as vscode from "vscode";
 import { GitTextMerger } from "./matchers/gitTextMerger";
 import { ConflictedFilesProvider, type GitFile } from "./treeView";
-import { MeldWebviewPanel } from "./webview/MeldWebviewPanel";
+import { MeldCustomEditorProvider } from "./webview/MeldWebviewPanel";
 
 function execShell(cmd: string, cwd: string): Promise<string> {
 	return new Promise((resolve, reject) => {
@@ -50,6 +50,8 @@ export function activate(context: vscode.ExtensionContext) {
 		conflictedFilesProvider,
 	);
 
+	context.subscriptions.push(MeldCustomEditorProvider.register(context));
+
 	const disposableRefresh = vscode.commands.registerCommand(
 		"meld-auto-merge.refreshConflicted",
 		() => {
@@ -89,37 +91,11 @@ export function activate(context: vscode.ExtensionContext) {
 				documentUri = editor.document.uri;
 			}
 
-			const workspaceFolder = vscode.workspace.getWorkspaceFolder(documentUri);
-			if (!workspaceFolder) return;
-
-			const repoPath = workspaceFolder.uri.fsPath;
-			const relativeFilePath = getRelativeRepoPath(documentUri);
-			if (!relativeFilePath) return;
-
-			MeldWebviewPanel.createOrShow(
-				context.extensionUri,
-				repoPath,
-				relativeFilePath,
-				documentUri
+			vscode.commands.executeCommand(
+				"vscode.openWith",
+				documentUri,
+				MeldCustomEditorProvider.viewType,
 			);
-		},
-	);
-
-	const disposableShowCommit = vscode.commands.registerCommand(
-		"meld-auto-merge.showCommit",
-		async (repoPath: string, hash: string) => {
-			try {
-				const output = await execShell(`git show ${hash}`, repoPath);
-				const doc = await vscode.workspace.openTextDocument({
-					content: output,
-					language: "git-commit",
-				});
-				vscode.window.showTextDocument(doc);
-			} catch (e: unknown) {
-				vscode.window.showErrorMessage(
-					`Failed to show commit: ${(e as Error).message}`,
-				);
-			}
 		},
 	);
 
@@ -429,7 +405,6 @@ export function activate(context: vscode.ExtensionContext) {
 		disposableOpenConflicted,
 		disposableOpenMergeEditor,
 		disposableOpenMeldDiff,
-		disposableShowCommit,
 	);
 
 	// Watch for .git/index changes to auto-refresh the TreeView

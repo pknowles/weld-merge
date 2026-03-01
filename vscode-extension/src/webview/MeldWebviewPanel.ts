@@ -3,103 +3,166 @@ import * as path from "node:path";
 
 import { buildDiffPayload } from "./diffPayload";
 
-export class MeldWebviewPanel {
-	public static currentPanel: MeldWebviewPanel | undefined;
-	private readonly _panel: vscode.WebviewPanel;
-	private readonly _extensionUri: vscode.Uri;
-	private _disposables: vscode.Disposable[] = [];
+/**
+ * Custom text editor provider for the Meld 3-way merge view.
+ *
+ * Using CustomTextEditorProvider (vs the old createWebviewPanel approach) means
+ * VS Code manages the document lifecycle for us:
+ *   - Dirty dot appears automatically when WorkspaceEdits are applied
+ *   - Ctrl+S / ⌘S triggers saveCustomDocument natively
+ *   - "File modified on disk" conflict dialogs appear on external changes
+ *   - Opening the same file in a normal text editor syncs rather than conflicts
+ */
+export class MeldCustomEditorProvider
+	implements vscode.CustomTextEditorProvider
+{
+	public static readonly viewType = "meld.mergeEditor";
 
-	public static createOrShow(
-		extensionUri: vscode.Uri,
-		repoPath: string,
-		relativeFilePath: string,
-		documentUri: vscode.Uri,
-	) {
-		const column = vscode.window.activeTextEditor
-			? vscode.window.activeTextEditor.viewColumn
-			: undefined;
+	constructor(private readonly extensionUri: vscode.Uri) {}
 
-		if (MeldWebviewPanel.currentPanel) {
-			MeldWebviewPanel.currentPanel._panel.reveal(column);
-			MeldWebviewPanel.currentPanel.loadGitStates(repoPath, relativeFilePath, documentUri);
+	public static register(
+		context: vscode.ExtensionContext,
+	): vscode.Disposable {
+		const provider = new MeldCustomEditorProvider(context.extensionUri);
+		return vscode.window.registerCustomEditorProvider(
+			MeldCustomEditorProvider.viewType,
+			provider,
+			{
+				webviewOptions: { retainContextWhenHidden: true },
+			},
+		);
+	}
+
+	async resolveCustomTextEditor(
+		document: vscode.TextDocument,
+		webviewPanel: vscode.WebviewPanel,
+		_token: vscode.CancellationToken,
+	): Promise<void> {
+		const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+		if (!workspaceFolder) {
+			webviewPanel.webview.html = "<p>File is not in a workspace.</p>";
 			return;
 		}
 
-		const panel = vscode.window.createWebviewPanel(
-			"meldDiff",
-			`Meld: ${path.basename(relativeFilePath)}`,
-			column || vscode.ViewColumn.One,
-			{
-				enableScripts: true,
-				localResourceRoots: [vscode.Uri.joinPath(extensionUri, "out")],
-				retainContextWhenHidden: true,
+		const repoPath = workspaceFolder.uri.fsPath;
+		const relativeFilePath = path
+			.relative(repoPath, document.uri.fsPath)
+			.replace(/\\/g, "/");
+
+		webviewPanel.webview.options = {
+			enableScripts: true,
+			localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, "out")],
+		};
+		webviewPanel.webview.html = this._getHtmlForWebview(webviewPanel.webview);
+
+		// Load git stages and send the diff payload once the webview is ready.
+		await this._initializeWebview(
+			document,
+			webviewPanel,
+			repoPath,
+			relativeFilePath,
+		);
+	}
+
+	private async _initializeWebview(
+		document: vscode.TextDocument,
+		webviewPanel: vscode.WebviewPanel,
+		repoPath: string,
+		relativeFilePath: string,
+	): Promise<void> {
+		const payload = await buildDiffPayload(repoPath, relativeFilePath);
+
+		let expectedText = document.getText();
+
+		const messageListener = webviewPanel.webview.onDidReceiveMessage(
+			async (msg) => {
+				switch (msg.command) {
+					case "ready":
+						webviewPanel.webview.postMessage(payload);
+						break;
+
+					case "contentChanged": {
+						// Apply the edit to the underlying TextDocument so VS Code
+						// tracks dirty state and handles Ctrl+S natively.
+						const newText: string = msg.text;
+						expectedText = newText;
+
+						const fullRange = new vscode.Range(
+							document.positionAt(0),
+							document.positionAt(document.getText().length),
+						);
+						const edit = new vscode.WorkspaceEdit();
+						edit.replace(document.uri, fullRange, newText);
+						await vscode.workspace.applyEdit(edit);
+						break;
+					}
+
+					case "copyHash":
+						vscode.env.clipboard.writeText(msg.hash);
+						vscode.window.showInformationMessage(`Copied hash: ${msg.hash}`);
+						break;
+
+					case "showDiff": {
+						const gitExt = vscode.extensions.getExtension('vscode.git');
+						if (gitExt) {
+							if (!gitExt.isActive) {
+								await gitExt.activate();
+							}
+							const gitApi = gitExt.exports.getAPI(1);
+							// msg.paneIndex === 0 is Local (Stage 2)
+							// msg.paneIndex === 2 is Incoming (Stage 3)
+							// Stage 1 is Base
+							const baseUri = gitApi.toGitUri(document.uri, ':1');
+							const targetUri = gitApi.toGitUri(document.uri, msg.paneIndex === 0 ? ':2' : ':3');
+							const label = `${path.basename(document.uri.fsPath)} (Base ↔ ${msg.paneIndex === 0 ? 'Local' : 'Remote'})`;
+							vscode.commands.executeCommand('vscode.diff', baseUri, targetUri, label);
+						} else {
+							vscode.window.showErrorMessage("Git extension is not available.");
+						}
+						break;
+					}
+
+					case "completeMerge":
+						await document.save();
+						vscode.commands.executeCommand("meld-auto-merge.smartAdd", {
+							uri: document.uri,
+						});
+						webviewPanel.dispose();
+						break;
+				}
 			},
 		);
 
-		MeldWebviewPanel.currentPanel = new MeldWebviewPanel(panel, extensionUri);
-		MeldWebviewPanel.currentPanel.loadGitStates(repoPath, relativeFilePath, documentUri);
-	}
+		const changeDocumentSubscription = vscode.workspace.onDidChangeTextDocument(e => {
+			if (e.document.uri.toString() === document.uri.toString()) {
+				const currentText = e.document.getText();
+				
+				// If the document's text exactly matches what we last received from
+				// the webview, this event is just VS Code echoing our own edit back to us.
+				// Ignore it to prevent an infinite feedback loop.
+				if (currentText === expectedText) {
+					return;
+				}
 
-	private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri) {
-		this._panel = panel;
-		this._extensionUri = extensionUri;
-
-		this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
-		this._panel.webview.html = this._getHtmlForWebview(this._panel.webview);
-	}
-
-	private async loadGitStates(repoPath: string, relativeFilePath: string, documentUri: vscode.Uri) {
-		const payload = await buildDiffPayload(repoPath, relativeFilePath);
-
-		// We must wait for the React App to mount and send a 'ready' message
-		// before we blast it with the payload, otherwise the event is missed
-		// and it hangs on "Loading Diff..."
-		const messageListener = this._panel.webview.onDidReceiveMessage(async (msg) => {
-			if (msg.command === "ready") {
-				this._panel.webview.postMessage(payload);
-			} else if (msg.command === "save") {
-				const edit = new vscode.WorkspaceEdit();
-				const document = await vscode.workspace.openTextDocument(documentUri);
-				const fullRange = new vscode.Range(
-					document.positionAt(0),
-					document.positionAt(document.getText().length)
-				);
-				edit.replace(documentUri, fullRange, msg.text);
-				await vscode.workspace.applyEdit(edit);
-				await document.save();
-				vscode.window.showInformationMessage(`Saved ${relativeFilePath}`);
-			} else if (msg.command === "showCommit") {
-				vscode.commands.executeCommand(
-					"meld-auto-merge.showCommit",
-					repoPath,
-					msg.hash,
-				);
-			} else if (msg.command === "completeMerge") {
-				vscode.commands.executeCommand(
-					"meld-auto-merge.smartAdd",
-					{ uri: documentUri }
-				);
-				this._panel.dispose();
+				// The change came from outside our webview (e.g. user typing in the regular text editor tab).
+				// We must update our known state and push the change to the webview.
+				expectedText = currentText;
+				webviewPanel.webview.postMessage({
+					command: "updateContent",
+					text: currentText,
+				});
 			}
 		});
 
-		this._disposables.push(messageListener);
+		webviewPanel.onDidDispose(() => {
+			messageListener.dispose();
+			changeDocumentSubscription.dispose();
+		});
 	}
 
-	public dispose() {
-		MeldWebviewPanel.currentPanel = undefined;
-		this._panel.dispose();
-		while (this._disposables.length) {
-			const x = this._disposables.pop();
-			if (x) {
-				x.dispose();
-			}
-		}
-	}
-
-	private _getHtmlForWebview(webview: vscode.Webview) {
+	private _getHtmlForWebview(webview: vscode.Webview): string {
 		const scriptUri = webview.asWebviewUri(
-			vscode.Uri.joinPath(this._extensionUri, "out", "webview", "index.js"),
+			vscode.Uri.joinPath(this.extensionUri, "out", "webview", "index.js"),
 		);
 
 		return `<!DOCTYPE html>
