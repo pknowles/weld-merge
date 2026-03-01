@@ -21,7 +21,11 @@
 			{
 				"viewType": "meld.mergeEditor",
 				"displayName": "Meld 3-Way Merge",
-				"selector": [{ "filenamePattern": "*" }],
+				"selector": [
+					{
+						"filenamePattern": "*"
+					}
+				],
 				"priority": "option"
 			}
 		],
@@ -130,7 +134,17 @@
 				"title": "Meld: Refresh Conflicted Files",
 				"icon": "$(refresh)"
 			}
-		]
+		],
+		"configuration": {
+			"title": "Meld",
+			"properties": {
+				"meld.mergeEditor.debounceDelay": {
+					"type": "integer",
+					"default": 300,
+					"description": "Delay in milliseconds before recomputing diff highlights while typing in the merge editor."
+				}
+			}
+		}
 	},
 	"scripts": {
 		"vscode:prepublish": "npm run compile",
@@ -168,6 +182,8 @@
 	},
 	"dependencies": {
 		"@monaco-editor/react": "^4.7.0",
+		"@types/diff": "^7.0.2",
+		"diff": "^8.0.3",
 		"lodash.debounce": "^4.0.8",
 		"react": "^19.2.4",
 		"react-dom": "^19.2.4"

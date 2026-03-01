@@ -1,7 +1,8 @@
-import * as vscode from "vscode";
 import * as path from "node:path";
+import * as vscode from "vscode";
 
 import { buildDiffPayload } from "./diffPayload";
+import type { DiffChunk, FileState } from "./ui/types";
 
 /**
  * Custom text editor provider for the Meld 3-way merge view.
@@ -20,9 +21,7 @@ export class MeldCustomEditorProvider
 
 	constructor(private readonly extensionUri: vscode.Uri) {}
 
-	public static register(
-		context: vscode.ExtensionContext,
-	): vscode.Disposable {
+	public static register(context: vscode.ExtensionContext): vscode.Disposable {
 		const provider = new MeldCustomEditorProvider(context.extensionUri);
 		return vscode.window.registerCustomEditorProvider(
 			MeldCustomEditorProvider.viewType,
@@ -70,9 +69,20 @@ export class MeldCustomEditorProvider
 		repoPath: string,
 		relativeFilePath: string,
 	): Promise<void> {
-		const payload = await buildDiffPayload(repoPath, relativeFilePath);
+		const config = vscode.workspace.getConfiguration("meld");
+		const debounceDelay = config.get<number>("mergeEditor.debounceDelay") ?? 300;
 
-		let expectedText = document.getText();
+		const payload = (await buildDiffPayload(
+			repoPath,
+			relativeFilePath,
+		)) as {
+			files: FileState[];
+			diffs: DiffChunk[][];
+			config?: { debounceDelay: number };
+		};
+		// Add configuration to the payload
+		payload.config = { debounceDelay };
+		let isUpdatingFromWebview = false;
 
 		const messageListener = webviewPanel.webview.onDidReceiveMessage(
 			async (msg) => {
@@ -85,15 +95,18 @@ export class MeldCustomEditorProvider
 						// Apply the edit to the underlying TextDocument so VS Code
 						// tracks dirty state and handles Ctrl+S natively.
 						const newText: string = msg.text;
-						expectedText = newText;
-
-						const fullRange = new vscode.Range(
-							document.positionAt(0),
-							document.positionAt(document.getText().length),
-						);
-						const edit = new vscode.WorkspaceEdit();
-						edit.replace(document.uri, fullRange, newText);
-						await vscode.workspace.applyEdit(edit);
+						isUpdatingFromWebview = true;
+						try {
+							const fullRange = new vscode.Range(
+								document.positionAt(0),
+								document.positionAt(document.getText().length),
+							);
+							const edit = new vscode.WorkspaceEdit();
+							edit.replace(document.uri, fullRange, newText);
+							await vscode.workspace.applyEdit(edit);
+						} finally {
+							isUpdatingFromWebview = false;
+						}
 						break;
 					}
 
@@ -103,7 +116,7 @@ export class MeldCustomEditorProvider
 						break;
 
 					case "showDiff": {
-						const gitExt = vscode.extensions.getExtension('vscode.git');
+						const gitExt = vscode.extensions.getExtension("vscode.git");
 						if (gitExt) {
 							if (!gitExt.isActive) {
 								await gitExt.activate();
@@ -112,10 +125,18 @@ export class MeldCustomEditorProvider
 							// msg.paneIndex === 0 is Local (Stage 2)
 							// msg.paneIndex === 2 is Incoming (Stage 3)
 							// Stage 1 is Base
-							const baseUri = gitApi.toGitUri(document.uri, ':1');
-							const targetUri = gitApi.toGitUri(document.uri, msg.paneIndex === 0 ? ':2' : ':3');
-							const label = `${path.basename(document.uri.fsPath)} (Base ↔ ${msg.paneIndex === 0 ? 'Local' : 'Remote'})`;
-							vscode.commands.executeCommand('vscode.diff', baseUri, targetUri, label);
+							const baseUri = gitApi.toGitUri(document.uri, ":1");
+							const targetUri = gitApi.toGitUri(
+								document.uri,
+								msg.paneIndex === 0 ? ":2" : ":3",
+							);
+							const label = `${path.basename(document.uri.fsPath)} (Base ↔ ${msg.paneIndex === 0 ? "Local" : "Remote"})`;
+							vscode.commands.executeCommand(
+								"vscode.diff",
+								baseUri,
+								targetUri,
+								label,
+							);
 						} else {
 							vscode.window.showErrorMessage("Git extension is not available.");
 						}
@@ -133,23 +154,32 @@ export class MeldCustomEditorProvider
 			},
 		);
 
-		const changeDocumentSubscription = vscode.workspace.onDidChangeTextDocument(e => {
-			if (e.document.uri.toString() === document.uri.toString()) {
-				const currentText = e.document.getText();
-				
-				// If the document's text exactly matches what we last received from
-				// the webview, this event is just VS Code echoing our own edit back to us.
-				// Ignore it to prevent an infinite feedback loop.
-				if (currentText === expectedText) {
-					return;
-				}
+		const changeDocumentSubscription = vscode.workspace.onDidChangeTextDocument(
+			(e) => {
+				if (e.document.uri.toString() === document.uri.toString()) {
+					// If WE caused this change via applyEdit, ignore it to prevent an infinite feedback loop.
+					if (isUpdatingFromWebview) {
+						return;
+					}
 
-				// The change came from outside our webview (e.g. user typing in the regular text editor tab).
-				// We must update our known state and push the change to the webview.
-				expectedText = currentText;
+
+					// The change came from outside our webview (e.g. user typing in the regular text editor tab).
+					// Push the change to the webview.
+					webviewPanel.webview.postMessage({
+						command: "updateContent",
+						text: e.document.getText(),
+					});
+				}
+			},
+		);
+
+		const changeConfigurationSubscription = vscode.workspace.onDidChangeConfiguration((e) => {
+			if (e.affectsConfiguration("meld.mergeEditor.debounceDelay")) {
+				const newConfig = vscode.workspace.getConfiguration("meld");
+				const newDelay = newConfig.get<number>("mergeEditor.debounceDelay") ?? 300;
 				webviewPanel.webview.postMessage({
-					command: "updateContent",
-					text: currentText,
+					command: "updateConfig",
+					config: { debounceDelay: newDelay }
 				});
 			}
 		});
@@ -157,6 +187,7 @@ export class MeldCustomEditorProvider
 		webviewPanel.onDidDispose(() => {
 			messageListener.dispose();
 			changeDocumentSubscription.dispose();
+			changeConfigurationSubscription.dispose();
 		});
 	}
 

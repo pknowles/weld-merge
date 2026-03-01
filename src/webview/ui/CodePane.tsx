@@ -1,8 +1,52 @@
 import Editor from "@monaco-editor/react";
+import { diffLines } from "diff";
 import type { editor } from "monaco-editor";
 import * as React from "react";
 import type { FileState } from "./types";
 
+const computeMinimalEdits = (
+	model: editor.ITextModel,
+	newText: string,
+): editor.IIdentifiedSingleEditOperation[] => {
+	const originalText = model.getValue();
+	if (originalText === newText) return [];
+
+	const changes = diffLines(originalText, newText);
+	let currentOffset = 0;
+	const edits: editor.IIdentifiedSingleEditOperation[] = [];
+
+	for (const change of changes) {
+		const changeLen = change.value.length;
+		if (change.added) {
+			const pos = model.getPositionAt(currentOffset);
+			edits.push({
+				range: {
+					startLineNumber: pos.lineNumber,
+					startColumn: pos.column,
+					endLineNumber: pos.lineNumber,
+					endColumn: pos.column,
+				},
+				text: change.value,
+			});
+		} else if (change.removed) {
+			const startPos = model.getPositionAt(currentOffset);
+			const endPos = model.getPositionAt(currentOffset + changeLen);
+			edits.push({
+				range: {
+					startLineNumber: startPos.lineNumber,
+					startColumn: startPos.column,
+					endLineNumber: endPos.lineNumber,
+					endColumn: endPos.column,
+				},
+				text: "",
+			});
+			currentOffset += changeLen;
+		} else {
+			currentOffset += changeLen;
+		}
+	}
+	return edits;
+};
 interface CodePaneProps {
 	file: FileState;
 	index: number;
@@ -75,7 +119,10 @@ export const CodePane: React.FC<CodePaneProps> = ({
 		}
 	};
 
-	const handleTitleClick = () => {
+	const handleTitleClick = (e: React.MouseEvent) => {
+		if (hoverRef.current?.contains(e.target as Node)) {
+			return; // Ignore clicks inside the hover card
+		}
 		if (onShowDiff) {
 			onShowDiff();
 		}
@@ -121,22 +168,21 @@ export const CodePane: React.FC<CodePaneProps> = ({
 		) {
 			setLastSyncId(externalSyncId);
 			if (file.content !== editorInstance.getValue()) {
-				const pos = editorInstance.getPosition();
 				const model = editorInstance.getModel();
 				if (model) {
 					isApplyingExternalSync.current = true;
 					try {
-						editorInstance.executeEdits("external-sync", [
-							{
-								range: model.getFullModelRange(),
-								text: file.content,
-								forceMoveMarkers: true,
-							},
-						]);
+						const edits = computeMinimalEdits(model, file.content);
+						if (edits.length > 0) {
+							model.pushEditOperations(
+								editorInstance.getSelections() || [],
+								edits,
+								() => editorInstance.getSelections() || [],
+							);
+						}
 					} finally {
 						isApplyingExternalSync.current = false;
 					}
-					if (pos) editorInstance.setPosition(pos);
 				}
 			}
 		}
@@ -203,11 +249,6 @@ export const CodePane: React.FC<CodePaneProps> = ({
 						{showHover && (
 							<div
 								ref={hoverRef}
-								onClick={(e) => e.stopPropagation()}
-								// Re-applying enter/leave so the card doesn't close while hovered
-								// This needs to be native since the wrapper button will close it if we mouse over the popup
-								onMouseEnter={handleMouseEnter}
-								onMouseLeave={handleMouseLeave}
 								style={{
 									position: "fixed",
 									top: hoverPos.y,

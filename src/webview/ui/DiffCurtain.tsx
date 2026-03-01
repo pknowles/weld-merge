@@ -19,10 +19,6 @@ export const DiffCurtain: React.FC<DiffCurtainProps> = ({
 	renderTrigger: _renderTrigger,
 	reversed,
 }) => {
-	if (!diffs || !leftEditor || !rightEditor) {
-		return null;
-	}
-
 	const width = 40;
 	const curveOffset = 15;
 
@@ -44,11 +40,15 @@ export const DiffCurtain: React.FC<DiffCurtainProps> = ({
 
 		// Calculate initially
 		calculateOffset();
-		
+
 		// Recalculate if window resizes (which might wrap flex items)
 		window.addEventListener("resize", calculateOffset);
 		return () => window.removeEventListener("resize", calculateOffset);
-	}, [leftEditor, _renderTrigger]);
+	}, [leftEditor]);
+
+	if (!diffs || !leftEditor || !rightEditor) {
+		return null;
+	}
 
 	return (
 		<div
