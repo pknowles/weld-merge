@@ -1,5 +1,9 @@
 # Future Improvements & Known Issues
 
+## Detect when the user forgot to resolve a conflict and preserve conflict markers
+
+This is a feature meld doesn't have; probably because it's hard.
+
 ## Robust Tracking of "Resolved" Files During a Merge
 
 Currently, the extension parses `.git/MERGE_MSG` to determine which files were originally conflicted but have now been resolved (so we can list them in the "Resolved" section of the TreeView and allow users to run `checkout -m` on them).
