@@ -1,4 +1,5 @@
 import debounce from "lodash.debounce";
+import type * as monaco from "monaco-editor";
 import type { editor } from "monaco-editor";
 import * as React from "react";
 import { useEffect, useRef, useState } from "react";
@@ -134,7 +135,8 @@ const App: React.FC = () => {
 		ed: editor.IStandaloneCodeEditor,
 		edIndex: number,
 	) => {
-		return ed.onDidScrollChange((e: editor.IScrollEvent) => {
+		// Using proper Monaco scroll event type from the top-level namespace
+		return ed.onDidScrollChange((e: monaco.IScrollEvent) => {
 			setRenderTrigger((prev) => prev + 1);
 
 			if (syncingFrom.current !== null && syncingFrom.current !== edIndex)

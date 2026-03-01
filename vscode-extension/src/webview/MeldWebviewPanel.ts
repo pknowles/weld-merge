@@ -76,12 +76,15 @@ export class MeldCustomEditorProvider
 			repoPath,
 			relativeFilePath,
 		)) as {
-			files: FileState[];
-			diffs: DiffChunk[][];
-			config?: { debounceDelay: number };
+			command: string;
+			data: {
+				files: FileState[];
+				diffs: DiffChunk[][];
+				config?: { debounceDelay: number };
+			};
 		};
-		// Add configuration to the payload
-		payload.config = { debounceDelay };
+		// Add configuration to the payload data
+		payload.data.config = { debounceDelay };
 		let isUpdatingFromWebview = false;
 
 		const messageListener = webviewPanel.webview.onDidReceiveMessage(

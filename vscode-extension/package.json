@@ -121,7 +121,7 @@
 			},
 			{
 				"command": "meld-auto-merge.openMergeEditor",
-				"title": "Meld: Open 3-Way Merge Editor",
+				"title": "Meld: Open Default 3-Way Merge Editor",
 				"icon": "$(git-merge)"
 			},
 			{
