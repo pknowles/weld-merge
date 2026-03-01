@@ -4,6 +4,10 @@ export interface FileState {
 	commit?: {
 		hash: string;
 		title: string;
+		authorName: string;
+		authorEmail: string;
+		date: string;
+		body: string;
 	};
 }
 

@@ -28,19 +28,36 @@ export async function buildDiffPayload(
 
 	const getCommitInfo = async (
 		ref: string,
-	): Promise<{ hash: string; title: string } | undefined> => {
+	): Promise<
+		| {
+				hash: string;
+				title: string;
+				authorName: string;
+				authorEmail: string;
+				date: string;
+				body: string;
+		  }
+		| undefined
+	> => {
 		return new Promise((resolve) => {
 			cp.exec(
-				`git log -1 --format="%H|%s" ${ref}`,
+				`git log -1 --format="%H%x00%s%x00%an%x00%ae%x00%aI%x00%b" ${ref}`,
 				{ cwd: repoPath },
 				(err, stdout) => {
 					if (err) {
 						resolve(undefined);
 					} else {
-						const parts = stdout.trim().split("|");
-						if (parts.length < 2) resolve(undefined);
+						const parts = stdout.trim().split("\0");
+						if (parts.length < 5) resolve(undefined);
 						else
-							resolve({ hash: parts[0], title: parts.slice(1).join("|") });
+							resolve({
+								hash: parts[0],
+								title: parts[1],
+								authorName: parts[2],
+								authorEmail: parts[3],
+								date: parts[4],
+								body: parts.slice(5).join("\0"),
+							});
 					}
 				},
 			);

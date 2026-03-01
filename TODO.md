@@ -7,12 +7,6 @@ Base, Local, Merged, Remote, Base
 
 ## Highlight characters that differ within changed lines differently
 
-## On-save overwrite detection
-
-window.registerCustomEditorProvider
-
-provides a better dirty flag, consistent with other docs
-
 ## Detect when the user forgot to resolve a conflict and preserve conflict markers
 
 This is a feature meld doesn't have; probably because it's hard.
