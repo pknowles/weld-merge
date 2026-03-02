@@ -283,6 +283,250 @@ const App: React.FC = () => {
 		return highlights;
 	};
 
+	const handleApplyChunk = (paneIndex: number, chunk: DiffChunk) => {
+		const sourcePane = paneIndex === 0 ? 0 : 2;
+		const sourceEditor = editorRefs.current[sourcePane];
+		const mergedEditor = editorRefs.current[1];
+		if (!sourceEditor || !mergedEditor) return;
+		const sourceModel = sourceEditor.getModel();
+		const mergedModel = mergedEditor.getModel();
+		if (!sourceModel || !mergedModel) return;
+
+		let sourceText = "";
+		if (chunk.start_b < chunk.end_b) {
+			const startLine = chunk.start_b + 1;
+			const endLine = chunk.end_b;
+			const maxEndLine = sourceModel.getLineCount();
+			if (endLine < maxEndLine) {
+				sourceText = sourceModel.getValueInRange({
+					startLineNumber: startLine,
+					startColumn: 1,
+					endLineNumber: endLine + 1,
+					endColumn: 1
+				});
+			} else {
+				sourceText = sourceModel.getValueInRange({
+					startLineNumber: startLine,
+					startColumn: 1,
+					endLineNumber: maxEndLine,
+					endColumn: sourceModel.getLineMaxColumn(maxEndLine)
+				});
+				if (chunk.end_a < mergedModel.getLineCount() && sourceText !== "") {
+					sourceText += "\n";
+				}
+			}
+		}
+
+		let startLine = chunk.start_a + 1;
+		const endLine = chunk.end_a;
+		const mergedMaxLine = mergedModel.getLineCount();
+
+		let eLine = endLine + 1;
+		let eCol = 1;
+		if (endLine >= mergedMaxLine) {
+			eLine = mergedMaxLine;
+			eCol = mergedModel.getLineMaxColumn(mergedMaxLine);
+		}
+		
+		if (startLine > mergedMaxLine) {
+			startLine = mergedMaxLine;
+			eLine = mergedMaxLine;
+			const maxCol = mergedModel.getLineMaxColumn(mergedMaxLine);
+			if (sourceText && !sourceText.startsWith("\n")) {
+				sourceText = `\n${sourceText}`;
+			}
+			mergedEditor.executeEdits("meld-action", [{
+				range: { startLineNumber: startLine, startColumn: maxCol, endLineNumber: eLine, endColumn: maxCol },
+				text: sourceText,
+				forceMoveMarkers: true
+			}]);
+			return;
+		}
+
+		mergedEditor.executeEdits("meld-action", [{
+			range: {
+				startLineNumber: startLine,
+				startColumn: 1,
+				endLineNumber: eLine,
+				endColumn: eCol
+			},
+			text: sourceText,
+			forceMoveMarkers: true
+		}]);
+	};
+
+	const handleDeleteChunk = (_paneIndex: number, chunk: DiffChunk) => {
+		const mergedEditor = editorRefs.current[1];
+		if (!mergedEditor) return;
+		const mergedModel = mergedEditor.getModel();
+		if (!mergedModel) return;
+		
+		if (chunk.start_a >= chunk.end_a) return;
+
+		let startLine = chunk.start_a + 1;
+		const endLine = chunk.end_a;
+		const mergedMaxLine = mergedModel.getLineCount();
+
+		let eLine = endLine + 1;
+		let eCol = 1;
+		if (endLine >= mergedMaxLine) {
+			eLine = mergedMaxLine;
+			eCol = mergedModel.getLineMaxColumn(mergedMaxLine);
+			if (startLine > 1) {
+				startLine -= 1;
+				eCol = mergedModel.getLineMaxColumn(mergedMaxLine);
+				mergedEditor.executeEdits("meld-action", [{
+					range: {
+						startLineNumber: startLine,
+						startColumn: mergedModel.getLineMaxColumn(startLine),
+						endLineNumber: eLine,
+						endColumn: eCol
+					},
+					text: "",
+					forceMoveMarkers: true
+				}]);
+				return;
+			}
+		}
+
+		mergedEditor.executeEdits("meld-action", [{
+			range: {
+				startLineNumber: startLine,
+				startColumn: 1,
+				endLineNumber: eLine,
+				endColumn: eCol
+			},
+			text: "",
+			forceMoveMarkers: true
+		}]);
+	};
+
+	const handleCopyUpChunk = (paneIndex: number, chunk: DiffChunk) => {
+		const sourcePane = paneIndex === 0 ? 0 : 2;
+		const sourceEditor = editorRefs.current[sourcePane];
+		const mergedEditor = editorRefs.current[1];
+		if (!sourceEditor || !mergedEditor) return;
+		const sourceModel = sourceEditor.getModel();
+		const mergedModel = mergedEditor.getModel();
+		if (!sourceModel || !mergedModel) return;
+
+		let sourceText = "";
+		if (chunk.start_b < chunk.end_b) {
+			const startLine = chunk.start_b + 1;
+			const endLine = chunk.end_b;
+			const maxEndLine = sourceModel.getLineCount();
+			if (endLine < maxEndLine) {
+				sourceText = sourceModel.getValueInRange({
+					startLineNumber: startLine,
+					startColumn: 1,
+					endLineNumber: endLine + 1,
+					endColumn: 1
+				});
+			} else {
+				sourceText = sourceModel.getValueInRange({
+					startLineNumber: startLine,
+					startColumn: 1,
+					endLineNumber: maxEndLine,
+					endColumn: sourceModel.getLineMaxColumn(maxEndLine)
+				});
+				sourceText += "\n";
+			}
+		}
+
+		if (!sourceText) return;
+
+		const startLine = chunk.start_a + 1;
+		const maxLine = mergedModel.getLineCount();
+		if (startLine > maxLine) {
+			const maxCol = mergedModel.getLineMaxColumn(maxLine);
+			if (!sourceText.startsWith("\n")) {
+				sourceText = `\n${sourceText}`;
+			}
+			mergedEditor.executeEdits("meld-action", [{
+				range: { startLineNumber: maxLine, startColumn: maxCol, endLineNumber: maxLine, endColumn: maxCol },
+				text: sourceText,
+				forceMoveMarkers: true
+			}]);
+			return;
+		}
+
+		mergedEditor.executeEdits("meld-action", [{
+			range: {
+				startLineNumber: startLine,
+				startColumn: 1,
+				endLineNumber: startLine,
+				endColumn: 1
+			},
+			text: sourceText,
+			forceMoveMarkers: true
+		}]);
+	};
+
+	const handleCopyDownChunk = (paneIndex: number, chunk: DiffChunk) => {
+		const sourcePane = paneIndex === 0 ? 0 : 2;
+		const sourceEditor = editorRefs.current[sourcePane];
+		const mergedEditor = editorRefs.current[1];
+		if (!sourceEditor || !mergedEditor) return;
+		const sourceModel = sourceEditor.getModel();
+		const mergedModel = mergedEditor.getModel();
+		if (!sourceModel || !mergedModel) return;
+
+		let sourceText = "";
+		if (chunk.start_b < chunk.end_b) {
+			const startLine = chunk.start_b + 1;
+			const endLine = chunk.end_b;
+			const maxEndLine = sourceModel.getLineCount();
+			if (endLine < maxEndLine) {
+				sourceText = sourceModel.getValueInRange({
+					startLineNumber: startLine,
+					startColumn: 1,
+					endLineNumber: endLine + 1,
+					endColumn: 1
+				});
+			} else {
+				sourceText = sourceModel.getValueInRange({
+					startLineNumber: startLine,
+					startColumn: 1,
+					endLineNumber: maxEndLine,
+					endColumn: sourceModel.getLineMaxColumn(maxEndLine)
+				});
+				if (chunk.end_a < mergedModel.getLineCount() && sourceText !== "") {
+					sourceText += "\n";
+				}
+			}
+		}
+
+		if (!sourceText) return;
+
+		const endLine = chunk.end_a;
+		const maxLine = mergedModel.getLineCount();
+		const insertLine = endLine + 1;
+		
+		if (insertLine > maxLine) {
+			const maxCol = mergedModel.getLineMaxColumn(maxLine);
+			if (sourceText && !sourceText.startsWith("\n")) {
+				sourceText = `\n${sourceText}`;
+			}
+			mergedEditor.executeEdits("meld-action", [{
+				range: { startLineNumber: maxLine, startColumn: maxCol, endLineNumber: maxLine, endColumn: maxCol },
+				text: sourceText,
+				forceMoveMarkers: true
+			}]);
+			return;
+		}
+
+		mergedEditor.executeEdits("meld-action", [{
+			range: {
+				startLineNumber: insertLine,
+				startColumn: 1,
+				endLineNumber: insertLine,
+				endColumn: 1
+			},
+			text: sourceText,
+			forceMoveMarkers: true
+		}]);
+	};
+
 	const handleCopyHash = (hash: string) => {
 		vscodeApi?.postMessage({ command: "copyHash", hash });
 	};
@@ -340,6 +584,10 @@ const App: React.FC = () => {
 								rightEditor={editorRefs.current[index + 1]}
 								renderTrigger={renderTrigger}
 								reversed={index === 0}
+								onApplyChunk={(chunk) => handleApplyChunk(index, chunk)}
+								onDeleteChunk={(chunk) => handleDeleteChunk(index, chunk)}
+								onCopyUpChunk={(chunk) => handleCopyUpChunk(index, chunk)}
+								onCopyDownChunk={(chunk) => handleCopyDownChunk(index, chunk)}
 							/>
 						)}
 					</React.Fragment>

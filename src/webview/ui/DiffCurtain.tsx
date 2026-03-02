@@ -10,6 +10,10 @@ interface DiffCurtainProps {
 	// When true, the diff's a/b sides are reversed relative to left/right editors.
 	// diffs[0] has a=Merged(right) b=Local(left), so reversed=true swaps them.
 	reversed: boolean;
+	onApplyChunk?: (chunk: DiffChunk) => void;
+	onDeleteChunk?: (chunk: DiffChunk) => void;
+	onCopyUpChunk?: (chunk: DiffChunk) => void;
+	onCopyDownChunk?: (chunk: DiffChunk) => void;
 }
 
 export const DiffCurtain: React.FC<DiffCurtainProps> = ({
@@ -18,6 +22,10 @@ export const DiffCurtain: React.FC<DiffCurtainProps> = ({
 	rightEditor,
 	renderTrigger: _renderTrigger,
 	reversed,
+	onApplyChunk,
+	onDeleteChunk,
+	onCopyUpChunk,
+	onCopyDownChunk,
 }) => {
 	const width = 40;
 	const curveOffset = 15;
@@ -69,9 +77,31 @@ export const DiffCurtain: React.FC<DiffCurtainProps> = ({
 					left: 0,
 					width: "100%",
 					height: "100%",
+					overflow: "visible"
 				}}
 			>
 				<title>Diff Connections</title>
+				<style>{`
+					.diff-btn-container { opacity: 0; transition: opacity 0.1s; overflow: visible; }
+					.diff-container:hover .diff-btn-container { opacity: 1; }
+					.diff-btn {
+						width: 12px; height: 12px;
+						border: 1px solid rgba(255,255,255,0.2);
+						background: rgba(0,0,0,0.5);
+						border-radius: 3px;
+						color: white;
+						font-size: 10px;
+						display: flex;
+						align-items: center;
+						justify-content: center;
+						padding: 0;
+						cursor: pointer;
+						box-sizing: border-box;
+						line-height: 1;
+					}
+					.diff-btn:hover { background: rgba(100,100,100,0.9); border-color: rgba(255,255,255,0.6); }
+					.diff-cross-icon { font-size: 14px; font-weight: bold; margin-top: -2px; }
+				`}</style>
 				{diffs.map((chunk) => {
 					if (chunk.tag === "equal") return null;
 
@@ -116,14 +146,79 @@ export const DiffCurtain: React.FC<DiffCurtainProps> = ({
 								? "rgba(255, 0, 0, 0.5)"
 								: "rgba(0, 200, 0, 0.5)";
 
+					const isReplace = chunk.tag === "replace";
+					const canApply = isReplace || chunk.start_b < chunk.end_b;
+					const canDelete = isReplace || chunk.start_a < chunk.end_a;
+					
+					const applySide = reversed ? "left" : "right";
+					const deleteSide = reversed ? "right" : "left";
+
+					const applyX = applySide === "left" ? 4 : width - 16;
+					const deleteX = deleteSide === "left" ? 4 : width - 16;
+					
+					const baseApplyY = (applySide === "left" ? y1Top : y2Top) + 4;
+					const upY = baseApplyY;
+					const repY = isReplace ? baseApplyY + 14 : baseApplyY;
+					const downY = isReplace ? baseApplyY + 28 : baseApplyY;
+					const deleteY = (deleteSide === "left" ? y1Top : y2Top) + 4;
+
 					return (
-						<path
-							key={`${chunk.start_a}-${chunk.end_a}-${chunk.start_b}-${chunk.end_b}`}
-							d={path}
-							fill={color}
-							stroke={strokeColor}
-							strokeWidth="1"
-						/>
+						<g key={`${chunk.start_a}-${chunk.end_a}-${chunk.start_b}-${chunk.end_b}`} className="diff-container">
+							<path
+								d={path}
+								fill={color}
+								stroke={strokeColor}
+								strokeWidth="1"
+							/>
+							{canApply && onCopyUpChunk && isReplace && (
+								<foreignObject x={applyX} y={upY} width="12" height="12" className="diff-btn-container">
+									<button
+										type="button"
+										className="diff-btn"
+										onClick={() => onCopyUpChunk(chunk)}
+										title="Copy chunk up"
+									>
+										{applySide === "left" ? "↱" : "↰"}
+									</button>
+								</foreignObject>
+							)}
+							{canApply && onApplyChunk && (
+								<foreignObject x={applyX} y={repY} width="12" height="12" className="diff-btn-container">
+									<button
+										type="button"
+										className="diff-btn"
+										onClick={() => onApplyChunk(chunk)}
+										title="Push chunk to Merged"
+									>
+										{applySide === "left" ? "➔" : "⬅"}
+									</button>
+								</foreignObject>
+							)}
+							{canApply && onCopyDownChunk && isReplace && (
+								<foreignObject x={applyX} y={downY} width="12" height="12" className="diff-btn-container">
+									<button
+										type="button"
+										className="diff-btn"
+										onClick={() => onCopyDownChunk(chunk)}
+										title="Copy chunk down"
+									>
+										{applySide === "left" ? "↳" : "↲"}
+									</button>
+								</foreignObject>
+							)}
+							{canDelete && onDeleteChunk && (
+								<foreignObject x={deleteX} y={deleteY} width="12" height="12" className="diff-btn-container">
+									<button
+										type="button"
+										className="diff-btn diff-cross-icon"
+										onClick={() => onDeleteChunk(chunk)}
+										title="Delete chunk from Merged"
+									>
+										×
+									</button>
+								</foreignObject>
+							)}
+						</g>
 					);
 				})}
 			</svg>
