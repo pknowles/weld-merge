@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles, GPL v2
+
 export interface FileState {
 	label: string;
 	content: string;

@@ -1,3 +1,20 @@
+// Copyright (C) 2002-2006 Stephen Kennedy <stevek@gnome.org>
+// Copyright (C) 2009-2019 Kai Willadsen <kai.willadsen@gmail.com>
+// Copyright (C) 2026 Pyarelal Knowles
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or (at
+// your option) any later version.
+//
+// This program is distributed in the hope that it will be useful, but
+// WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+// General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 import debounce from "lodash.debounce";
 import type * as monaco from "monaco-editor";
 import type { editor } from "monaco-editor";
@@ -7,6 +24,7 @@ import { Differ } from "../../matchers/diffutil";
 import { CodePane } from "./CodePane";
 import { DiffCurtain } from "./DiffCurtain";
 import type { DiffChunk, FileState } from "./types";
+import { ErrorBoundary } from "./ErrorBoundary";
 
 interface VsCodeApi {
 	postMessage: (msg: unknown) => void;
@@ -21,8 +39,20 @@ try {
 	// Not in a VS Code webview
 }
 
+// Must match the splitLines used when initializing the Differ (in diffPayload.ts),
+// which pops trailing empty strings. Module-level so it's a stable reference
+// (does not need to appear in useCallback dependency arrays).
+const splitLines = (text: string) => {
+	const lines = text.split("\n");
+	if (lines.length > 0 && lines[lines.length - 1] === "") {
+		lines.pop();
+	}
+	return lines;
+};
+
 const App: React.FC = () => {
 	const [files, setFiles] = useState<FileState[]>([]);
+	const filesRef = useRef<FileState[]>([]);
 	const [diffs, setDiffs] = useState<DiffChunk[][]>([]);
 	const diffsRef = useRef<DiffChunk[][]>([]);
 	const differRef = useRef<Differ | null>(null);
@@ -30,58 +60,83 @@ const App: React.FC = () => {
 	const [debounceDelay, setDebounceDelay] = useState(300);
 	const [renderTrigger, setRenderTrigger] = useState(0);
 	const editorRefs = useRef<editor.IStandaloneCodeEditor[]>([]);
+	// Pending clipboard read requests: requestId -> resolve function
+	const clipboardPendingRef = useRef<Map<number, (text: string) => void>>(new Map());
+	const clipboardRequestIdRef = useRef(0);
+
+	// Routes clipboard paste through the VS Code extension host because
+	// navigator.clipboard.readText() is blocked in the webview sandbox.
+	const requestClipboardText = React.useCallback((): Promise<string> => {
+		const id = ++clipboardRequestIdRef.current;
+		return new Promise<string>((resolve) => {
+			clipboardPendingRef.current.set(id, resolve);
+			vscodeApi?.postMessage({ command: "readClipboard", requestId: id });
+			// Fallback: if not in a webview, try the browser clipboard directly
+			if (!vscodeApi) {
+				navigator.clipboard.readText().then(resolve).catch(() => resolve(""));
+			}
+		});
+	}, []);
 	// Index of the editor that initiated the current scroll sync.
 	// While set, other editors' scroll handlers skip to avoid feedback loops.
 	const syncingFrom = useRef<number | null>(null);
 
 	const commitModelUpdate = React.useCallback((value: string) => {
-		setFiles((prev) => {
-			if (prev.length !== 3) return prev;
+		// All computation must happen outside the setFiles updater.
+		// Calling setDiffs() inside setFiles(updater) is illegal in React — it causes
+		// diffs to become undefined for a frame, DiffCurtain early-outs to null, and
+		// the entire UI goes blank.
+		const files = filesRef.current;
+		if (!files || files.length !== 3) return;
 
-			const newFiles = [...prev];
-			const oldMidLines = newFiles[1].content.split("\n");
-			newFiles[1] = { ...newFiles[1], content: value };
-			const newMidLines = value.split("\n");
+		const oldMidLines = splitLines(files[1].content);
+		const newMidLines = splitLines(value);
 
-			const differ = differRef.current;
-			if (differ) {
-				let startidx = 0;
-				const minLen = Math.min(oldMidLines.length, newMidLines.length);
-				while (startidx < minLen && oldMidLines[startidx] === newMidLines[startidx]) {
-					startidx++;
-				}
-				const sizechange = newMidLines.length - oldMidLines.length;
-
-				const leftLines = newFiles[0].content.split("\n");
-				const rightLines = newFiles[2].content.split("\n");
-
-				differ.change_sequence(
-					1,
-					startidx,
-					sizechange,
-					[leftLines, newMidLines, rightLines],
-				);
-
-				const leftDiffs = differ._merge_cache
-					.map((pair) => pair[0])
-					.filter((c): c is NonNullable<typeof c> => c !== null);
-				const rightDiffs = differ._merge_cache
-					.map((pair) => pair[1])
-					.filter((c): c is NonNullable<typeof c> => c !== null);
-				const newDiffs = [leftDiffs, rightDiffs];
-				setDiffs(newDiffs);
-				diffsRef.current = newDiffs;
+		let newDiffs: DiffChunk[][] | null = null;
+		const differ = differRef.current;
+		if (differ) {
+			let startidx = 0;
+			const minLen = Math.min(oldMidLines.length, newMidLines.length);
+			while (startidx < minLen && oldMidLines[startidx] === newMidLines[startidx]) {
+				startidx++;
 			}
+			const sizechange = newMidLines.length - oldMidLines.length;
 
-			setRenderTrigger((p) => p + 1);
-			return newFiles;
-		});
+			const leftLines = splitLines(files[0].content);
+			const rightLines = splitLines(files[2].content);
+
+			differ.change_sequence(
+				1,
+				startidx,
+				sizechange,
+				[leftLines, newMidLines, rightLines],
+			);
+
+			const leftDiffs = differ._merge_cache
+				.map((pair) => pair[0])
+				.filter((c): c is NonNullable<typeof c> => c !== null);
+			const rightDiffs = differ._merge_cache
+				.map((pair) => pair[1])
+				.filter((c): c is NonNullable<typeof c> => c !== null);
+			newDiffs = [leftDiffs, rightDiffs];
+			diffsRef.current = newDiffs;
+		}
+
+		const newFiles = [...files];
+		newFiles[1] = { ...newFiles[1], content: value };
+		filesRef.current = newFiles;
+		setFiles(newFiles);
+		if (newDiffs !== null) {
+			setDiffs(newDiffs);
+		}
+		setRenderTrigger((p) => p + 1);
 	}, []);
 
 	useEffect(() => {
 		const handleMessage = (event: MessageEvent) => {
 			const message = event.data;
 			if (message.command === "loadDiff") {
+				filesRef.current = message.data.files;
 				setFiles(message.data.files);
 				setDiffs(message.data.diffs);
 				diffsRef.current = message.data.diffs;
@@ -93,13 +148,6 @@ const App: React.FC = () => {
 					setDebounceDelay(message.data.config.debounceDelay);
 				}
 
-				const splitLines = (text: string) => {
-					const lines = text.split("\n");
-					if (lines.length > 0 && lines[lines.length - 1] === "") {
-						lines.pop();
-					}
-					return lines;
-				};
 				const localLines = splitLines(message.data.files[0].content);
 				const midLines = splitLines(message.data.files[1].content);
 				const rightLines = splitLines(message.data.files[2].content);
@@ -123,6 +171,12 @@ const App: React.FC = () => {
 			} else if (message.command === "updateConfig") {
 				if (message.config?.debounceDelay !== undefined) {
 					setDebounceDelay(message.config.debounceDelay);
+				}
+			} else if (message.command === "clipboardText") {
+				const resolve = clipboardPendingRef.current.get(message.requestId);
+				if (resolve) {
+					clipboardPendingRef.current.delete(message.requestId);
+					resolve(message.text as string);
 				}
 			}
 		};
@@ -152,8 +206,11 @@ const App: React.FC = () => {
 				sLine: number,
 				diff: DiffChunk[],
 				sourceIsA: boolean,
+				tIndex: number,
 			): number => {
-				if (!diff || diff.length === 0) return sLine;
+				const maxLines = editorRefs.current[tIndex]?.getModel()?.getLineCount() || 1;
+				
+				if (!diff || diff.length === 0) return Math.min(sLine, maxLines);
 				let lastChunk = diff[0];
 				for (const chunk of diff) {
 					const sStart = sourceIsA ? chunk.start_a : chunk.start_b;
@@ -163,32 +220,31 @@ const App: React.FC = () => {
 
 					if (sLine >= sStart && sLine < sEnd) {
 						if (chunk.tag === "equal") {
-							return tStart + (sLine - sStart);
+							return Math.min(tStart + (sLine - sStart), maxLines);
 						}
 						const sLen = sEnd - sStart;
 						const tLen = tEnd - tStart;
 						const ratio = sLen > 0 ? (sLine - sStart) / sLen : 0;
-						return tStart + ratio * tLen;
+						return Math.min(tStart + ratio * tLen, maxLines);
 					}
 					lastChunk = chunk;
 				}
 				const sEnd = sourceIsA ? lastChunk.end_a : lastChunk.end_b;
 				const tEnd = sourceIsA ? lastChunk.end_b : lastChunk.end_a;
-				return tEnd + (sLine - sEnd);
+				return Math.min(tEnd + (sLine - sEnd), maxLines);
 			};
 
 			const mapLine = (sLine: number, sIdx: number, tIdx: number): number => {
 				if (sIdx === 0 && tIdx === 1)
-					return mapLineWithDiff(sLine, dRef[0], false);
+					return mapLineWithDiff(sLine, dRef[0], false, 1);
 				if (sIdx === 1 && tIdx === 0)
-					return mapLineWithDiff(sLine, dRef[0], true);
+					return mapLineWithDiff(sLine, dRef[0], true, 0);
 				if (sIdx === 1 && tIdx === 2)
-					return mapLineWithDiff(sLine, dRef[1], true);
+					return mapLineWithDiff(sLine, dRef[1], true, 2);
 				if (sIdx === 2 && tIdx === 1)
-					return mapLineWithDiff(sLine, dRef[1], false);
+					return mapLineWithDiff(sLine, dRef[1], false, 1);
 				return sLine;
 			};
-
 			if (e.scrollTopChanged) {
 				let lineHeight = ed.getTopForLineNumber(2) - ed.getTopForLineNumber(1);
 				if (lineHeight <= 0) lineHeight = 19;
@@ -544,60 +600,63 @@ const App: React.FC = () => {
 	};
 
 	return (
-		<div
-			style={{
-				display: "flex",
-				width: "100vw",
-				height: "100vh",
-				flexDirection: "row",
-				backgroundColor: "#1e1e1e",
-				overflow: "hidden",
-			}}
-		>
-			<style>{`
-				.diff-insert { background-color: rgba(0, 200, 0, 0.15) !important; }
-				.diff-delete { background-color: rgba(0, 200, 0, 0.15) !important; }
-				.diff-replace { background-color: rgba(0, 100, 255, 0.15) !important; }
-				.diff-conflict { background-color: rgba(255, 0, 0, 0.15) !important; }
-			`}</style>
-			{files.length === 0 ? (
-				<div
-					style={{ color: "white", padding: "20px", fontFamily: "sans-serif" }}
-				>
-					Loading Diff...
-				</div>
-			) : (
-				files.map((file, index) => (
-					<React.Fragment key={file.label}>
-						<CodePane
-							file={file}
-							index={index}
-							onMount={handleEditorMount}
-							onChange={handleEditorChange}
-							isMiddle={index === 1}
-							highlights={getHighlights(index)}
-							onCompleteMerge={index === 1 ? handleCompleteMerge : undefined}
-							onCopyHash={handleCopyHash}
-							onShowDiff={() => handleShowDiff(index)}
-							externalSyncId={index === 1 ? externalSyncId : undefined}
-						/>
-						{index < files.length - 1 && (
-							<DiffCurtain
-								diffs={diffs[index]}
-								leftEditor={editorRefs.current[index]}
-								rightEditor={editorRefs.current[index + 1]}
-								renderTrigger={renderTrigger}
-								reversed={index === 0}
-								onApplyChunk={(chunk) => handleApplyChunk(index, chunk)}
-								onDeleteChunk={(chunk) => handleDeleteChunk(index, chunk)}
-								onCopyUpChunk={(chunk) => handleCopyUpChunk(index, chunk)}
-								onCopyDownChunk={(chunk) => handleCopyDownChunk(index, chunk)}
+		<ErrorBoundary>
+			<div
+				style={{
+					display: "flex",
+					width: "100vw",
+					height: "100vh",
+					flexDirection: "row",
+					backgroundColor: "#1e1e1e",
+					overflow: "hidden",
+				}}
+			>
+				<style>{`
+					.diff-insert { background-color: rgba(0, 200, 0, 0.15) !important; }
+					.diff-delete { background-color: rgba(0, 200, 0, 0.15) !important; }
+					.diff-replace { background-color: rgba(0, 100, 255, 0.15) !important; }
+					.diff-conflict { background-color: rgba(255, 0, 0, 0.15) !important; }
+				`}</style>
+				{files.length === 0 ? (
+					<div
+						style={{ color: "white", padding: "20px", fontFamily: "sans-serif" }}
+					>
+						Loading Diff...
+					</div>
+				) : (
+					files.map((file, index) => (
+						<React.Fragment key={file.label}>
+							<CodePane
+								file={file}
+								index={index}
+								onMount={handleEditorMount}
+								onChange={handleEditorChange}
+								isMiddle={index === 1}
+								highlights={getHighlights(index)}
+								onCompleteMerge={index === 1 ? handleCompleteMerge : undefined}
+								onCopyHash={handleCopyHash}
+								onShowDiff={() => handleShowDiff(index)}
+								externalSyncId={index === 1 ? externalSyncId : undefined}
+								requestClipboardText={index === 1 ? requestClipboardText : undefined}
 							/>
-						)}
-					</React.Fragment>
-				))
-			)}
-		</div>
+							{index < files.length - 1 && (
+								<DiffCurtain
+									diffs={diffs[index]}
+									leftEditor={editorRefs.current[index]}
+									rightEditor={editorRefs.current[index + 1]}
+									renderTrigger={renderTrigger}
+									reversed={index === 0}
+									onApplyChunk={(chunk) => handleApplyChunk(index, chunk)}
+									onDeleteChunk={(chunk) => handleDeleteChunk(index, chunk)}
+									onCopyUpChunk={(chunk) => handleCopyUpChunk(index, chunk)}
+									onCopyDownChunk={(chunk) => handleCopyDownChunk(index, chunk)}
+								/>
+							)}
+						</React.Fragment>
+					))
+				)}
+			</div>
+		</ErrorBoundary>
 	);
 };
 

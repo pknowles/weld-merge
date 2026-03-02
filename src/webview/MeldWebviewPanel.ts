@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles, GPL v2
+
 import * as path from "node:path";
 import * as vscode from "vscode";
 
@@ -119,6 +121,18 @@ export class MeldCustomEditorProvider
 						vscode.window.showInformationMessage(`Copied hash: ${msg.hash}`);
 						break;
 
+					case "readClipboard": {
+						// navigator.clipboard.readText() is blocked in webview sandbox.
+						// The webview posts this message; we resolve it via the extension host.
+						const text = await vscode.env.clipboard.readText();
+						webviewPanel.webview.postMessage({
+							command: "clipboardText",
+							requestId: msg.requestId,
+							text,
+						});
+						break;
+					}
+
 					case "showDiff": {
 						const gitExt = vscode.extensions.getExtension("vscode.git");
 						if (gitExt) {
@@ -190,7 +204,10 @@ export class MeldCustomEditorProvider
 
 		const refreshSubscription = MeldCustomEditorProvider.onRequestRefresh.event(async (uri) => {
 			if (uri.toString() === document.uri.toString()) {
-				const newPayload = (await buildDiffPayload(repoPath, relativeFilePath)) as any;
+				const newPayload = (await buildDiffPayload(repoPath, relativeFilePath)) as {
+					command: string;
+					data: { files: FileState[]; diffs: DiffChunk[][]; config?: { debounceDelay: number } };
+				};
 				newPayload.data.config = { debounceDelay };
 				webviewPanel.webview.postMessage(newPayload);
 			}

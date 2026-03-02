@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles, GPL v2
+
 import * as React from "react";
 import type { DiffChunk } from "./types";
 import type { editor } from "monaco-editor";
@@ -105,11 +107,16 @@ export const DiffCurtain: React.FC<DiffCurtainProps> = ({
 				{diffs.map((chunk) => {
 					if (chunk.tag === "equal") return null;
 
+					const leftModel = leftEditor.getModel();
+					const rightModel = rightEditor.getModel();
+					const leftMax = leftModel ? leftModel.getLineCount() : 1;
+					const rightMax = rightModel ? rightModel.getLineCount() : 1;
+
 					// When reversed, a=right and b=left; otherwise a=left and b=right
-					const leftStartLine = Math.max(1, (reversed ? chunk.start_b : chunk.start_a) + 1);
-					const leftEndLine = Math.max(1, (reversed ? chunk.end_b : chunk.end_a) + 1);
-					const rightStartLine = Math.max(1, (reversed ? chunk.start_a : chunk.start_b) + 1);
-					const rightEndLine = Math.max(1, (reversed ? chunk.end_a : chunk.end_b) + 1);
+					const leftStartLine = Math.min(leftMax, Math.max(1, (reversed ? chunk.start_b : chunk.start_a) + 1));
+					const leftEndLine = Math.min(leftMax, Math.max(1, (reversed ? chunk.end_b : chunk.end_a) + 1));
+					const rightStartLine = Math.min(rightMax, Math.max(1, (reversed ? chunk.start_a : chunk.start_b) + 1));
+					const rightEndLine = Math.min(rightMax, Math.max(1, (reversed ? chunk.end_a : chunk.end_b) + 1));
 
 					const leftEmpty = reversed ? chunk.start_b === chunk.end_b : chunk.start_a === chunk.end_a;
 					const rightEmpty = reversed ? chunk.start_a === chunk.end_a : chunk.start_b === chunk.end_b;

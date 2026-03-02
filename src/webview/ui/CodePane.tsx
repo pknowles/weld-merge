@@ -1,6 +1,24 @@
+// Copyright (C) 2009 Vincent Legoll <vincent.legoll@gmail.com>
+// Copyright (C) 2010-2011, 2013-2019 Kai Willadsen <kai.willadsen@gmail.com>
+// Copyright (C) 2026 Pyarelal Knowles
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or (at
+// your option) any later version.
+//
+// This program is distributed in the hope that it will be useful, but
+// WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+// General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 import Editor from "@monaco-editor/react";
 import { diffLines } from "diff";
 import type { editor } from "monaco-editor";
+import * as monaco from "monaco-editor";
 import * as React from "react";
 import type { FileState } from "./types";
 
@@ -58,6 +76,7 @@ interface CodePaneProps {
 	onCopyHash?: (hash: string) => void;
 	externalSyncId?: number;
 	onShowDiff?: () => void;
+	requestClipboardText?: () => Promise<string>;
 }
 
 export const CodePane: React.FC<CodePaneProps> = ({
@@ -71,6 +90,7 @@ export const CodePane: React.FC<CodePaneProps> = ({
 	onCopyHash,
 	externalSyncId,
 	onShowDiff,
+	requestClipboardText,
 }) => {
 	const [editorInstance, setEditorInstance] =
 		React.useState<editor.IStandaloneCodeEditor | null>(null);
@@ -154,15 +174,26 @@ export const CodePane: React.FC<CodePaneProps> = ({
 		);
 	}, [editorInstance, highlights]);
 
-	const handleMount = (editor: editor.IStandaloneCodeEditor) => {
-		setEditorInstance(editor);
-		onMount(editor, index);
+	const handleMount = (monacoEditor: editor.IStandaloneCodeEditor) => {
+		setEditorInstance(monacoEditor);
+		onMount(monacoEditor, index);
+
+		// Override paste: navigator.clipboard.readText() is blocked in the webview
+		// sandbox. Route through the VS Code extension host instead.
+		if (requestClipboardText) {
+			monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => {
+				requestClipboardText().then((text) => {
+					monacoEditor.trigger("keyboard", "paste", { text });
+				});
+			});
+		}
 	};
 
 	React.useEffect(() => {
 		if (
 			editorInstance &&
-			file.content &&
+			file.content !== null &&
+			file.content !== undefined &&
 			externalSyncId !== undefined &&
 			externalSyncId !== lastSyncId
 		) {
@@ -370,13 +401,13 @@ export const CodePane: React.FC<CodePaneProps> = ({
 					defaultLanguage="typescript"
 					defaultValue={file.content}
 					theme="vs-dark"
-					options={{
+					options={React.useMemo(() => ({
 						minimap: { enabled: false },
 						readOnly: !isMiddle,
 						scrollBeyondLastLine: false,
-						wordWrap: "off",
-						renderWhitespace: "all",
-					}}
+						wordWrap: "off" as const,
+						renderWhitespace: "all" as const,
+					}), [isMiddle])}
 					onMount={handleMount}
 					onChange={(value) => {
 						if (isApplyingExternalSync.current) return;

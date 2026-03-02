@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles, GPL v2
+
 import * as React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";

@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles, GPL v2
+
 import * as cp from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";

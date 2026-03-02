@@ -26,6 +26,10 @@
 					},
 					"suspicious": {
 						"noExplicitAny": "error"
+					},
+					"correctness": {
+						"useExhaustiveDependencies": "error",
+						"useHookAtTopLevel": "error"
 					}
 				}
 			}
