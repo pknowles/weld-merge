@@ -317,6 +317,9 @@ export function activate(context: vscode.ExtensionContext) {
 				const newContent = await fs.readFile(documentUri.fsPath, "utf8");
 				await updateIfOpen(documentUri, newContent);
 
+				// Explicitly tell the webview to recalculate diffs and conflict markers
+				MeldCustomEditorProvider.onRequestRefresh.fire(documentUri);
+
 				vscode.window.showInformationMessage(
 					`Checked out conflicted version of ${relativeFilePath}`,
 				);

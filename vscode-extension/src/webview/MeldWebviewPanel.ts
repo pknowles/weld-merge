@@ -18,6 +18,7 @@ export class MeldCustomEditorProvider
 	implements vscode.CustomTextEditorProvider
 {
 	public static readonly viewType = "meld.mergeEditor";
+	public static readonly onRequestRefresh = new vscode.EventEmitter<vscode.Uri>();
 
 	constructor(private readonly extensionUri: vscode.Uri) {}
 
@@ -187,10 +188,19 @@ export class MeldCustomEditorProvider
 			}
 		});
 
+		const refreshSubscription = MeldCustomEditorProvider.onRequestRefresh.event(async (uri) => {
+			if (uri.toString() === document.uri.toString()) {
+				const newPayload = (await buildDiffPayload(repoPath, relativeFilePath)) as any;
+				newPayload.data.config = { debounceDelay };
+				webviewPanel.webview.postMessage(newPayload);
+			}
+		});
+
 		webviewPanel.onDidDispose(() => {
 			messageListener.dispose();
 			changeDocumentSubscription.dispose();
 			changeConfigurationSubscription.dispose();
+			refreshSubscription.dispose();
 		});
 	}
 

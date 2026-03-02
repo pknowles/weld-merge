@@ -85,6 +85,10 @@ const App: React.FC = () => {
 				setFiles(message.data.files);
 				setDiffs(message.data.diffs);
 				diffsRef.current = message.data.diffs;
+				// We bump externalSyncId here because a loadDiff is conceptually an external sync
+				// from the extension that provides entirely new file contents we need to push into Monaco
+				// via computeMinimalEdits, preserving the undo stack.
+				setExternalSyncId((id) => id + 1);
 				if (message.data.config?.debounceDelay !== undefined) {
 					setDebounceDelay(message.data.config.debounceDelay);
 				}
