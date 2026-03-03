@@ -1,5 +1,5 @@
 {
-	"name": "meld-merge",
+	"name": "meld-auto-merge",
 	"displayName": "Meld Merge",
 	"description": "3-way git merge conflict editor, a GNOME Meld Merge port",
 	"version": "0.0.3",

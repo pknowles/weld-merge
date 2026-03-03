@@ -17,3 +17,6 @@ knip.json
 .jscpd.json
 .dependency-cruiser.js
 test-split.js
+package-lock.json
+.antigravityignore
+*.vsix
