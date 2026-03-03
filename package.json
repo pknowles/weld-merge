@@ -1,8 +1,9 @@
 {
-	"name": "meld-auto-merge",
-	"displayName": "Meld Auto-Merge",
-	"description": "Auto-resolves complex Git merge conflicts using Meld heuristics",
-	"version": "0.0.2",
+	"name": "meld-merge",
+	"displayName": "Meld Merge",
+	"description": "3-way git merge conflict editor, a GNOME Meld Merge port",
+	"version": "0.0.3",
+	"icon": "images/icon.png",
 	"publisher": "pknowles",
 	"author": "Pyarelal Knowles",
 	"repository": {
@@ -34,8 +35,8 @@
 			"activitybar": [
 				{
 					"id": "meld-auto-merge",
-					"title": "Meld",
-					"icon": "$(git-merge)"
+					"title": "Meld Merge",
+					"icon": "images/icon.png"
 				}
 			]
 		},
@@ -43,7 +44,7 @@
 			"scm": [
 				{
 					"id": "meldConflictedFiles",
-					"name": "Meld Conflicted Files",
+					"name": "Meld Merge : Conflicted Files",
 					"icon": "$(warning)"
 				}
 			]
@@ -137,15 +138,121 @@
 			}
 		],
 		"configuration": {
-			"title": "Meld",
+			"title": "Meld Merge",
 			"properties": {
 				"meld.mergeEditor.debounceDelay": {
 					"type": "integer",
 					"default": 300,
 					"description": "Delay in milliseconds before recomputing diff highlights while typing in the merge editor."
+				},
+				"meld.mergeEditor.syntaxHighlighting": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable syntax highlighting in the merge editor."
 				}
 			}
-		}
+		},
+		"colors": [
+			{
+				"id": "meldMerge.diffInsertBackground",
+				"description": "Background color for inserted lines in the merge editor.",
+				"defaults": {
+					"dark": "#00c80026",
+					"light": "#00c80026",
+					"highContrast": "#00c80026"
+				}
+			},
+			{
+				"id": "meldMerge.diffDeleteBackground",
+				"description": "Background color for deleted lines in the merge editor.",
+				"defaults": {
+					"dark": "#00c80026",
+					"light": "#00c80026",
+					"highContrast": "#00c80026"
+				}
+			},
+			{
+				"id": "meldMerge.diffReplaceBackground",
+				"description": "Background color for replaced lines in the merge editor.",
+				"defaults": {
+					"dark": "#0064ff26",
+					"light": "#0064ff26",
+					"highContrast": "#0064ff26"
+				}
+			},
+			{
+				"id": "meldMerge.diffConflictBackground",
+				"description": "Background color for conflicting lines in the merge editor.",
+				"defaults": {
+					"dark": "#ff000026",
+					"light": "#ff000026",
+					"highContrast": "#ff000026"
+				}
+			},
+			{
+				"id": "meldMerge.diffReplaceInlineBackground",
+				"description": "Background color for inline changed text within replaced lines.",
+				"defaults": {
+					"dark": "#0064ff59",
+					"light": "#0064ff59",
+					"highContrast": "#0064ff59"
+				}
+			},
+			{
+				"id": "meldMerge.diffCurtainInsertFill",
+				"description": "Fill color for insert diff areas in the merging curtain.",
+				"defaults": {
+					"dark": "#00c80033",
+					"light": "#00c80033",
+					"highContrast": "#00c80033"
+				}
+			},
+			{
+				"id": "meldMerge.diffCurtainInsertStroke",
+				"description": "Stroke color for insert diff areas in the merging curtain.",
+				"defaults": {
+					"dark": "#00c80080",
+					"light": "#00c80080",
+					"highContrast": "#00c80080"
+				}
+			},
+			{
+				"id": "meldMerge.diffCurtainReplaceFill",
+				"description": "Fill color for replace diff areas in the merging curtain.",
+				"defaults": {
+					"dark": "#0064ff33",
+					"light": "#0064ff33",
+					"highContrast": "#0064ff33"
+				}
+			},
+			{
+				"id": "meldMerge.diffCurtainReplaceStroke",
+				"description": "Stroke color for replace diff areas in the merging curtain.",
+				"defaults": {
+					"dark": "#0064ff80",
+					"light": "#0064ff80",
+					"highContrast": "#0064ff80"
+				}
+			},
+			{
+				"id": "meldMerge.diffCurtainConflictFill",
+				"description": "Fill color for conflict diff areas in the merging curtain.",
+				"defaults": {
+					"dark": "#ff000033",
+					"light": "#ff000033",
+					"highContrast": "#ff000033"
+				}
+			},
+			{
+				"id": "meldMerge.diffCurtainConflictStroke",
+				"description": "Stroke color for conflict diff areas in the merging curtain.",
+				"defaults": {
+					"dark": "#ff000080",
+					"light": "#ff000080",
+					"highContrast": "#ff000080"
+				}
+			}
+		]
 	},
 	"scripts": {
 		"vscode:prepublish": "npm run compile",

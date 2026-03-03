@@ -1,13 +1,13 @@
 # Future Improvements & Known Issues
 
-
-
 ## 5-Way merge
 
 I'd like to add buttons to our custom merge view that add extra columns. currently we have 3: Local, Merged, Incoming. I want a button on the left of the Local that toggles a new "Base" column to the left. An equivalent button on the right of the "Incoming" title also toggles a new "Base" column to the right. Toggling both makes 5 columns total so you have:
-Base, Local, Merged, Remote, Base
+{Base, Local, Merged, Remote, Base}
 
-## Highlight characters that differ within changed lines differently
+Still need to figure out how to highlight Local/Remote based on Base. Maybe we
+just don't, and have the connections from Base->Local and Remote<-Base handle
+it?
 
 ## Detect when the user forgot to resolve a conflict and preserve conflict markers
 

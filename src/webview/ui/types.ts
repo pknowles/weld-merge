@@ -20,3 +20,12 @@ export interface DiffChunk {
 	start_b: number;
 	end_b: number;
 }
+
+export interface Highlight {
+	startLine: number;
+	startColumn: number;
+	endLine: number;
+	endColumn: number;
+	isWholeLine: boolean;
+	tag: string;
+}

@@ -20,7 +20,7 @@ import { diffLines } from "diff";
 import type { editor } from "monaco-editor";
 import * as monaco from "monaco-editor";
 import * as React from "react";
-import type { FileState } from "./types";
+import type { FileState, Highlight } from "./types";
 
 const computeMinimalEdits = (
 	model: editor.ITextModel,
@@ -71,12 +71,14 @@ interface CodePaneProps {
 	onMount: (editor: editor.IStandaloneCodeEditor, index: number) => void;
 	onChange: (value: string | undefined, index: number) => void;
 	isMiddle: boolean;
-	highlights?: { start: number; end: number; tag: string }[];
+	highlights?: Highlight[];
 	onCompleteMerge?: () => void;
 	onCopyHash?: (hash: string) => void;
 	externalSyncId?: number;
 	onShowDiff?: () => void;
 	requestClipboardText?: () => Promise<string>;
+	writeClipboardText?: (text: string) => void;
+	syntaxHighlighting?: boolean;
 }
 
 export const CodePane: React.FC<CodePaneProps> = ({
@@ -91,6 +93,8 @@ export const CodePane: React.FC<CodePaneProps> = ({
 	externalSyncId,
 	onShowDiff,
 	requestClipboardText,
+	writeClipboardText,
+	syntaxHighlighting = true,
 }) => {
 	const [editorInstance, setEditorInstance] =
 		React.useState<editor.IStandaloneCodeEditor | null>(null);
@@ -154,17 +158,18 @@ export const CodePane: React.FC<CodePaneProps> = ({
 		if (!editorInstance || !highlights) return;
 
 		const newDecorations = highlights
-			.filter((h) => h.start <= h.end)
+			.filter((h) => h.startLine <= h.endLine)
 			.map((h) => ({
 				range: {
-					startLineNumber: h.start,
-					startColumn: 1,
-					endLineNumber: h.end,
-					endColumn: 1,
+					startLineNumber: h.startLine,
+					startColumn: h.startColumn,
+					endLineNumber: h.endLine,
+					endColumn: h.endColumn,
 				},
 				options: {
-					isWholeLine: true,
-					className: `diff-${h.tag}`,
+					isWholeLine: h.isWholeLine,
+					className: h.isWholeLine ? `diff-${h.tag}` : undefined,
+					inlineClassName: !h.isWholeLine ? `diff-${h.tag}-inline` : undefined,
 				},
 			}));
 
@@ -178,13 +183,73 @@ export const CodePane: React.FC<CodePaneProps> = ({
 		setEditorInstance(monacoEditor);
 		onMount(monacoEditor, index);
 
-		// Override paste: navigator.clipboard.readText() is blocked in the webview
-		// sandbox. Route through the VS Code extension host instead.
+		if (writeClipboardText) {
+			monacoEditor.addAction({
+				id: "custom-copy",
+				label: "Copy",
+				keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC],
+				contextMenuGroupId: "9_cutcopypaste",
+				contextMenuOrder: 2,
+				run: (ed) => {
+					const model = ed.getModel();
+					const selection = ed.getSelection();
+					if (!model || !selection) return;
+
+					let text = "";
+					if (!selection.isEmpty()) {
+						text = model.getValueInRange(selection);
+					} else {
+						const line = selection.startLineNumber;
+						text = `${model.getLineContent(line)}\n`;
+					}
+					if (text) writeClipboardText(text);
+				},
+			});
+
+			monacoEditor.addAction({
+				id: "custom-cut",
+				label: "Cut",
+				keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyX],
+				contextMenuGroupId: "9_cutcopypaste",
+				contextMenuOrder: 1,
+				precondition: "!editorReadonly",
+				run: (ed) => {
+					const model = ed.getModel();
+					const selection = ed.getSelection();
+					if (!model || !selection || ed.getOption(monaco.editor.EditorOption.readOnly)) return;
+
+					let text = "";
+					let rangeToDelete = selection;
+					if (!selection.isEmpty()) {
+						text = model.getValueInRange(selection);
+					} else {
+						const line = selection.startLineNumber;
+						text = `${model.getLineContent(line)}\n`;
+						rangeToDelete = new monaco.Selection(line, 1, line + 1, 1);
+					}
+					
+					if (text) {
+						writeClipboardText(text);
+						ed.executeEdits("cut", [{ range: rangeToDelete, text: "" }]);
+					}
+				},
+			});
+		}
+
 		if (requestClipboardText) {
-			monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => {
-				requestClipboardText().then((text) => {
-					monacoEditor.trigger("keyboard", "paste", { text });
-				});
+			// Override the action so it appears in context menu AND handles Ctrl+V intelligently
+			// Note: this might show two "Paste" options in context menu, but one will work
+			monacoEditor.addAction({
+				id: "custom-paste",
+				label: "Paste",
+				keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV],
+				contextMenuGroupId: "9_cutcopypaste",
+				contextMenuOrder: 3,
+				run: (ed) => {
+					requestClipboardText().then((text) => {
+						ed.trigger("keyboard", "paste", { text });
+					});
+				},
 			});
 		}
 	};
@@ -398,7 +463,7 @@ export const CodePane: React.FC<CodePaneProps> = ({
 			</div>
 			<div style={{ flex: 1, position: "relative", minHeight: 0 }}>
 				<Editor
-					defaultLanguage="typescript"
+					language={syntaxHighlighting ? "typescript" : "plaintext"}
 					defaultValue={file.content}
 					theme="vs-dark"
 					options={React.useMemo(() => ({

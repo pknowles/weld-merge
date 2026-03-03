@@ -19,6 +19,8 @@ Please only try this release if:
 
 If you encounter issues, feedback is welcome — but don’t be surprised if things break. That’s part of the alpha process.
 
+Yes, this is written with AI. Even though under my guidance, it still does a lot of really dumb stuff and it's really hard forcing it not to.
+
 Use at your own discretion.
 
 ## Why Use This?

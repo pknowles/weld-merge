@@ -33,7 +33,7 @@ describe("Differ with conflict markers", () => {
 
 		differ.change_sequence(1, startidx, sizechange, [oldLeft, newMid, oldRight]);
 
-		const nans = differ.diffs[1].filter(c => isNaN(c.start_a) || isNaN(c.end_a) || isNaN(c.start_b) || isNaN(c.end_b));
+		const nans = differ.diffs[1].filter(c => Number.isNaN(c.start_a) || Number.isNaN(c.end_a) || Number.isNaN(c.start_b) || Number.isNaN(c.end_b));
 		expect(nans.length).toBe(0);
 	});
 });

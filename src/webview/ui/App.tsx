@@ -16,14 +16,15 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import debounce from "lodash.debounce";
-import type * as monaco from "monaco-editor";
+import * as monaco from "monaco-editor";
 import type { editor } from "monaco-editor";
 import * as React from "react";
 import { useEffect, useRef, useState } from "react";
 import { Differ } from "../../matchers/diffutil";
 import { CodePane } from "./CodePane";
 import { DiffCurtain } from "./DiffCurtain";
-import type { DiffChunk, FileState } from "./types";
+import { diffChars } from "diff";
+import type { DiffChunk, FileState, Highlight } from "./types";
 import { ErrorBoundary } from "./ErrorBoundary";
 
 interface VsCodeApi {
@@ -58,6 +59,7 @@ const App: React.FC = () => {
 	const differRef = useRef<Differ | null>(null);
 	const [externalSyncId, setExternalSyncId] = useState(0);
 	const [debounceDelay, setDebounceDelay] = useState(300);
+	const [syntaxHighlighting, setSyntaxHighlighting] = useState(true);
 	const [renderTrigger, setRenderTrigger] = useState(0);
 	const editorRefs = useRef<editor.IStandaloneCodeEditor[]>([]);
 	// Pending clipboard read requests: requestId -> resolve function
@@ -76,6 +78,13 @@ const App: React.FC = () => {
 				navigator.clipboard.readText().then(resolve).catch(() => resolve(""));
 			}
 		});
+	}, []);
+
+	const writeClipboardText = React.useCallback((text: string) => {
+		vscodeApi?.postMessage({ command: "writeClipboard", text });
+		if (!vscodeApi) {
+			navigator.clipboard.writeText(text).catch(() => {});
+		}
 	}, []);
 	// Index of the editor that initiated the current scroll sync.
 	// While set, other editors' scroll handlers skip to avoid feedback loops.
@@ -147,6 +156,9 @@ const App: React.FC = () => {
 				if (message.data.config?.debounceDelay !== undefined) {
 					setDebounceDelay(message.data.config.debounceDelay);
 				}
+				if (message.data.config?.syntaxHighlighting !== undefined) {
+					setSyntaxHighlighting(message.data.config.syntaxHighlighting);
+				}
 
 				const localLines = splitLines(message.data.files[0].content);
 				const midLines = splitLines(message.data.files[1].content);
@@ -172,6 +184,9 @@ const App: React.FC = () => {
 				if (message.config?.debounceDelay !== undefined) {
 					setDebounceDelay(message.config.debounceDelay);
 				}
+				if (message.config?.syntaxHighlighting !== undefined) {
+					setSyntaxHighlighting(message.config.syntaxHighlighting);
+				}
 			} else if (message.command === "clipboardText") {
 				const resolve = clipboardPendingRef.current.get(message.requestId);
 				if (resolve) {
@@ -186,8 +201,62 @@ const App: React.FC = () => {
 			vscodeApi.postMessage({ command: "ready" });
 		}
 
-		return () => window.removeEventListener("message", handleMessage);
-	}, [commitModelUpdate]);
+		const handleClipboard = (e: ClipboardEvent) => {
+			const activeEditor = editorRefs.current.find((ed) => ed?.hasWidgetFocus());
+			if (!activeEditor) return;
+
+			if (e.type === "paste") {
+				if (!activeEditor.getOption(monaco.editor.EditorOption.readOnly)) {
+					e.preventDefault();
+					requestClipboardText().then((text) => {
+						activeEditor.trigger("keyboard", "paste", { text });
+					});
+				}
+				return;
+			}
+
+			// Copy or Cut
+			const selection = activeEditor.getSelection();
+			if (!selection) return;
+
+			const model = activeEditor.getModel();
+			if (!model) return;
+
+			let text = "";
+			let rangeToDelete = selection;
+
+			if (!selection.isEmpty()) {
+				text = model.getValueInRange(selection);
+			} else {
+				// Empty selection: copy/cut the whole line (matching native behavior)
+				const line = selection.startLineNumber;
+				text = `${model.getLineContent(line)}\n`;
+				rangeToDelete = new monaco.Selection(line, 1, line + 1, 1);
+			}
+
+			if (text) {
+				e.preventDefault();
+				writeClipboardText(text);
+				if (
+					e.type === "cut" &&
+					!activeEditor.getOption(monaco.editor.EditorOption.readOnly)
+				) {
+					activeEditor.executeEdits("cut", [{ range: rangeToDelete, text: "" }]);
+				}
+			}
+		};
+
+		document.addEventListener("copy", handleClipboard);
+		document.addEventListener("cut", handleClipboard);
+		document.addEventListener("paste", handleClipboard);
+
+		return () => {
+			window.removeEventListener("message", handleMessage);
+			document.removeEventListener("copy", handleClipboard);
+			document.removeEventListener("cut", handleClipboard);
+			document.removeEventListener("paste", handleClipboard);
+		};
+	}, [commitModelUpdate, requestClipboardText, writeClipboardText]);
 
 	const attachScrollListener = (
 		ed: editor.IStandaloneCodeEditor,
@@ -310,38 +379,85 @@ const App: React.FC = () => {
 		[debounceDelay, files.length, commitModelUpdate],
 	);
 
-	const getHighlights = (paneIndex: number) => {
-		const highlights: { start: number; end: number; tag: string }[] = [];
-		if (paneIndex === 0 && diffs[0]) {
-			diffs[0].forEach((d) => {
-				if (d.tag !== "equal") {
-					highlights.push({ start: d.start_b + 1, end: d.end_b, tag: d.tag });
-				}
+	const getHighlights = React.useCallback((paneIndex: number) => {
+		const highlights: Highlight[] = [];
+		if (files.length !== 3) return highlights;
+
+		const processChunk = (
+			chunk: DiffChunk,
+			isMidPane: boolean,
+			diffIndex: number
+		) => {
+			if (chunk.tag === "equal") return;
+			const startLine = isMidPane ? chunk.start_a : chunk.start_b;
+			const endLine = isMidPane ? chunk.end_a : chunk.end_b;
+
+			highlights.push({
+				startLine: startLine + 1,
+				startColumn: 1,
+				endLine: endLine,
+				endColumn: 1,
+				isWholeLine: true,
+				tag: chunk.tag,
 			});
+
+			if (chunk.tag === "replace" && startLine < endLine) {
+				const outerPaneIndex = diffIndex === 0 ? 0 : 2;
+				const otherStartLine = isMidPane ? chunk.start_b : chunk.start_a;
+				const otherEndLine = isMidPane ? chunk.end_b : chunk.end_a;
+
+				// Our text
+				const myLines = splitLines(files[paneIndex].content).slice(startLine, endLine);
+				const myText = myLines.join("\n") + (myLines.length > 0 ? "\n" : "");
+
+				// Other text
+				const otherLines = splitLines(files[isMidPane ? outerPaneIndex : 1].content).slice(otherStartLine, otherEndLine);
+				const otherText = otherLines.join("\n") + (otherLines.length > 0 ? "\n" : "");
+
+				const changes = diffChars(myText, otherText);
+				let currentLine = startLine + 1;
+				let currentColumn = 1;
+
+				for (const change of changes) {
+					const lines = change.value.split("\n");
+					const nextLine = currentLine + lines.length - 1;
+					const nextColumn = lines.length === 1 ? currentColumn + lines[0].length : lines[lines.length - 1].length + 1;
+
+					// the diffChars output is relative to myText. So removed means it's in myText but not otherText
+					if (change.removed) {
+						highlights.push({
+							startLine: currentLine,
+							startColumn: currentColumn,
+							endLine: nextLine,
+							endColumn: nextColumn,
+							isWholeLine: false,
+							tag: "replace",
+						});
+					}
+
+					// We only advance our position for text that exists in myText (removed or equal)
+					if (!change.added) {
+						currentLine = nextLine;
+						currentColumn = nextColumn;
+					}
+				}
+			}
+		};
+
+		if (paneIndex === 0 && diffs[0]) {
+			diffs[0].forEach((d) => { processChunk(d, false, 0); });
 		} else if (paneIndex === 1) {
 			if (diffs[0]) {
-				diffs[0].forEach((d) => {
-					if (d.tag !== "equal") {
-						highlights.push({ start: d.start_a + 1, end: d.end_a, tag: d.tag });
-					}
-				});
+				diffs[0].forEach((d) => { processChunk(d, true, 0); });
 			}
 			if (diffs[1]) {
-				diffs[1].forEach((d) => {
-					if (d.tag !== "equal") {
-						highlights.push({ start: d.start_a + 1, end: d.end_a, tag: d.tag });
-					}
-				});
+				diffs[1].forEach((d) => { processChunk(d, true, 1); });
 			}
 		} else if (paneIndex === 2 && diffs[1]) {
-			diffs[1].forEach((d) => {
-				if (d.tag !== "equal") {
-					highlights.push({ start: d.start_b + 1, end: d.end_b, tag: d.tag });
-				}
-			});
+			diffs[1].forEach((d) => { processChunk(d, false, 1); });
 		}
 		return highlights;
-	};
+	}, [diffs, files]);
 
 	const handleApplyChunk = (paneIndex: number, chunk: DiffChunk) => {
 		const sourcePane = paneIndex === 0 ? 0 : 2;
@@ -612,10 +728,11 @@ const App: React.FC = () => {
 				}}
 			>
 				<style>{`
-					.diff-insert { background-color: rgba(0, 200, 0, 0.15) !important; }
-					.diff-delete { background-color: rgba(0, 200, 0, 0.15) !important; }
-					.diff-replace { background-color: rgba(0, 100, 255, 0.15) !important; }
-					.diff-conflict { background-color: rgba(255, 0, 0, 0.15) !important; }
+					.diff-insert { background-color: var(--vscode-meldMerge-diffInsertBackground, rgba(0, 200, 0, 0.15)) !important; }
+					.diff-delete { background-color: var(--vscode-meldMerge-diffDeleteBackground, rgba(0, 200, 0, 0.15)) !important; }
+					.diff-replace { background-color: var(--vscode-meldMerge-diffReplaceBackground, rgba(0, 100, 255, 0.15)) !important; }
+					.diff-conflict { background-color: var(--vscode-meldMerge-diffConflictBackground, rgba(255, 0, 0, 0.15)) !important; }
+					.diff-replace-inline { background-color: var(--vscode-meldMerge-diffReplaceInlineBackground, rgba(0, 100, 255, 0.35)) !important; }
 				`}</style>
 				{files.length === 0 ? (
 					<div
@@ -638,6 +755,8 @@ const App: React.FC = () => {
 								onShowDiff={() => handleShowDiff(index)}
 								externalSyncId={index === 1 ? externalSyncId : undefined}
 								requestClipboardText={index === 1 ? requestClipboardText : undefined}
+								writeClipboardText={writeClipboardText}
+								syntaxHighlighting={syntaxHighlighting}
 							/>
 							{index < files.length - 1 && (
 								<DiffCurtain
