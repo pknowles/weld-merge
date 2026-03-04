@@ -51,3 +51,13 @@ comm -12 <(git diff --name-only $BASE..HEAD | sort) \
 ```
 
 This logic can be implemented directly using the VS Code CLI/Node.js to get an exact list of files involved in the complex operation, ensuring accurate resolved tracking in all edge cases. Currently, if parsing fails, we gracefully degrade to just missing the resolved files, guaranteeing that actual conflicted files *always* show up via `git diff --name-only --diff-filter=U`.
+
+## Gemini's Lazy Load Monaco Idea
+
+To solve a possible delay reading a 10MB index.tsx all at once...
+
+*   **Remove Sync Import**: Remove `import * as monaco` in `src/webview/ui/index.tsx`.
+*   **Copy Local Files**: Add a build script to copy `node_modules/monaco-editor/min/vs` directly into `out/vs`.
+*   **Webview URI Configuration**: Make `MeldWebviewPanel.ts` expose a Webview URI for `out/vs` to the frontend (`window.__MONACO_VS_URI__`).
+*   **Configure Loader**: Set `loader.config({ paths: { vs: window.__MONACO_VS_URI__ } })` so Monaco lazy-loads instead of bundling entirely.
+*   **Fix Workers**: Fix cross-origin worker issues by returning a Blob in `getWorkerUrl` that uses `importScripts('${window.__MONACO_VS_URI__}/base/worker/workerMain.js')` so bundler plugins are not required.

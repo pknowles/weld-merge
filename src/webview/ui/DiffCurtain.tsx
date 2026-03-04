@@ -51,9 +51,21 @@ export const DiffCurtain: React.FC<DiffCurtainProps> = ({
 		// Calculate initially
 		calculateOffset();
 
-		// Recalculate if window resizes (which might wrap flex items)
+		// Recalculate if window resizes or container resizes
 		window.addEventListener("resize", calculateOffset);
-		return () => window.removeEventListener("resize", calculateOffset);
+
+		const observer = new ResizeObserver(() => {
+			calculateOffset();
+		});
+
+		const editorNode = leftEditor?.getContainerDomNode();
+		if (editorNode) observer.observe(editorNode);
+		if (curtainRef.current) observer.observe(curtainRef.current);
+
+		return () => {
+			window.removeEventListener("resize", calculateOffset);
+			observer.disconnect();
+		};
 	}, [leftEditor]);
 
 	if (!diffs || !leftEditor || !rightEditor) {

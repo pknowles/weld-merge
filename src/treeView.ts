@@ -4,6 +4,7 @@ import * as cp from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { getGitExecutable } from "./gitPath";
 
 export class ConflictedFilesProvider
 	implements vscode.TreeDataProvider<GitFile>
@@ -43,7 +44,6 @@ export class ConflictedFilesProvider
 			// of 'git diff --name-only' directly ensures we get the synchronous source of truth without relying
 			// on the extension's polling state. All arguments are hardcoded strings, so there's zero injection risk.
 			const unmergedOutput = await this.execShell(
-				"git",
 				["diff", "--name-only", "--diff-filter=U"],
 				repoPath,
 			);
@@ -126,7 +126,8 @@ export class ConflictedFilesProvider
 		}
 	}
 
-	private execShell(cmd: string, args: string[], cwd: string): Promise<string> {
+	private async execShell(args: string[], cwd: string): Promise<string> {
+		const cmd = await getGitExecutable();
 		return new Promise((resolve) => {
 			cp.execFile(cmd, args, { cwd }, (err, stdout) => {
 				if (err) {
@@ -157,7 +158,7 @@ export abstract class GitFile extends vscode.TreeItem {
 	}
 }
 
-export class ConflictedFile extends GitFile {
+class ConflictedFile extends GitFile {
 	constructor(
 		label: string,
 		collapsibleState: vscode.TreeItemCollapsibleState,
@@ -170,7 +171,7 @@ export class ConflictedFile extends GitFile {
 	}
 }
 
-export class ResolvedFile extends GitFile {
+class ResolvedFile extends GitFile {
 	constructor(
 		label: string,
 		collapsibleState: vscode.TreeItemCollapsibleState,

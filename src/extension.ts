@@ -4,11 +4,13 @@ import * as cp from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { getGitExecutable } from "./gitPath";
 import { GitTextMerger } from "./matchers/gitTextMerger";
 import { ConflictedFilesProvider, type GitFile } from "./treeView";
 import { MeldCustomEditorProvider } from "./webview/MeldWebviewPanel";
 
-function execShell(cmd: string, args: string[], cwd: string): Promise<string> {
+async function execShell(args: string[], cwd: string): Promise<string> {
+	const cmd = await getGitExecutable();
 	return new Promise((resolve, reject) => {
 		cp.execFile(
 			cmd,
@@ -43,9 +45,7 @@ async function getGitFileContent(
 		// The official API does not reliably expose fetching specific merge conflict stages (1, 2, 3)
 		// without needing to instantiate entire GitUri documents.
 		// 'relativeFilePath' comes directly from VS Code's trusted URI, and because it is passed
-		// as an element in the args array to execFile, it safely bypasses the shell, eliminating command injection risks.
 		const content = await execShell(
-			"git",
 			["show", `:${stage}:${relativeFilePath}`],
 			repoPath,
 		);
@@ -314,13 +314,7 @@ export function activate(context: vscode.ExtensionContext) {
 			if (!relativeFilePath) return;
 
 			try {
-				// The official vscode.git extension API does not support `git checkout -m` (checkout original conflicted state).
-				// 'relativeFilePath' is safely passed as a discrete argument array element to execFile.
-				await execShell(
-					"git",
-					["checkout", "-m", "--", relativeFilePath],
-					repoPath,
-				);
+				await execShell(["checkout", "-m", "--", relativeFilePath], repoPath);
 
 				// After disk updated, read back and apply to editor if open to preserve undo
 				const newContent = await fs.readFile(documentUri.fsPath, "utf8");
@@ -370,13 +364,7 @@ export function activate(context: vscode.ExtensionContext) {
 			if (!relativeFilePath) return;
 
 			try {
-				// The official vscode.git extension API does not support `git rerere forget`.
-				// 'relativeFilePath' is safely passed as a discrete argument array element to execFile.
-				await execShell(
-					"git",
-					["rerere", "forget", relativeFilePath],
-					repoPath,
-				);
+				await execShell(["rerere", "forget", relativeFilePath], repoPath);
 				vscode.window.showInformationMessage(
 					`Forgot recorded resolution for ${relativeFilePath}`,
 				);
@@ -430,7 +418,7 @@ export function activate(context: vscode.ExtensionContext) {
 				// While the official vscode.git API has an `.add()` method, using execFile here keeps the implementation
 				// consistent without the overhead of querying the Git extension for the active Repository object.
 				// 'relativeFilePath' is safely passed as a discrete argument array element to execFile.
-				await execShell("git", ["add", relativeFilePath], repoPath);
+				await execShell(["add", relativeFilePath], repoPath);
 				vscode.window.showInformationMessage(
 					`Successfully added ${relativeFilePath}`,
 				);

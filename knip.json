@@ -1,5 +1,3 @@
 {
-	"$schema": "https://unpkg.com/knip@5/schema.json",
-	"ignoreDependencies": ["lint-staged"],
-	"ignore": ["**/*.test.ts", "**/*.spec.ts"]
+	"$schema": "https://unpkg.com/knip@5/schema.json"
 }

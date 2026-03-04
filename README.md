@@ -206,9 +206,9 @@ Example `settings.json` snippet to tweak colors:
    ```bash
    npm install
    ```
-3. Compile the extension:
+3. Build the extension:
    ```bash
-   npm run compile
+   npm run build
    ```
 4. Press **`F5`** to open a new "Extension Development Host" window with the extension loaded.
 
@@ -219,7 +219,7 @@ We use Jest to verify the TypeScript port against Meld's original Python logic:
 ```bash
 npm test         # run unit tests
 npm run lint     # lint and format check
-npm run compile  # type-check
+npm run build    # build, lint etc
 npx vsce package # build a .vsix installer
 ```
 
