@@ -18,7 +18,7 @@
 import { diffChars } from "diff";
 import debounce from "lodash.debounce";
 import type { editor } from "monaco-editor";
-import * as monaco from "monaco-editor";
+
 import * as React from "react";
 import { useEffect, useRef, useState } from "react";
 import { Differ } from "../../matchers/diffutil";
@@ -26,19 +26,9 @@ import { CodePane } from "./CodePane";
 import { DiffCurtain } from "./DiffCurtain";
 import { ErrorBoundary } from "./ErrorBoundary";
 import type { DiffChunk, FileState, Highlight } from "./types";
-
-interface VsCodeApi {
-	postMessage: (msg: unknown) => void;
-}
-
-let vscodeApi: VsCodeApi | null = null;
-try {
-	vscodeApi = (
-		window as unknown as { acquireVsCodeApi: () => VsCodeApi }
-	).acquireVsCodeApi();
-} catch (_e) {
-	// Not in a VS Code webview
-}
+import { useClipboardOverrides } from "./useClipboardOverrides";
+import { useSynchronizedScrolling } from "./useSynchronizedScrolling";
+import { useVSCodeMessageBus } from "./useVSCodeMessageBus";
 
 // Must match the splitLines used when initializing the Differ (in diffPayload.ts),
 // which pops trailing empty strings. Module-level so it's a stable reference
@@ -62,38 +52,15 @@ const App: React.FC = () => {
 	const [syntaxHighlighting, setSyntaxHighlighting] = useState(true);
 	const [renderTrigger, setRenderTrigger] = useState(0);
 	const editorRefs = useRef<editor.IStandaloneCodeEditor[]>([]);
-	// Pending clipboard read requests: requestId -> resolve function
-	const clipboardPendingRef = useRef<Map<number, (text: string) => void>>(
-		new Map(),
+
+	const vscodeApi = useVSCodeMessageBus();
+	const { resolveClipboardRead, requestClipboardText, writeClipboardText } =
+		useClipboardOverrides(editorRefs);
+	const { attachScrollListener } = useSynchronizedScrolling(
+		editorRefs,
+		diffsRef,
+		setRenderTrigger,
 	);
-	const clipboardRequestIdRef = useRef(0);
-
-	// Routes clipboard paste through the VS Code extension host because
-	// navigator.clipboard.readText() is blocked in the webview sandbox.
-	const requestClipboardText = React.useCallback((): Promise<string> => {
-		const id = ++clipboardRequestIdRef.current;
-		return new Promise<string>((resolve) => {
-			clipboardPendingRef.current.set(id, resolve);
-			vscodeApi?.postMessage({ command: "readClipboard", requestId: id });
-			// Fallback: if not in a webview, try the browser clipboard directly
-			if (!vscodeApi) {
-				navigator.clipboard
-					.readText()
-					.then(resolve)
-					.catch(() => resolve(""));
-			}
-		});
-	}, []);
-
-	const writeClipboardText = React.useCallback((text: string) => {
-		vscodeApi?.postMessage({ command: "writeClipboard", text });
-		if (!vscodeApi) {
-			navigator.clipboard.writeText(text).catch(() => {});
-		}
-	}, []);
-	// Index of the editor that initiated the current scroll sync.
-	// While set, other editors' scroll handlers skip to avoid feedback loops.
-	const syncingFrom = useRef<number | null>(null);
 
 	const commitModelUpdate = React.useCallback((value: string) => {
 		// All computation must happen outside the setFiles updater.
@@ -195,11 +162,7 @@ const App: React.FC = () => {
 					setSyntaxHighlighting(message.config.syntaxHighlighting);
 				}
 			} else if (message.command === "clipboardText") {
-				const resolve = clipboardPendingRef.current.get(message.requestId);
-				if (resolve) {
-					clipboardPendingRef.current.delete(message.requestId);
-					resolve(message.text as string);
-				}
+				resolveClipboardRead(message.requestId, message.text as string);
 			}
 		};
 		window.addEventListener("message", handleMessage);
@@ -208,168 +171,10 @@ const App: React.FC = () => {
 			vscodeApi.postMessage({ command: "ready" });
 		}
 
-		const handleClipboard = (e: ClipboardEvent) => {
-			const activeEditor = editorRefs.current.find((ed) =>
-				ed?.hasWidgetFocus(),
-			);
-			if (!activeEditor) return;
-
-			if (e.type === "paste") {
-				if (!activeEditor.getOption(monaco.editor.EditorOption.readOnly)) {
-					e.preventDefault();
-					requestClipboardText().then((text) => {
-						activeEditor.trigger("keyboard", "paste", { text });
-					});
-				}
-				return;
-			}
-
-			// Copy or Cut
-			const selection = activeEditor.getSelection();
-			if (!selection) return;
-
-			const model = activeEditor.getModel();
-			if (!model) return;
-
-			let text = "";
-			let rangeToDelete = selection;
-
-			if (!selection.isEmpty()) {
-				text = model.getValueInRange(selection);
-			} else {
-				// Empty selection: copy/cut the whole line (matching native behavior)
-				const line = selection.startLineNumber;
-				text = `${model.getLineContent(line)}\n`;
-				rangeToDelete = new monaco.Selection(line, 1, line + 1, 1);
-			}
-
-			if (text) {
-				e.preventDefault();
-				writeClipboardText(text);
-				if (
-					e.type === "cut" &&
-					!activeEditor.getOption(monaco.editor.EditorOption.readOnly)
-				) {
-					activeEditor.executeEdits("cut", [
-						{ range: rangeToDelete, text: "" },
-					]);
-				}
-			}
-		};
-
-		document.addEventListener("copy", handleClipboard);
-		document.addEventListener("cut", handleClipboard);
-		document.addEventListener("paste", handleClipboard);
-
 		return () => {
 			window.removeEventListener("message", handleMessage);
-			document.removeEventListener("copy", handleClipboard);
-			document.removeEventListener("cut", handleClipboard);
-			document.removeEventListener("paste", handleClipboard);
 		};
-	}, [commitModelUpdate, requestClipboardText, writeClipboardText]);
-
-	const attachScrollListener = (
-		ed: editor.IStandaloneCodeEditor,
-		edIndex: number,
-	) => {
-		// Using proper Monaco scroll event type from the top-level namespace
-		return ed.onDidScrollChange((e: monaco.IScrollEvent) => {
-			setRenderTrigger((prev) => prev + 1);
-
-			if (syncingFrom.current !== null && syncingFrom.current !== edIndex)
-				return;
-
-			const dRef = diffsRef.current;
-
-			const mapLineWithDiff = (
-				sLine: number,
-				diff: DiffChunk[],
-				sourceIsA: boolean,
-				tIndex: number,
-			): number => {
-				const maxLines =
-					editorRefs.current[tIndex]?.getModel()?.getLineCount() || 1;
-
-				if (!diff || diff.length === 0) return Math.min(sLine, maxLines);
-				let lastChunk = diff[0];
-				for (const chunk of diff) {
-					const sStart = sourceIsA ? chunk.start_a : chunk.start_b;
-					const sEnd = sourceIsA ? chunk.end_a : chunk.end_b;
-					const tStart = sourceIsA ? chunk.start_b : chunk.start_a;
-					const tEnd = sourceIsA ? chunk.end_b : chunk.end_a;
-
-					if (sLine >= sStart && sLine < sEnd) {
-						if (chunk.tag === "equal") {
-							return Math.min(tStart + (sLine - sStart), maxLines);
-						}
-						const sLen = sEnd - sStart;
-						const tLen = tEnd - tStart;
-						const ratio = sLen > 0 ? (sLine - sStart) / sLen : 0;
-						return Math.min(tStart + ratio * tLen, maxLines);
-					}
-					lastChunk = chunk;
-				}
-				const sEnd = sourceIsA ? lastChunk.end_a : lastChunk.end_b;
-				const tEnd = sourceIsA ? lastChunk.end_b : lastChunk.end_a;
-				return Math.min(tEnd + (sLine - sEnd), maxLines);
-			};
-
-			const mapLine = (sLine: number, sIdx: number, tIdx: number): number => {
-				if (sIdx === 0 && tIdx === 1)
-					return mapLineWithDiff(sLine, dRef[0], false, 1);
-				if (sIdx === 1 && tIdx === 0)
-					return mapLineWithDiff(sLine, dRef[0], true, 0);
-				if (sIdx === 1 && tIdx === 2)
-					return mapLineWithDiff(sLine, dRef[1], true, 2);
-				if (sIdx === 2 && tIdx === 1)
-					return mapLineWithDiff(sLine, dRef[1], false, 1);
-				return sLine;
-			};
-			if (e.scrollTopChanged) {
-				let lineHeight = ed.getTopForLineNumber(2) - ed.getTopForLineNumber(1);
-				if (lineHeight <= 0) lineHeight = 19;
-				const sourceLine = Math.max(0, e.scrollTop) / lineHeight;
-
-				syncingFrom.current = edIndex;
-				editorRefs.current.forEach((otherEditor, i) => {
-					if (i !== edIndex && otherEditor) {
-						let targetLine = sourceLine;
-						if (edIndex === 0 && i === 1)
-							targetLine = mapLine(sourceLine, 0, 1);
-						else if (edIndex === 0 && i === 2)
-							targetLine = mapLine(mapLine(sourceLine, 0, 1), 1, 2);
-						else if (edIndex === 1 && i === 0)
-							targetLine = mapLine(sourceLine, 1, 0);
-						else if (edIndex === 1 && i === 2)
-							targetLine = mapLine(sourceLine, 1, 2);
-						else if (edIndex === 2 && i === 1)
-							targetLine = mapLine(sourceLine, 2, 1);
-						else if (edIndex === 2 && i === 0)
-							targetLine = mapLine(mapLine(sourceLine, 2, 1), 1, 0);
-
-						const targetScrollTop = targetLine * lineHeight;
-						if (Math.abs(otherEditor.getScrollTop() - targetScrollTop) > 2) {
-							otherEditor.setScrollTop(targetScrollTop);
-						}
-					}
-				});
-				syncingFrom.current = null;
-			}
-
-			if (e.scrollLeftChanged) {
-				syncingFrom.current = edIndex;
-				editorRefs.current.forEach((otherEditor, i) => {
-					if (i !== edIndex && otherEditor) {
-						if (Math.abs(otherEditor.getScrollLeft() - e.scrollLeft) > 2) {
-							otherEditor.setScrollLeft(e.scrollLeft);
-						}
-					}
-				});
-				syncingFrom.current = null;
-			}
-		});
-	};
+	}, [commitModelUpdate, resolveClipboardRead, vscodeApi]);
 
 	const handleEditorMount = (
 		editor: editor.IStandaloneCodeEditor,
@@ -388,7 +193,7 @@ const App: React.FC = () => {
 
 				vscodeApi?.postMessage({ command: "contentChanged", text: value });
 			}, debounceDelay),
-		[debounceDelay, files.length, commitModelUpdate],
+		[debounceDelay, files.length, commitModelUpdate, vscodeApi],
 	);
 
 	const getHighlights = React.useCallback(
