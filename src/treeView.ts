@@ -39,8 +39,12 @@ export class ConflictedFilesProvider
 
 			// Get unmerged (conflicted) files first.
 			// This guarantees we ALWAYS show currently conflicted files, even if MERGE_MSG is missing/corrupt.
+			// The official vscode.git API provides repository.state.mergeChanges, but parsing the raw output
+			// of 'git diff --name-only' directly ensures we get the synchronous source of truth without relying
+			// on the extension's polling state. All arguments are hardcoded strings, so there's zero injection risk.
 			const unmergedOutput = await this.execShell(
-				`git diff --name-only --diff-filter=U`,
+				"git",
+				["diff", "--name-only", "--diff-filter=U"],
 				repoPath,
 			);
 			const unmergedFiles = unmergedOutput
@@ -122,9 +126,9 @@ export class ConflictedFilesProvider
 		}
 	}
 
-	private execShell(cmd: string, cwd: string): Promise<string> {
+	private execShell(cmd: string, args: string[], cwd: string): Promise<string> {
 		return new Promise((resolve) => {
-			cp.exec(cmd, { cwd }, (err, stdout) => {
+			cp.execFile(cmd, args, { cwd }, (err, stdout) => {
 				if (err) {
 					resolve("");
 				} else {

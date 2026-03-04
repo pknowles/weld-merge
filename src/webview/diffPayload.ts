@@ -25,8 +25,13 @@ export async function buildDiffPayload(
 ) {
 	const getGitState = async (stage: number): Promise<string> => {
 		return new Promise<string>((resolve) => {
-			cp.exec(
-				`git show :${stage}:"${relativeFilePath}"`,
+			// The official vscode.git extension API does not provide a direct way to fetch a specific git stage
+			// without creating a GitUri and opening a document. We just need the raw string content here.
+			// 'stage' is a hardcoded integer, and 'relativeFilePath' is passed directly as an array argument to
+			// execFile, preventing any shell-based command injection.
+			cp.execFile(
+				"git",
+				["show", `:${stage}:${relativeFilePath}`],
 				{ cwd: repoPath },
 				(err, stdout) => {
 					if (err) {
@@ -57,8 +62,12 @@ export async function buildDiffPayload(
 		| undefined
 	> => {
 		return new Promise((resolve) => {
-			cp.exec(
-				`git log -1 --format="%H%x00%s%x00%an%x00%ae%x00%aI%x00%b" ${ref}`,
+			// We need specific formatting for the commit log separated by null bytes to parse it reliably.
+			// The vscode.git API's log method doesn't easily return custom formats.
+			// 'ref' comes from either our controlled "HEAD" or stage numbers, so it is safe.
+			cp.execFile(
+				"git",
+				["log", "-1", "--format=%H%x00%s%x00%an%x00%ae%x00%aI%x00%b", ref],
 				{ cwd: repoPath },
 				(err, stdout) => {
 					if (err) {
