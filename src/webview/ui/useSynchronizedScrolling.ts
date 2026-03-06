@@ -149,7 +149,6 @@ export const useSynchronizedScrolling = (
 		(ed: editor.IStandaloneCodeEditor, edIndex: number) => {
 			return ed.onDidScrollChange((e: import("monaco-editor").IScrollEvent) => {
 				if (scrollLockRef.current) return;
-				if (scrollLockRef.current) return;
 
 				// Only trigger react renders if it wasn't a locked event
 				setRenderTrigger((prev) => prev + 1);

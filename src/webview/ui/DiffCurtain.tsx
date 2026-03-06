@@ -3,6 +3,7 @@
 import type { editor } from "monaco-editor";
 import * as React from "react";
 import type { DiffChunk } from "./types";
+import { DIFF_WIDTH } from "./types";
 
 interface DiffCurtainProps {
 	diffs: DiffChunk[] | undefined;
@@ -33,7 +34,7 @@ export const DiffCurtain: React.FC<DiffCurtainProps> = ({
 	onCopyUpChunk,
 	onCopyDownChunk,
 }) => {
-	const width = 40;
+	const width = DIFF_WIDTH;
 	const curveOffset = 15;
 
 	const [leftHeaderOffset, setLeftHeaderOffset] = React.useState(0);

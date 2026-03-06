@@ -20,12 +20,13 @@ import debounce from "lodash.debounce";
 import type { editor } from "monaco-editor";
 
 import * as React from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Differ } from "../../matchers/diffutil";
 import { CodePane } from "./CodePane";
 import { DiffCurtain } from "./DiffCurtain";
 import { ErrorBoundary } from "./ErrorBoundary";
 import type { BaseDiffPayload, DiffChunk, FileState, Highlight } from "./types";
+import { DIFF_WIDTH } from "./types";
 import { useClipboardOverrides } from "./useClipboardOverrides";
 import { useSynchronizedScrolling } from "./useSynchronizedScrolling";
 import { useVSCodeMessageBus } from "./useVSCodeMessageBus";
@@ -41,6 +42,64 @@ const splitLines = (text: string) => {
 	return lines;
 };
 
+const AnimatedColumn = ({
+	isOpen,
+	children,
+	side,
+	textColumns,
+	textColumnsAfterAnimation,
+	id,
+}: React.PropsWithChildren<{
+	isOpen: boolean;
+	side: "left" | "right";
+	textColumns: number;
+	textColumnsAfterAnimation: number;
+	id?: string;
+}>) => {
+	const [shouldRender, setShouldRender] = useState(isOpen);
+	const [active, setActive] = useState(false);
+
+	useLayoutEffect(() => {
+		let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+		if (isOpen) {
+			setShouldRender(true);
+			const raf = requestAnimationFrame(() => setActive(true));
+			return () => cancelAnimationFrame(raf);
+		} else {
+			setActive(false);
+			timeoutId = setTimeout(() => setShouldRender(false), 430);
+		}
+
+		return () => {
+			if (timeoutId) clearTimeout(timeoutId);
+		};
+	}, [isOpen]);
+
+	const div = isOpen ? textColumns : textColumnsAfterAnimation;
+	const marginValue = active
+		? "0"
+		: `calc(-1 * ((100% + var(--meld-diff-width)) / ${div}))`;
+
+	if (!shouldRender && !isOpen) return null;
+
+	return (
+		<div
+			id={id}
+			style={{
+				display: "flex",
+				overflow: "hidden",
+				marginLeft: side === "left" ? marginValue : 0,
+				marginRight: side === "right" ? marginValue : 0,
+				transition: "margin 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
+				flex: 1,
+			}}
+		>
+			{children}
+		</div>
+	);
+};
+
 function usePreviousNonNull<T>(value: T | null): T | null {
 	const ref = useRef<T | null>(value);
 	useEffect(() => {
@@ -50,62 +109,6 @@ function usePreviousNonNull<T>(value: T | null): T | null {
 	}, [value]);
 	return value !== null ? value : ref.current;
 }
-
-const AnimatedColumn: React.FC<{
-	isOpen: boolean;
-	children: React.ReactNode;
-}> = ({ isOpen, children }) => {
-	const [renderState, setRenderState] = useState<
-		"closed" | "opening" | "open" | "closing"
-	>(isOpen ? "open" : "closed");
-	const [cachedChildren, setCachedChildren] = useState(children);
-
-	useEffect(() => {
-		if (isOpen) {
-			setCachedChildren(children);
-			if (renderState === "closed" || renderState === "closing") {
-				setRenderState("opening");
-				setTimeout(() => setRenderState("open"), 300);
-			}
-		} else {
-			if (renderState === "open" || renderState === "opening") {
-				setRenderState("closing");
-				setTimeout(() => setRenderState("closed"), 300);
-			}
-		}
-	}, [isOpen, children, renderState]);
-
-	if (renderState === "closed") return null;
-
-	const isGrowing = renderState === "opening" || renderState === "open";
-	const isFadedIn = renderState === "open";
-
-	return (
-		<div
-			style={{
-				flex: isGrowing ? 1 : 0.00001,
-				minWidth: 0,
-				overflow: "hidden",
-				transition: "flex 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-				display: "flex",
-				flexDirection: "row",
-			}}
-		>
-			<div
-				style={{
-					opacity: isFadedIn ? 1 : 0,
-					transition: "opacity 0.15s ease-in-out",
-					display: "flex",
-					flexDirection: "row",
-					flex: 1,
-					minWidth: renderState === "opening" && !isFadedIn ? "800px" : "0",
-				}}
-			>
-				{cachedChildren}
-			</div>
-		</div>
-	);
-};
 
 const App: React.FC = () => {
 	// files length is now always 5: [Base(left), Local, Merged, Remote, Base(right)]
@@ -123,6 +126,29 @@ const App: React.FC = () => {
 	const [smoothScrolling, setSmoothScrolling] = useState(true);
 	const [renderTrigger, setRenderTrigger] = useState(0);
 	const editorRefs = useRef<editor.IStandaloneCodeEditor[]>([]);
+
+	const [renderBaseLeft, setRenderBaseLeft] = useState(!!files[0]);
+	const [renderBaseRight, setRenderBaseRight] = useState(!!files[4]);
+
+	useLayoutEffect(() => {
+		if (files[0]) {
+			setRenderBaseLeft(true);
+		} else {
+			const t = setTimeout(() => setRenderBaseLeft(false), 430);
+			return () => clearTimeout(t);
+		}
+		return undefined;
+	}, [files[0]]);
+
+	useLayoutEffect(() => {
+		if (files[4]) {
+			setRenderBaseRight(true);
+		} else {
+			const t = setTimeout(() => setRenderBaseRight(false), 430);
+			return () => clearTimeout(t);
+		}
+		return undefined;
+	}, [files[4]]);
 
 	const vscodeApi = useVSCodeMessageBus();
 	const { resolveClipboardRead, requestClipboardText, writeClipboardText } =
@@ -257,7 +283,7 @@ const App: React.FC = () => {
 				}
 				differRef.current = differ;
 
-				setTimeout(() => setRenderTrigger((prev) => prev + 1), 500);
+				setTimeout(() => setRenderTrigger((prev) => prev + 1), 100); // HACK: gemini's approach to synchronization
 			} else if (message.command === "loadBaseDiff") {
 				const {
 					side,
@@ -276,7 +302,7 @@ const App: React.FC = () => {
 				newDiffs[diffIndex] = payloadDiffs;
 				diffsRef.current = newDiffs;
 				setDiffs(newDiffs);
-				setTimeout(() => setRenderTrigger((prev) => prev + 1), 500);
+				setTimeout(() => setRenderTrigger((prev) => prev + 1), 100); // HACK: gemini's approach to synchronization
 			} else if (message.command === "updateContent") {
 				setExternalSyncId((id) => id + 1);
 				commitModelUpdate(message.text);
@@ -771,14 +797,14 @@ const App: React.FC = () => {
 			// Clear it out
 			const newFiles = [...files];
 			newFiles[targetIndex] = null;
-			setFiles(newFiles);
 			filesRef.current = newFiles;
+			setFiles(newFiles);
 
 			const newDiffs = [...diffs];
 			const diffIdx = side === "left" ? 0 : 3;
 			newDiffs[diffIdx] = null;
-			setDiffs(newDiffs);
 			diffsRef.current = newDiffs;
+			setDiffs(newDiffs);
 		} else {
 			vscodeApi?.postMessage({ command: "requestBaseDiff", side });
 		}
@@ -794,6 +820,10 @@ const App: React.FC = () => {
 					flexDirection: "row",
 					backgroundColor: "#1e1e1e",
 					overflow: "hidden",
+					...({ "--meld-diff-width": `${DIFF_WIDTH}px` } as Record<
+						string,
+						string
+					>),
 				}}
 			>
 				<style>{`
@@ -821,148 +851,189 @@ const App: React.FC = () => {
 						Loading Diff...
 					</div>
 				) : (
-					[0, 1, 2, 3, 4].map((index) => {
-						const isLeftBase = index === 0;
-						const isRightBase = index === 4;
-						const activeFile =
-							files[index] ||
-							(isLeftBase ? prevBaseLeft : isRightBase ? prevBaseRight : null);
+					(() => {
+						return [0, 1, 2, 3, 4].map((index) => {
+							const peerCount = [0, 1, 2, 3, 4].filter((i) => {
+								if (i === index) return false;
+								if (i === 1 || i === 2 || i === 3) return !!files[i];
+								if (i === 0) return renderBaseLeft;
+								if (i === 4) return renderBaseRight;
+								return false;
+							}).length;
+							const isLeftBase = index === 0;
+							const isRightBase = index === 4;
+							const activeFile =
+								files[index] ||
+								(isLeftBase
+									? prevBaseLeft
+									: isRightBase
+										? prevBaseRight
+										: null);
 
-						if (!activeFile) return null;
+							if (!activeFile) return null;
 
-						const file = activeFile;
-						const isOpen = !!files[index];
+							const file = activeFile;
+							const isOpen = !!files[index];
 
-						let onToggleBase: undefined | (() => void);
-						let baseSide: "left" | "right" | undefined;
-						let isBaseActive = false;
+							let onToggleBase: undefined | (() => void);
+							let baseSide: "left" | "right" | undefined;
+							let isBaseActive = false;
 
-						if (index === 1) {
-							// Local
-							onToggleBase = () => toggleBaseDiff("left");
-							baseSide = "left";
-							isBaseActive = !!files[0];
-						} else if (index === 3) {
-							// Remote
-							onToggleBase = () => toggleBaseDiff("right");
-							baseSide = "right";
-							isBaseActive = !!files[4];
-						}
+							if (index === 1) {
+								// Local
+								onToggleBase = () => toggleBaseDiff("left");
+								baseSide = "left";
+								isBaseActive = !!files[0];
+							} else if (index === 3) {
+								// Remote
+								onToggleBase = () => toggleBaseDiff("right");
+								baseSide = "right";
+								isBaseActive = !!files[4];
+							}
 
-						// Calculate which diff segment connects to the next active pane
-						let diffsForCurtain: DiffChunk[] | null | undefined = null;
-						let leftEditorIdx = index;
-						let rightEditorIdx = index + 1;
-						let fadeOutLeft = false;
-						let fadeOutRight = false;
+							// Calculate which diff segment connects to the next active pane
+							let diffsForCurtain: DiffChunk[] | null | undefined = null;
+							let leftEditorIdx = index;
+							let rightEditorIdx = index + 1;
+							let fadeOutLeft = false;
+							let fadeOutRight = false;
 
-						const isLeftBaseComparing = baseCompareHighlighting && !!files[0];
-						const isRightBaseComparing = baseCompareHighlighting && !!files[4];
+							const isLeftBaseComparing = baseCompareHighlighting && !!files[0];
+							const isRightBaseComparing =
+								baseCompareHighlighting && !!files[4];
 
-						if (index === 0 && files[1]) {
-							diffsForCurtain = diffs[0] || prevBaseLeftDiffs;
-							leftEditorIdx = 0;
-							rightEditorIdx = 1;
-							if (!isLeftBaseComparing) fadeOutRight = true;
-						} else if (index === 1 && files[2]) {
-							diffsForCurtain = diffs[1];
-							leftEditorIdx = 1;
-							rightEditorIdx = 2;
-							if (isLeftBaseComparing) fadeOutLeft = true;
-						} else if (index === 2 && files[3]) {
-							diffsForCurtain = diffs[2];
-							leftEditorIdx = 2;
-							rightEditorIdx = 3;
-							if (isRightBaseComparing) fadeOutRight = true;
-						} else if (
-							index === 4 &&
-							activeFile /* use activeFile instead of files[4] for fade out */
-						) {
-							diffsForCurtain = diffs[3] || prevBaseRightDiffs;
-							leftEditorIdx = 3;
-							rightEditorIdx = 4;
-							if (!isRightBaseComparing) fadeOutLeft = true;
-						}
+							if (index === 0 && files[1]) {
+								diffsForCurtain = diffs[0] || prevBaseLeftDiffs;
+								leftEditorIdx = 0;
+								rightEditorIdx = 1;
+								if (!isLeftBaseComparing) fadeOutRight = true;
+							} else if (index === 1 && files[2]) {
+								diffsForCurtain = diffs[1];
+								leftEditorIdx = 1;
+								rightEditorIdx = 2;
+								if (isLeftBaseComparing) fadeOutLeft = true;
+							} else if (index === 2 && files[3]) {
+								diffsForCurtain = diffs[2];
+								leftEditorIdx = 2;
+								rightEditorIdx = 3;
+								if (isRightBaseComparing) fadeOutRight = true;
+							} else if (
+								index === 3 &&
+								activeFile &&
+								(files[4] || renderBaseRight)
+							) {
+								diffsForCurtain = diffs[3] || prevBaseRightDiffs;
+								leftEditorIdx = 3;
+								rightEditorIdx = 4;
+								if (!isRightBaseComparing) fadeOutLeft = true;
+							}
 
-						const curtainContent = diffsForCurtain &&
-							editorRefs.current[leftEditorIdx] &&
-							editorRefs.current[rightEditorIdx] && (
-								<DiffCurtain
-									diffs={diffsForCurtain}
-									leftEditor={editorRefs.current[leftEditorIdx]}
-									rightEditor={editorRefs.current[rightEditorIdx]}
-									renderTrigger={renderTrigger}
-									reversed={index === 1} // diffs[1] is Merged(a) <-> Local(b)
-									fadeOutLeft={fadeOutLeft}
-									fadeOutRight={fadeOutRight}
-									onApplyChunk={
-										index === 1
-											? (chunk) => handleApplyChunk(1, chunk)
-											: index === 2
-												? (chunk) => handleApplyChunk(3, chunk)
+							const curtainContent = diffsForCurtain &&
+								editorRefs.current[leftEditorIdx] &&
+								editorRefs.current[rightEditorIdx] && (
+									<DiffCurtain
+										diffs={diffsForCurtain}
+										leftEditor={editorRefs.current[leftEditorIdx]}
+										rightEditor={editorRefs.current[rightEditorIdx]}
+										renderTrigger={renderTrigger}
+										reversed={index === 1} // diffs[1] is Merged(a) <-> Local(b)
+										fadeOutLeft={fadeOutLeft}
+										fadeOutRight={fadeOutRight}
+										onApplyChunk={
+											index === 1
+												? (chunk) => handleApplyChunk(1, chunk)
+												: index === 2
+													? (chunk) => handleApplyChunk(3, chunk)
+													: undefined
+										}
+										onDeleteChunk={
+											index === 1 || index === 2
+												? (chunk) => handleDeleteChunk(index, chunk)
 												: undefined
-									}
-									onDeleteChunk={
-										index === 1 || index === 2
-											? (chunk) => handleDeleteChunk(index, chunk)
-											: undefined
-									}
-									onCopyUpChunk={
-										index === 1
-											? (chunk) => handleCopyUpChunk(1, chunk)
-											: index === 2
-												? (chunk) => handleCopyUpChunk(3, chunk)
-												: undefined
-									}
-									onCopyDownChunk={
-										index === 1
-											? (chunk) => handleCopyDownChunk(1, chunk)
-											: index === 2
-												? (chunk) => handleCopyDownChunk(3, chunk)
-												: undefined
-									}
-								/>
+										}
+										onCopyUpChunk={
+											index === 1
+												? (chunk) => handleCopyUpChunk(1, chunk)
+												: index === 2
+													? (chunk) => handleCopyUpChunk(3, chunk)
+													: undefined
+										}
+										onCopyDownChunk={
+											index === 1
+												? (chunk) => handleCopyDownChunk(1, chunk)
+												: index === 2
+													? (chunk) => handleCopyDownChunk(3, chunk)
+													: undefined
+										}
+									/>
+								);
+
+							const paneContent = (
+								<React.Fragment>
+									<CodePane
+										file={file}
+										index={index}
+										onMount={handleEditorMount}
+										onChange={handleEditorChange}
+										isMiddle={index === 2}
+										highlights={getHighlights(index)}
+										onCompleteMerge={
+											index === 2 ? handleCompleteMerge : undefined
+										}
+										onCopyHash={handleCopyHash}
+										onShowDiff={() => handleShowDiff(index)}
+										externalSyncId={index === 2 ? externalSyncId : undefined}
+										requestClipboardText={
+											index === 2 ? requestClipboardText : undefined
+										}
+										writeClipboardText={writeClipboardText}
+										syntaxHighlighting={syntaxHighlighting}
+										onToggleBase={onToggleBase}
+										baseSide={baseSide}
+										isBaseActive={isBaseActive}
+									/>
+									{curtainContent}
+								</React.Fragment>
 							);
 
-						const paneContent = (
-							<React.Fragment key={`inner-${file.label}-${index}`}>
-								{index === 4 && curtainContent}
-								<CodePane
-									file={file}
-									index={index}
-									onMount={handleEditorMount}
-									onChange={handleEditorChange}
-									isMiddle={index === 2}
-									highlights={getHighlights(index)}
-									onCompleteMerge={
-										index === 2 ? handleCompleteMerge : undefined
-									}
-									onCopyHash={handleCopyHash}
-									onShowDiff={() => handleShowDiff(index)}
-									externalSyncId={index === 2 ? externalSyncId : undefined}
-									requestClipboardText={
-										index === 2 ? requestClipboardText : undefined
-									}
-									writeClipboardText={writeClipboardText}
-									syntaxHighlighting={syntaxHighlighting}
-									onToggleBase={onToggleBase}
-									baseSide={baseSide}
-									isBaseActive={isBaseActive}
-								/>
-								{index !== 4 && curtainContent}
-							</React.Fragment>
-						);
+							if (isLeftBase || isRightBase) {
+								// curtainContent is a sibling of AnimatedColumn, NOT inside it.
+								// This ensures the animated div only contains the CodePane
+								// and is the same width as all other editor columns.
+								return (
+									<React.Fragment key={index}>
+										<AnimatedColumn
+											isOpen={isOpen}
+											side={isLeftBase ? "left" : "right"}
+											textColumns={peerCount}
+											textColumnsAfterAnimation={peerCount}
+										>
+											<CodePane
+												file={file}
+												index={index}
+												onMount={handleEditorMount}
+												onChange={handleEditorChange}
+												isMiddle={false}
+												highlights={getHighlights(index)}
+												onCopyHash={handleCopyHash}
+												onShowDiff={() => handleShowDiff(index)}
+												writeClipboardText={writeClipboardText}
+												syntaxHighlighting={syntaxHighlighting}
+												onToggleBase={onToggleBase}
+												baseSide={baseSide}
+												isBaseActive={isBaseActive}
+											/>
+										</AnimatedColumn>
+										{isLeftBase
+											? (files[0] || renderBaseLeft) && curtainContent
+											: curtainContent}
+									</React.Fragment>
+								);
+							}
 
-						return (
-							<React.Fragment key={`${file.label}-${index}`}>
-								{isLeftBase || isRightBase ? (
-									<AnimatedColumn isOpen={isOpen}>{paneContent}</AnimatedColumn>
-								) : (
-									paneContent
-								)}
-							</React.Fragment>
-						);
-					})
+							return <React.Fragment key={index}>{paneContent}</React.Fragment>;
+						});
+					})()
 				)}
 			</div>
 		</ErrorBoundary>

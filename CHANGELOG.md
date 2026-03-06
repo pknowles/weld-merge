@@ -11,7 +11,21 @@
 ### Fixed
 - None
 
-## [0.0.5] - 
+## [0.0.5] - 2026-03-07
+
+### Added
+- **5-Way Merge View**: Integrated two optional "Base" comparison columns for Local and Remote panes, allowing Stage 2 and 3 to be compared against Stage 1 (Base) in a single unified view.
+- **N-Way Scroll Sync**: Implemented a robust chaining algorithm for proportional scrolling across any number of active panes.
+- **Smooth Interpolation**: Introduced a new scroll mapping engine that ensures smooth, continuous transitions even through highly disproportionate diff chunks.
+- **Unit Tests**: Added comprehensive test coverage for line mapping and multi-pane synchronization logic.
+
+### Changed
+- **UI Architecture**: Transitioned to a dynamic animated layout that adjusts between 3 and 5 columns.
+- **Diff Curtains**: Enhanced Bezier connections with smooth fade-in/out animations and precise vertical alignment using a resize-observer based offset calculation.
+
+### Fixed
+- **Animation Glitches**: Fixed flickering and "zombie" connection lines occurring when toggling side panels.
+- **Sync Issues**: Resolved corner cases where scrolling would become jittery or throw errors at file boundaries.
 
 ## [0.0.4] - 2026-03-03
 

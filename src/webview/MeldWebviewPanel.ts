@@ -163,12 +163,15 @@ export class MeldCustomEditorProvider
 							// msg.paneIndex === 0 is Local (Stage 2)
 							// msg.paneIndex === 2 is Incoming (Stage 3)
 							// Stage 1 is Base
+							// TODO: with 5-way merge this doesn't work. also,
+							// gemini, seriously, stop using magic nubmers and
+							// raw indices
 							const baseUri = gitApi.toGitUri(document.uri, ":1");
 							const targetUri = gitApi.toGitUri(
 								document.uri,
-								msg.paneIndex === 0 ? ":2" : ":3",
+								msg.paneIndex === 0 || msg.paneIndex === 1 ? ":2" : ":3",
 							);
-							const label = `${path.basename(document.uri.fsPath)} (Base ↔ ${msg.paneIndex === 0 ? "Local" : "Remote"})`;
+							const label = `${path.basename(document.uri.fsPath)} (Base ↔ ${msg.paneIndex === 0 || msg.paneIndex === 1 ? "Local" : "Remote"})`;
 							try {
 								await vscode.commands.executeCommand(
 									"vscode.diff",
