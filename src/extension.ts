@@ -20,7 +20,7 @@ async function notifyIfNewConflicts(repoPath: string) {
 		const action = "View Conflict List";
 		vscode.window.showInformationMessage(message, action).then((selection) => {
 			if (selection === action) {
-				vscode.commands.executeCommand("meld-auto-merge.focusConflictedFiles");
+				vscode.commands.executeCommand("meldConflictedFiles.focus");
 			}
 		});
 	}
@@ -92,13 +92,6 @@ export function activate(context: vscode.ExtensionContext) {
 		"meld-auto-merge.refreshConflicted",
 		() => {
 			conflictedFilesProvider.refresh();
-		},
-	);
-
-	const disposableFocus = vscode.commands.registerCommand(
-		"meld-auto-merge.focusConflictedFiles",
-		() => {
-			vscode.commands.executeCommand("meldConflictedFiles.focus");
 		},
 	);
 
@@ -445,7 +438,7 @@ export function activate(context: vscode.ExtensionContext) {
 		disposableRerere,
 		disposableSmartAdd,
 		disposableRefresh,
-		disposableFocus,
+
 		disposableOpenConflicted,
 		disposableOpenMergeEditor,
 		disposableOpenMeldDiff,

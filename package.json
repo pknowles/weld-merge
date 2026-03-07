@@ -98,6 +98,16 @@
 					"when": "view == meldConflictedFiles",
 					"group": "navigation@2"
 				}
+			],
+			"commandPalette": [
+				{
+					"command": "meld-auto-merge.openMergeEditor",
+					"when": "false"
+				},
+				{
+					"command": "meld-auto-merge.openConflictedFile",
+					"when": "false"
+				}
 			]
 		},
 		"commands": [
@@ -145,10 +155,6 @@
 				"command": "meld-auto-merge.refreshConflicted",
 				"title": "Meld: Refresh Conflicted Files",
 				"icon": "$(refresh)"
-			},
-			{
-				"command": "meld-auto-merge.focusConflictedFiles",
-				"title": "Meld: Focus Merge Conflict List"
 			}
 		],
 		"configuration": {
@@ -178,7 +184,7 @@
 		},
 		"keybindings": [
 			{
-				"command": "meld-auto-merge.focusConflictedFiles",
+				"command": "meldConflictedFiles.focus",
 				"key": "alt+m",
 				"mac": "cmd+alt+m"
 			}

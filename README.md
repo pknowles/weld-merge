@@ -114,7 +114,7 @@ happens when you open the 3-way merge editor too.
 
 ### Source Control Panel
 
-The extension adds a **Meld Merge : Conflicted Files** view to the native Source Control (SCM) panel. Ctrl-Alt-M to open by default.
+The extension adds a **Meld Merge : Conflicted Files** view to the native Source Control (SCM) panel. `Alt + M` to open by default (`Cmd + Alt + M` on Mac).
 
 - **Primary Action (Click)**: Opens the **Meld 3-way merge editor** (native to VS Code, not an external app).
 - **Inline Actions**:
@@ -147,9 +147,12 @@ The logic runs entirely within the VS Code extension host process—no Python in
 ### From the Source Control Tab
 
 1. Open a project that currently has Git merge conflicts.
-2. Click on the Source Control icon in your Activity Bar (or press `Ctrl+Shift+G`).
+2. Click on the Source Control icon in your Activity Bar
 3. Under the standard "Source Control" view, you will see a new collapsible
-   section titled **Meld Merge : Conflicted Files**.
+   section titled **Meld Merge : Conflicted Files**. The command **Source
+   Control : Focus on Meld Merge : Conflicted Files View** gets you here too,
+   searchable in the command palette or with `Alt + M` by default (`Cmd + Alt +
+   M` on Mac).
 4. Expanding this tab will show a list of all files currently marked as conflicted.
 5. **Click a file** to open it in the custom **Meld 3-way merge editor**.
 6. Edit the center panel with the help of the arrows and crosses over the
