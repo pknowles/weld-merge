@@ -1,30 +1,31 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-import * as cp from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { getGitExecutable } from "./gitPath";
+import { execGit, getConflictedFiles } from "./gitUtils";
 import { GitTextMerger } from "./matchers/gitTextMerger";
 import { ConflictedFilesProvider, type GitFile } from "./treeView";
 import { MeldCustomEditorProvider } from "./webview/MeldWebviewPanel";
 
-async function execShell(args: string[], cwd: string): Promise<string> {
-	const cmd = await getGitExecutable();
-	return new Promise((resolve, reject) => {
-		cp.execFile(
-			cmd,
-			args,
-			{ cwd, maxBuffer: 1024 * 1024 * 10 },
-			(err, stdout) => {
-				if (err) {
-					reject(err);
-				} else {
-					resolve(stdout);
-				}
-			},
-		);
-	});
+const lastConflictedFilesPerRepo: Map<string, Set<string>> = new Map();
+
+async function notifyIfNewConflicts(repoPath: string) {
+	const currentConflicts = await getConflictedFiles(repoPath);
+	const lastFiles = lastConflictedFilesPerRepo.get(repoPath) || new Set();
+	const newConflicts = currentConflicts.filter((f) => !lastFiles.has(f));
+
+	if (newConflicts.length > 0) {
+		const message = `Meld: ${currentConflicts.length} merge conflict${currentConflicts.length > 1 ? "s" : ""} detected.`;
+		const action = "View Conflict List";
+		vscode.window.showInformationMessage(message, action).then((selection) => {
+			if (selection === action) {
+				vscode.commands.executeCommand("meld-auto-merge.focusConflictedFiles");
+			}
+		});
+	}
+
+	lastConflictedFilesPerRepo.set(repoPath, new Set(currentConflicts));
 }
 
 function getRelativeRepoPath(documentUri: vscode.Uri): string | null {
@@ -45,7 +46,7 @@ async function getGitFileContent(
 		// The official API does not reliably expose fetching specific merge conflict stages (1, 2, 3)
 		// without needing to instantiate entire GitUri documents.
 		// 'relativeFilePath' comes directly from VS Code's trusted URI, and because it is passed
-		const content = await execShell(
+		const content = await execGit(
 			["show", `:${stage}:${relativeFilePath}`],
 			repoPath,
 		);
@@ -321,7 +322,7 @@ export function activate(context: vscode.ExtensionContext) {
 			if (!relativeFilePath) return;
 
 			try {
-				await execShell(["checkout", "-m", "--", relativeFilePath], repoPath);
+				await execGit(["checkout", "-m", "--", relativeFilePath], repoPath);
 
 				// After disk updated, read back and apply to editor if open to preserve undo
 				const newContent = await fs.readFile(documentUri.fsPath, "utf8");
@@ -371,7 +372,7 @@ export function activate(context: vscode.ExtensionContext) {
 			if (!relativeFilePath) return;
 
 			try {
-				await execShell(["rerere", "forget", relativeFilePath], repoPath);
+				await execGit(["rerere", "forget", relativeFilePath], repoPath);
 				vscode.window.showInformationMessage(
 					`Forgot recorded resolution for ${relativeFilePath}`,
 				);
@@ -425,7 +426,7 @@ export function activate(context: vscode.ExtensionContext) {
 				// While the official vscode.git API has an `.add()` method, using execFile here keeps the implementation
 				// consistent without the overhead of querying the Git extension for the active Repository object.
 				// 'relativeFilePath' is safely passed as a discrete argument array element to execFile.
-				await execShell(["add", relativeFilePath], repoPath);
+				await execGit(["add", relativeFilePath], repoPath);
 				vscode.window.showInformationMessage(
 					`Successfully added ${relativeFilePath}`,
 				);
@@ -453,15 +454,24 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// Watch for .git/index changes to auto-refresh the TreeView
 	const workspaceFolders = vscode.workspace.workspaceFolders;
-	if (workspaceFolders && workspaceFolders.length > 0) {
-		const repoPath = workspaceFolders[0].uri.fsPath;
-		const watcher = vscode.workspace.createFileSystemWatcher(
-			new vscode.RelativePattern(repoPath, ".git/index"),
-		);
-		context.subscriptions.push(watcher);
-		watcher.onDidChange(() => conflictedFilesProvider.refresh());
-		watcher.onDidCreate(() => conflictedFilesProvider.refresh());
-		watcher.onDidDelete(() => conflictedFilesProvider.refresh());
+	if (workspaceFolders) {
+		for (const workspaceFolder of workspaceFolders) {
+			const repoPath = workspaceFolder.uri.fsPath;
+			const watcher = vscode.workspace.createFileSystemWatcher(
+				new vscode.RelativePattern(repoPath, ".git/index"),
+			);
+			context.subscriptions.push(watcher);
+			const refresh = () => {
+				conflictedFilesProvider.refresh();
+				notifyIfNewConflicts(repoPath);
+			};
+			watcher.onDidChange(refresh);
+			watcher.onDidCreate(refresh);
+			watcher.onDidDelete(refresh);
+
+			// Initial check
+			notifyIfNewConflicts(repoPath);
+		}
 	}
 
 	// Fallback refresh when user saves any document

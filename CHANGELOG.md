@@ -17,6 +17,7 @@
 - **5-Way Merge View**: Integrated two optional "Base" comparison columns for Local and Remote panes, allowing Stage 2 and 3 to be compared against Stage 1 (Base) in a single unified view.
 - **Navigation Shortcuts**: Added `Alt+Up`/`Down` for diff navigation and `Ctrl+J`/`K` for conflict navigation in the Merged editor.
 - **Auto-Focus**: Automatically focuses the first conflict when opening the merge editor.
+- **Notifications**: "Meld: N merge conflicts detected" and link when conflicts first detected
 - **N-Way Scroll Sync**: Implemented a robust chaining algorithm for proportional scrolling across any number of active panes.
 - **Smooth Interpolation**: Introduced a new scroll mapping engine that ensures smooth, continuous transitions even through highly disproportionate diff chunks.
 - **Unit Tests**: Added comprehensive test coverage for line mapping and multi-pane synchronization logic.

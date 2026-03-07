@@ -1,10 +1,9 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-import * as cp from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { getGitExecutable } from "./gitPath";
+import { execGit } from "./gitUtils";
 
 export class ConflictedFilesProvider
 	implements vscode.TreeDataProvider<GitFile>
@@ -43,7 +42,7 @@ export class ConflictedFilesProvider
 			// The official vscode.git API provides repository.state.mergeChanges, but parsing the raw output
 			// of 'git diff --name-only' directly ensures we get the synchronous source of truth without relying
 			// on the extension's polling state. All arguments are hardcoded strings, so there's zero injection risk.
-			const unmergedOutput = await this.execShell(
+			const unmergedOutput = await execGit(
 				["diff", "--name-only", "--diff-filter=U"],
 				repoPath,
 			);
@@ -124,19 +123,6 @@ export class ConflictedFilesProvider
 		} catch (_e) {
 			return Promise.resolve([]);
 		}
-	}
-
-	private async execShell(args: string[], cwd: string): Promise<string> {
-		const cmd = await getGitExecutable();
-		return new Promise((resolve) => {
-			cp.execFile(cmd, args, { cwd }, (err, stdout) => {
-				if (err) {
-					resolve("");
-				} else {
-					resolve(stdout);
-				}
-			});
-		});
 	}
 }
 
