@@ -791,6 +791,70 @@ const App: React.FC = () => {
 		vscodeApi?.postMessage({ command: "completeMerge" });
 	};
 
+	const handleNavigate = React.useCallback(
+		(direction: "prev" | "next", type: "diff" | "conflict") => {
+			const mergedEditor = editorRefs.current[2];
+			if (!mergedEditor) return;
+
+			const allChunks: DiffChunk[] = [];
+			if (diffsRef.current[1]) allChunks.push(...diffsRef.current[1]);
+			if (diffsRef.current[2]) allChunks.push(...diffsRef.current[2]);
+
+			const targetChunks = allChunks.filter((c) => {
+				if (c.tag === "equal") return false;
+				if (type === "conflict") return c.tag === "conflict";
+				return true;
+			});
+
+			if (targetChunks.length === 0) return;
+
+			const sortedChunks = targetChunks
+				.sort((a, b) => a.start_a - b.start_a)
+				.filter((c, i, self) => i === 0 || c.start_a !== self[i - 1].start_a);
+
+			const currentLine = mergedEditor.getPosition()?.lineNumber || 1;
+			const currentIdx = sortedChunks.findIndex(
+				(c) => c.start_a + 1 >= currentLine,
+			);
+
+			let targetChunk: DiffChunk | undefined;
+			if (direction === "next") {
+				if (currentIdx === -1) {
+					targetChunk = sortedChunks[0];
+				} else {
+					const chunkAtCursor = sortedChunks[currentIdx];
+					if (chunkAtCursor.start_a + 1 > currentLine) {
+						targetChunk = chunkAtCursor;
+					} else {
+						targetChunk = sortedChunks[(currentIdx + 1) % sortedChunks.length];
+					}
+				}
+			} else {
+				if (currentIdx === -1) {
+					targetChunk = sortedChunks[sortedChunks.length - 1];
+				} else {
+					const chunkAtCursor = sortedChunks[currentIdx];
+					if (chunkAtCursor.start_a + 1 < currentLine) {
+						targetChunk = chunkAtCursor;
+					} else {
+						targetChunk =
+							sortedChunks[
+								(currentIdx - 1 + sortedChunks.length) % sortedChunks.length
+							];
+					}
+				}
+			}
+
+			if (targetChunk) {
+				const line = targetChunk.start_a + 1;
+				mergedEditor.revealLineInCenter(line);
+				mergedEditor.setPosition({ lineNumber: line, column: 1 });
+				mergedEditor.focus();
+			}
+		},
+		[],
+	);
+
 	const toggleBaseDiff = (side: "left" | "right") => {
 		const targetIndex = side === "left" ? 0 : 4;
 		if (files[targetIndex]) {
@@ -991,6 +1055,27 @@ const App: React.FC = () => {
 										onToggleBase={onToggleBase}
 										baseSide={baseSide}
 										isBaseActive={isBaseActive}
+										onPrevDiff={
+											index === 2
+												? () => handleNavigate("prev", "diff")
+												: undefined
+										}
+										onNextDiff={
+											index === 2
+												? () => handleNavigate("next", "diff")
+												: undefined
+										}
+										onPrevConflict={
+											index === 2
+												? () => handleNavigate("prev", "conflict")
+												: undefined
+										}
+										onNextConflict={
+											index === 2
+												? () => handleNavigate("next", "conflict")
+												: undefined
+										}
+										autoFocusConflict={index === 2}
 									/>
 									{curtainContent}
 								</React.Fragment>

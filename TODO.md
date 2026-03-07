@@ -8,13 +8,6 @@
 - Open conflicts with our 3-way editor on click? or at least make the 3-way view more obvious
 - Call these out in the readme for first time users
 
-## Prev/Next diff and conflict buttons
-
-Configurable shortcuts to do so. Match Meld's?
-
-Automatically focus on the first conflict when opened (default-on settings
-option for this).
-
 ## Detect when the user forgot to resolve a conflict and preserve conflict markers
 
 This is a feature meld doesn't have; probably because it's hard.

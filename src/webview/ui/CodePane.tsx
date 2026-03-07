@@ -82,6 +82,12 @@ interface CodePaneProps {
 	onToggleBase?: () => void;
 	baseSide?: "left" | "right";
 	isBaseActive?: boolean;
+	style?: React.CSSProperties;
+	onPrevDiff?: () => void;
+	onNextDiff?: () => void;
+	onPrevConflict?: () => void;
+	onNextConflict?: () => void;
+	autoFocusConflict?: boolean;
 }
 
 export const CodePane: React.FC<CodePaneProps> = ({
@@ -101,17 +107,21 @@ export const CodePane: React.FC<CodePaneProps> = ({
 	onToggleBase,
 	baseSide,
 	isBaseActive = false,
+	style,
+	onPrevDiff,
+	onNextDiff,
+	onPrevConflict,
+	onNextConflict,
+	autoFocusConflict,
 }) => {
 	const [editorInstance, setEditorInstance] =
 		React.useState<editor.IStandaloneCodeEditor | null>(null);
 	const [lastSyncId, setLastSyncId] = React.useState(externalSyncId);
 
 	const isApplyingExternalSync = React.useRef(false);
-
 	const [showHover, setShowHover] = React.useState(false);
 	const [hoverPos, setHoverPos] = React.useState({ x: 0, y: 0 });
 	const hoverRef = React.useRef<HTMLDivElement>(null);
-
 	const hoverTimerRef = React.useRef<NodeJS.Timeout | null>(null);
 
 	const handleMouseEnter = (
@@ -267,6 +277,39 @@ export const CodePane: React.FC<CodePaneProps> = ({
 				},
 			});
 		}
+
+		if (index === 2) {
+			monacoEditor.addAction({
+				id: "prev-diff",
+				label: "Previous Diff",
+				keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.UpArrow],
+				run: () => onPrevDiff?.(),
+			});
+			monacoEditor.addAction({
+				id: "next-diff",
+				label: "Next Diff",
+				keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.DownArrow],
+				run: () => onNextDiff?.(),
+			});
+			monacoEditor.addAction({
+				id: "prev-conflict",
+				label: "Previous Conflict",
+				keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyJ],
+				run: () => onPrevConflict?.(),
+			});
+			monacoEditor.addAction({
+				id: "next-conflict",
+				label: "Next Conflict",
+				keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK],
+				run: () => onNextConflict?.(),
+			});
+
+			if (autoFocusConflict) {
+				setTimeout(() => {
+					onNextConflict?.();
+				}, 500);
+			}
+		}
 	};
 
 	React.useEffect(() => {
@@ -307,6 +350,7 @@ export const CodePane: React.FC<CodePaneProps> = ({
 				flexDirection: "column",
 				minWidth: 0,
 				minHeight: 0,
+				...style,
 			}}
 		>
 			<div
@@ -325,6 +369,27 @@ export const CodePane: React.FC<CodePaneProps> = ({
 					minWidth: 0,
 				}}
 			>
+				<style>{`
+					.nav-btn {
+						background: none;
+						border: none;
+						color: inherit;
+						cursor: pointer;
+						display: flex;
+						alignItems: center;
+						padding: 4px;
+						opacity: 0.6;
+						transition: opacity 0.2s, background-color 0.2s;
+						border-radius: 4px;
+					}
+					.nav-btn:hover {
+						opacity: 1;
+						background-color: rgba(255, 255, 255, 0.1);
+					}
+					.nav-btn-conflict {
+						color: var(--vscode-errorForeground, #f48771);
+					}
+				`}</style>
 				{onToggleBase && baseSide === "left" && (
 					<button
 						type="button"
@@ -511,6 +576,88 @@ export const CodePane: React.FC<CodePaneProps> = ({
 							</div>
 						)}
 					</button>
+				)}
+				<div style={{ flex: 1 }} />
+				{index === 2 && (
+					<div
+						style={{
+							display: "flex",
+							gap: "2px",
+							alignItems: "center",
+							marginRight: "8px",
+						}}
+					>
+						<button
+							type="button"
+							className="nav-btn"
+							onClick={onPrevDiff}
+							title="Previous Diff (Alt+Up)"
+						>
+							<svg width="16" height="16" viewBox="0 0 16 16">
+								<title>Previous Diff</title>
+								<path
+									fill="currentColor"
+									d="M7.414 7L10 9.586L9.586 10L6 6.414L9.586 3L10 3.414L7.414 6H14v1H7.414z"
+									transform="rotate(90 8 8)"
+								/>
+							</svg>
+						</button>
+						<button
+							type="button"
+							className="nav-btn"
+							onClick={onNextDiff}
+							title="Next Diff (Alt+Down)"
+						>
+							<svg width="16" height="16" viewBox="0 0 16 16">
+								<title>Next Diff</title>
+								<path
+									fill="currentColor"
+									d="M7.414 7L10 9.586L9.586 10L6 6.414L9.586 3L10 3.414L7.414 6H14v1H7.414z"
+									transform="rotate(-90 8 8)"
+								/>
+							</svg>
+						</button>
+						<div
+							style={{
+								width: "1px",
+								height: "16px",
+								backgroundColor: "#444",
+								margin: "0 4px",
+							}}
+						/>
+						<button
+							type="button"
+							className="nav-btn nav-btn-conflict"
+							onClick={onPrevConflict}
+							title="Previous Conflict (Ctrl+J)"
+						>
+							<svg width="16" height="16" viewBox="0 0 16 16">
+								<title>Previous Conflict</title>
+								<path fill="currentColor" d="M8 3.5l-4 4h3V12h2V7.5h3z" />
+								<path
+									fill="currentColor"
+									opacity="0.5"
+									d="M1 8a7 7 0 1 1 14 0A7 7 0 0 1 1 8zm7-6a6 6 0 1 0 0 12A6 6 0 0 0 8 2z"
+								/>
+							</svg>
+						</button>
+						<button
+							type="button"
+							className="nav-btn nav-btn-conflict"
+							onClick={onNextConflict}
+							title="Next Conflict (Ctrl+K)"
+						>
+							<svg width="16" height="16" viewBox="0 0 16 16">
+								<title>Next Conflict</title>
+								<path fill="currentColor" d="M8 12.5l4-4h-3V4H7v4.5H4z" />
+								<path
+									fill="currentColor"
+									opacity="0.5"
+									d="M1 8a7 7 0 1 1 14 0A7 7 0 0 1 1 8zm7-6a6 6 0 1 0 0 12A6 6 0 0 0 8 2z"
+								/>
+							</svg>
+						</button>
+					</div>
 				)}
 				<div style={{ flex: 1 }} />
 				{onToggleBase && baseSide === "right" && (
