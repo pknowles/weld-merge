@@ -2,7 +2,6 @@
 
 ## Intuitive usage
 
-- Add a keyboard shortcut to go to the source tree tab with the merge conflict list
 - Popup when a merge conflict is first detected?
 - Remove vscode default 3-way merge
 - Open conflicts with our 3-way editor on click? or at least make the 3-way view more obvious

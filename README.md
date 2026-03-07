@@ -172,9 +172,15 @@ The Merged editor supports the following navigation shortcuts (Meld-style):
 | **Previous Conflict** | `Ctrl + J` |
 | **Next Conflict** | `Ctrl + K` |
 
+The following global shortcut is available to quickly access the conflicted files list:
+
+| Action | Shortcut |
+|---|---|
+| **Focus Conflict List** | `Alt + M` | (or `Cmd + Alt + M` on Mac)
+
 Please note that these default shortcuts may conflict with existing VS Code commands (e.g., `Alt+Up/Down` for "Move Line", `Ctrl+J` for "Toggle Panel"). 
 
-These shortcuts are currently active **only when the Merged editor has focus**. If they interfere with your workflow or you prefer VS Code's defaults, please be aware that we are considering leaving these **unbound by default** in future versions to avoid collisions.
+Shortcuts in the Merged editor (Previous/Next Diff/Conflict) are active **only when the editor has focus**. If they interfere with your workflow or you prefer VS Code's defaults, please be aware that we are considering leaving these **unbound by default** in future versions to avoid collisions.
 
 **Feedback Wanted:** Should these stay bound to the Merged editor by default, or should they be opt-in? Let us know in the [issues](https://github.com/pknowles/meld/issues)!
 

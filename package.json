@@ -135,6 +135,10 @@
 				"command": "meld-auto-merge.refreshConflicted",
 				"title": "Meld: Refresh Conflicted Files",
 				"icon": "$(refresh)"
+			},
+			{
+				"command": "meld-auto-merge.focusConflictedFiles",
+				"title": "Meld: Focus Merge Conflict List"
 			}
 		],
 		"configuration": {
@@ -162,6 +166,13 @@
 				}
 			}
 		},
+		"keybindings": [
+			{
+				"command": "meld-auto-merge.focusConflictedFiles",
+				"key": "alt+m",
+				"mac": "cmd+alt+m"
+			}
+		],
 		"colors": [
 			{
 				"id": "meldMerge.diffInsertBackground",

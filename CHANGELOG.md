@@ -20,6 +20,7 @@
 - **N-Way Scroll Sync**: Implemented a robust chaining algorithm for proportional scrolling across any number of active panes.
 - **Smooth Interpolation**: Introduced a new scroll mapping engine that ensures smooth, continuous transitions even through highly disproportionate diff chunks.
 - **Unit Tests**: Added comprehensive test coverage for line mapping and multi-pane synchronization logic.
+- **Focus Shortcut**: Added `Alt+M` (or `Cmd+Alt+M` on Mac) to quickly focus the Meld Merge: Conflicted Files view in the Source Control panel.
 
 ### Changed
 - **UI Architecture**: Transitioned to a dynamic animated layout that adjusts between 3 and 5 columns.

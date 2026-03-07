@@ -94,6 +94,13 @@ export function activate(context: vscode.ExtensionContext) {
 		},
 	);
 
+	const disposableFocus = vscode.commands.registerCommand(
+		"meld-auto-merge.focusConflictedFiles",
+		() => {
+			vscode.commands.executeCommand("meldConflictedFiles.focus");
+		},
+	);
+
 	const disposableOpenConflicted = vscode.commands.registerCommand(
 		"meld-auto-merge.openConflictedFile",
 		(file: GitFile) => {
@@ -438,6 +445,7 @@ export function activate(context: vscode.ExtensionContext) {
 		disposableRerere,
 		disposableSmartAdd,
 		disposableRefresh,
+		disposableFocus,
 		disposableOpenConflicted,
 		disposableOpenMergeEditor,
 		disposableOpenMeldDiff,
