@@ -22,10 +22,14 @@
 - **Smooth Interpolation**: Introduced a new scroll mapping engine that ensures smooth, continuous transitions even through highly disproportionate diff chunks.
 - **Unit Tests**: Added comprehensive test coverage for line mapping and multi-pane synchronization logic.
 - **Focus Shortcut**: Added `Alt+M` (or `Cmd+Alt+M` on Mac) to quickly focus the Meld Merge: Conflicted Files view in the Source Control panel.
+- **Default Editor Action**: Added "Open File (Default Editor)" as a context menu option for conflicted files.
 
 ### Changed
 - **UI Architecture**: Transitioned to a dynamic animated layout that adjusts between 3 and 5 columns.
 - **Diff Curtains**: Enhanced Bezier connections with smooth fade-in/out animations and precise vertical alignment using a resize-observer based offset calculation.
+- **Conflicted Files UI**: Simplified the conflict list by moving advanced actions (Auto-Merge, Checkout, Rerere, VS Code Merge) to a right-click context menu.
+- **Default Click Action**: Clicking a conflicted file now opens it directly in the Meld 3-way merge editor.
+- **Improved Tooltips**: Updated action titles and tooltips for better clarity in the Source Control panel.
 
 ### Fixed
 - **Animation Glitches**: Fixed flickering and "zombie" connection lines occurring when toggling side panels.

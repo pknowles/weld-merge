@@ -114,13 +114,18 @@ happens when you open the 3-way merge editor too.
 
 ### Source Control Panel
 
-The extension adds a **Meld Merge : Conflicted Files** view to the native Source Control (SCM) panel. Each file has inline actions:
+The extension adds a **Meld Merge : Conflicted Files** view to the native Source Control (SCM) panel. Ctrl-Alt-M to open by default.
 
-- **Checkout Conflicted (-m)**: Reset a botched merge attempt back to the original conflicted state via `git checkout -m`. (Asks for confirmation)
-- **Rerere Forget File**: Tell Git to forget any automatically recorded resolution via `git rerere forget`. (Asks for confirmation)
-- **Smart Git Add**: A safer `git add` that verifies no conflict markers (`<<<<<<<`) remain in the file before staging.
-- **Open Default 3-Way Merge Editor**: Opens the file in the default VS Code 3-way merge editor.
-- **Open Custom Merge**: Opens the file in the custom Meld 3-way view.
+- **Primary Action (Click)**: Opens the **Meld 3-way merge editor** (native to VS Code, not an external app).
+- **Inline Actions**:
+  - **Smart Git Add** (icon): A safer `git add` that verifies no conflict markers (`<<<<<<<`) remain in the file before staging.
+  - **Checkout Conflicted** (icon, for resolved files): Reset a botched merge attempt back to the original conflicted state via `git checkout -m`. (Asks for confirmation)
+- **Context Menu (Right-Click)**:
+  - **Auto-Merge Current File**: Runs Meld's auto-merge heuristics.
+  - **Checkout Conflicted (-m)**: Reset a botched merge attempt back to the original conflicted state via `git checkout -m`. (Asks for confirmation)
+  - **Rerere Forget File**: Tell Git to forget any automatically recorded resolution via `git rerere forget`. (Asks for confirmation)
+  - **Open File (Default Editor)**: Opens the file in the standard VS Code editor.
+  - **Open VS Code's 3-Way Merge Editor**: Opens the file in the default VS Code 3-way merge editor.
 
 ## How It Works
 
@@ -146,17 +151,17 @@ The logic runs entirely within the VS Code extension host process—no Python in
 3. Under the standard "Source Control" view, you will see a new collapsible
    section titled **Meld Merge : Conflicted Files**.
 4. Expanding this tab will show a list of all files currently marked as conflicted.
-5. The buttons are descibed above, but the one you want is the last: **Open Custom Merge**.
+5. **Click a file** to open it in the custom **Meld 3-way merge editor**.
 6. Edit the center panel with the help of the arrows and crosses over the
-   colored connection lines. When done, click Save & Complete Merge, or Ctrl-S
-   and `git add <file>`.
+   colored connection lines. When done, click **Save & Complete Merge** (or `Ctrl+S`
+   followed by the **Smart Git Add** icon in the conflict list).
 
 ### From the Command Palette (`Ctrl+Shift+P`)
 
 If you already have a conflicted file actively open in your regular VS Code editor:
 
 1. Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac) to open the Command Palette.
-2. Type **Meld: Open Custom Merge** and hit Enter.
+2. Type **Meld: 3-Way Merge Conflict Editor** and hit Enter.
 3. The custom 3-way merge viewer will open up immediately for that file.
 4. *(Optional)* Alternatively, you can run the **Meld: Auto-Merge Current File**
    in case there are low hanging fruit conflicts that can be auto-resolved.

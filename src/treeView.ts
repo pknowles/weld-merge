@@ -132,13 +132,14 @@ export abstract class GitFile extends vscode.TreeItem {
 		public readonly collapsibleState: vscode.TreeItemCollapsibleState,
 		public readonly uri: vscode.Uri,
 		public readonly repoPath: string,
+		commandId: string,
 	) {
 		super(label, collapsibleState);
 		this.resourceUri = uri;
 		this.tooltip = `${this.label}`;
 		this.command = {
-			command: "meld-auto-merge.openConflictedFile",
-			title: "Open File",
+			command: commandId,
+			title: "Open",
 			arguments: [this],
 		};
 	}
@@ -151,7 +152,13 @@ class ConflictedFile extends GitFile {
 		uri: vscode.Uri,
 		repoPath: string,
 	) {
-		super(label, collapsibleState, uri, repoPath);
+		super(
+			label,
+			collapsibleState,
+			uri,
+			repoPath,
+			"meld-auto-merge.openMeldDiff",
+		);
 		this.description = "Conflicted";
 		this.contextValue = "conflictedFile";
 	}
@@ -164,7 +171,13 @@ class ResolvedFile extends GitFile {
 		uri: vscode.Uri,
 		repoPath: string,
 	) {
-		super(label, collapsibleState, uri, repoPath);
+		super(
+			label,
+			collapsibleState,
+			uri,
+			repoPath,
+			"meld-auto-merge.openConflictedFile",
+		);
 		this.description = "Resolved";
 		this.contextValue = "resolvedFile";
 	}

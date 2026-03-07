@@ -1,24 +1,5 @@
 # Future Improvements & Known Issues
 
-## Intuitive usage
-
-Simplify Conflicted Files list:
-- Move to a right click menu:
-  - Auto merge
-  - Checkout conflicted
-  - Rerere forget
-  - Open file (default editor)
-  - Open in vscode's 3-way merge
-
-Open conflicts with our 3-way editor on a regular click (we remove the button
-that currently does this and this becomes the default action)
-
-Keep the add resolved button as an icon
-
-Keep the checkout conflicted button/icon for resolved files
-
-Update the readme to reflect all of this
-
 ## Detect when the user forgot to resolve a conflict and preserve conflict markers
 
 This is a feature meld doesn't have; probably because it's hard.
