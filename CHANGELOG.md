@@ -11,6 +11,14 @@
 ### Fixed
 - None
 
+## [0.0.6] - 2026-03-15
+
+### Added
+- **Performance Analysis**: Conducted initial performance profiling and analysis of git command execution and webview rendering.
+
+### Fixed
+- **Scroll Synchronization**: Fixed regression in synchronized scrolling logic (temporary/quick fix for boundary conditions).
+
 ## [0.0.5] - 2026-03-07
 
 ### Added

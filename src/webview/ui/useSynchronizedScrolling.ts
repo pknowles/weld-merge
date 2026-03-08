@@ -91,6 +91,7 @@ export const useSynchronizedScrolling = (
 								diffsRef.current,
 								paneCounts,
 								smoothScrolling,
+								[false, true, false, true], // Reversed: diffs[1] (A=2, B=1) and diffs[3] (A=4, B=3)
 							);
 
 							const intTargetLine = Math.floor(targetLineDecimal) + 1;
