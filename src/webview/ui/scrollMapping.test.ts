@@ -1,5 +1,5 @@
-import { mapLineAcrossChunks, mapLineAcrossPanes } from "./scrollMapping";
-import type { DiffChunk } from "./types";
+import { mapLineAcrossChunks, mapLineAcrossPanes } from "./scrollMapping.ts";
+import type { DiffChunk } from "./types.ts";
 
 describe("mapLineAcrossChunks", () => {
 	it("maps 1:1 when chunks are null or empty", () => {
@@ -15,7 +15,7 @@ describe("mapLineAcrossChunks", () => {
 	/*
 	describe("with equal chunks", () => {
 		const chunks: DiffChunk[] = [
-			{ tag: "equal", start_a: 5, end_a: 10, start_b: 10, end_b: 15 },
+			{ tag: "equal", startA: 5, endA: 10, startB: 10, endB: 15 },
 		];
 
 		it("maps proportionally inside the chunk", () => {
@@ -50,9 +50,9 @@ describe("mapLineAcrossChunks", () => {
 
 	describe("with replace chunks", () => {
 		const chunks: DiffChunk[] = [
-			{ tag: "equal", start_a: 0, end_a: 2, start_b: 0, end_b: 2 },
-			{ tag: "replace", start_a: 2, end_a: 6, start_b: 2, end_b: 10 },
-			{ tag: "equal", start_a: 6, end_a: 8, start_b: 10, end_b: 12 },
+			{ tag: "equal", startA: 0, endA: 2, startB: 0, endB: 2 },
+			{ tag: "replace", startA: 2, endA: 6, startB: 2, endB: 10 },
+			{ tag: "equal", startA: 6, endA: 8, startB: 10, endB: 12 },
 		];
 
 		it("interpolates proportionally through replace chunk", () => {
@@ -76,51 +76,61 @@ describe("mapLineAcrossChunks", () => {
 
 	describe("with insert chunks", () => {
 		const chunks: DiffChunk[] = [
-			{ tag: "equal", start_a: 0, end_a: 5, start_b: 0, end_b: 5 },
-			{ tag: "insert", start_a: 5, end_a: 5, start_b: 5, end_b: 15 },
+			{ tag: "equal", startA: 0, endA: 5, startB: 0, endB: 5 },
+			{ tag: "insert", startA: 5, endA: 5, startB: 5, endB: 15 },
 		];
 
 		it("maps lines after insert shifted by insert size (unsmoothed)", () => {
-			expect(mapLineAcrossChunks(6, chunks, true, 20, 30, false)).toBe(16);
-			expect(mapLineAcrossChunks(16, chunks, false, 30, 20, false)).toBe(6);
+			expect(mapLineAcrossChunks(6, chunks, true, 20, 30, false)).toBe(
+				16,
+			);
+			expect(mapLineAcrossChunks(16, chunks, false, 30, 20, false)).toBe(
+				6,
+			);
 		});
 
 		it("maps inside insert proportionally", () => {
 			// B is 10 lines, A is 0. Maps to A's exact insertion point (5).
-			expect(mapLineAcrossChunks(10, chunks, false, 30, 20, false)).toBe(5);
+			expect(mapLineAcrossChunks(10, chunks, false, 30, 20, false)).toBe(
+				5,
+			);
 		});
 	});
 
 	describe("with delete chunks", () => {
 		const chunks: DiffChunk[] = [
-			{ tag: "equal", start_a: 0, end_a: 5, start_b: 0, end_b: 5 },
-			{ tag: "delete", start_a: 5, end_a: 15, start_b: 5, end_b: 5 },
+			{ tag: "equal", startA: 0, endA: 5, startB: 0, endB: 5 },
+			{ tag: "delete", startA: 5, endA: 15, startB: 5, endB: 5 },
 		];
 
 		it("maps lines after delete shifted backwards (unsmoothed)", () => {
-			expect(mapLineAcrossChunks(16, chunks, true, 30, 20, false)).toBe(6);
-			expect(mapLineAcrossChunks(6, chunks, false, 20, 30, false)).toBe(16);
+			expect(mapLineAcrossChunks(16, chunks, true, 30, 20, false)).toBe(
+				6,
+			);
+			expect(mapLineAcrossChunks(6, chunks, false, 20, 30, false)).toBe(
+				16,
+			);
 		});
 
 		it("maps inside delete proportionally", () => {
-			expect(mapLineAcrossChunks(10, chunks, true, 30, 20, false)).toBeCloseTo(
-				5,
-			);
+			expect(
+				mapLineAcrossChunks(10, chunks, true, 30, 20, false),
+			).toBeCloseTo(5);
 		});
 	});
 
 	describe("large disproportionate chunks", () => {
 		it("smoothly interpolates through insert boundary (no jumps)", () => {
 			const chunks: DiffChunk[] = [
-				{ tag: "insert", start_a: 5, end_a: 5, start_b: 5, end_b: 15 },
+				{ tag: "insert", startA: 5, endA: 5, startB: 5, endB: 15 },
 			];
 
 			// Verify continuity across the insert: small delta in -> small delta out
-			const EPS = 1e-6;
+			const Eps = 1e-6;
 			for (let x = 3; x <= 4.9; x += 0.25) {
 				const val = mapLineAcrossChunks(x, chunks, true, 20, 30, true);
 				const valNext = mapLineAcrossChunks(
-					x + EPS,
+					x + Eps,
 					chunks,
 					true,
 					20,
@@ -133,7 +143,7 @@ describe("mapLineAcrossChunks", () => {
 			for (let x = 3; x <= 17; x += 0.5) {
 				const val = mapLineAcrossChunks(x, chunks, false, 30, 20, true);
 				const valNext = mapLineAcrossChunks(
-					x + EPS,
+					x + Eps,
 					chunks,
 					false,
 					30,
@@ -146,15 +156,15 @@ describe("mapLineAcrossChunks", () => {
 
 		it("smoothly interpolates through delete boundary (no jumps)", () => {
 			const chunks: DiffChunk[] = [
-				{ tag: "delete", start_a: 6, end_a: 16, start_b: 6, end_b: 6 },
+				{ tag: "delete", startA: 6, endA: 16, startB: 6, endB: 6 },
 			];
 
 			// Delete maps a range to a point — already continuous. Verify reverse too.
-			const EPS = 1e-6;
+			const Eps = 1e-6;
 			for (let x = 4; x <= 18; x += 0.5) {
 				const val = mapLineAcrossChunks(x, chunks, true, 30, 20, true);
 				const valNext = mapLineAcrossChunks(
-					x + EPS,
+					x + Eps,
 					chunks,
 					true,
 					30,
@@ -166,7 +176,7 @@ describe("mapLineAcrossChunks", () => {
 			for (let x = 4; x <= 8; x += 0.25) {
 				const val = mapLineAcrossChunks(x, chunks, false, 20, 30, true);
 				const valNext = mapLineAcrossChunks(
-					x + EPS,
+					x + Eps,
 					chunks,
 					false,
 					20,
@@ -180,7 +190,7 @@ describe("mapLineAcrossChunks", () => {
 		// Disabled until AI can explain why it was thinking this would ever work
 		//it("maps smoothly from 5 lines to 500 lines", () => {
 		//	const chunks: DiffChunk[] = [
-		//		{ tag: "replace", start_a: 10, end_a: 15, start_b: 10, end_b: 510 },
+		//		{ tag: "replace", startA: 10, endA: 15, startB: 10, endB: 510 },
 		//	];
 		//	// 0% -> 10
 		//	expect(mapLineAcrossChunks(10, chunks, true)).toBe(10);
@@ -194,7 +204,7 @@ describe("mapLineAcrossChunks", () => {
 
 		it("maps smoothly from 1000 lines to 1 line without throwing", () => {
 			const chunks: DiffChunk[] = [
-				{ tag: "replace", start_a: 5, end_a: 1005, start_b: 5, end_b: 6 },
+				{ tag: "replace", startA: 5, endA: 1005, startB: 5, endB: 6 },
 			];
 
 			mapLineAcrossChunks(5, chunks, true, 1100, 100, true);
@@ -206,7 +216,7 @@ describe("mapLineAcrossChunks", () => {
 	describe("file extending beyond last chunk", () => {
 		it("maps 1:1 using the last chunk's offset at the end of the file", () => {
 			const chunks: DiffChunk[] = [
-				{ tag: "replace", start_a: 10, end_a: 15, start_b: 10, end_b: 20 },
+				{ tag: "replace", startA: 10, endA: 15, startB: 10, endB: 20 },
 			];
 			// Match before: offset 0
 			// Chunk: maps 10..15 to 10..20
@@ -215,11 +225,22 @@ describe("mapLineAcrossChunks", () => {
 			const tMax = 105;
 
 			// Non-smooth case for easier verification
-			expect(mapLineAcrossChunks(20, chunks, true, sMax, tMax, false)).toBe(25);
-			expect(mapLineAcrossChunks(90, chunks, true, sMax, tMax, false)).toBe(95);
+			expect(
+				mapLineAcrossChunks(20, chunks, true, sMax, tMax, false),
+			).toBe(25);
+			expect(
+				mapLineAcrossChunks(90, chunks, true, sMax, tMax, false),
+			).toBe(95);
 
 			// Smooth case should also be finite and near 95
-			const smoothRes = mapLineAcrossChunks(90, chunks, true, sMax, tMax, true);
+			const smoothRes = mapLineAcrossChunks(
+				90,
+				chunks,
+				true,
+				sMax,
+				tMax,
+				true,
+			);
 			expect(smoothRes).toBeGreaterThan(90);
 			expect(smoothRes).toBeLessThan(105);
 		});
@@ -229,8 +250,8 @@ describe("mapLineAcrossChunks", () => {
 describe("mapLineAcrossPanes", () => {
 	it("walks the chain smoothly (no jumps)", () => {
 		const diffs: (DiffChunk[] | null)[] = [
-			[{ tag: "insert", start_a: 0, end_a: 0, start_b: 0, end_b: 10 }],
-			[{ tag: "equal", start_a: 0, end_a: 30, start_b: 0, end_b: 30 }],
+			[{ tag: "insert", startA: 0, endA: 0, startB: 0, endB: 10 }],
+			[{ tag: "equal", startA: 0, endA: 30, startB: 0, endB: 30 }],
 		];
 		const counts = [20, 30, 30];
 
@@ -248,10 +269,15 @@ describe("mapLineAcrossPanes", () => {
 				true,
 				[false, false],
 			);
-			const valNext = mapLineAcrossPanes(x + eIn, 0, 2, diffs, counts, true, [
-				false,
-				false,
-			]);
+			const valNext = mapLineAcrossPanes(
+				x + eIn,
+				0,
+				2,
+				diffs,
+				counts,
+				true,
+				[false, false],
+			);
 			expect(Math.abs(valNext - val)).toBeLessThan(eOut);
 		}
 		for (let x = 0; x < 30; x++) {
@@ -264,17 +290,22 @@ describe("mapLineAcrossPanes", () => {
 				true,
 				[false, false],
 			);
-			const valNext = mapLineAcrossPanes(x + eIn, 2, 0, diffs, counts, true, [
-				false,
-				false,
-			]);
+			const valNext = mapLineAcrossPanes(
+				x + eIn,
+				2,
+				0,
+				diffs,
+				counts,
+				true,
+				[false, false],
+			);
 			expect(Math.abs(valNext - val)).toBeLessThan(eOut);
 		}
 	});
 
 	it("handles null diffs in chain without crashing", () => {
 		const diffs: (DiffChunk[] | null)[] = [
-			[{ tag: "insert", start_a: 0, end_a: 0, start_b: 0, end_b: 10 }],
+			[{ tag: "insert", startA: 0, endA: 0, startB: 0, endB: 10 }],
 			null,
 		];
 
@@ -292,32 +323,32 @@ describe("complex multi-pane scenarios", () => {
 	const complexDiffs: (DiffChunk[] | null)[] = [
 		// Pane 0 (25) <-> Pane 1 (35)
 		[
-			{ tag: "equal", start_a: 0, end_a: 5, start_b: 0, end_b: 5 },
-			{ tag: "insert", start_a: 5, end_a: 5, start_b: 5, end_b: 15 },
-			{ tag: "equal", start_a: 5, end_a: 10, start_b: 15, end_b: 20 },
-			{ tag: "replace", start_a: 10, end_a: 15, start_b: 20, end_b: 30 },
-			{ tag: "delete", start_a: 15, end_a: 20, start_b: 30, end_b: 30 },
+			{ tag: "equal", startA: 0, endA: 5, startB: 0, endB: 5 },
+			{ tag: "insert", startA: 5, endA: 5, startB: 5, endB: 15 },
+			{ tag: "equal", startA: 5, endA: 10, startB: 15, endB: 20 },
+			{ tag: "replace", startA: 10, endA: 15, startB: 20, endB: 30 },
+			{ tag: "delete", startA: 15, endA: 20, startB: 30, endB: 30 },
 		],
 		// Pane 1 (35) <-> Pane 2 (30)
 		[
-			{ tag: "equal", start_a: 0, end_a: 10, start_b: 0, end_b: 10 },
-			{ tag: "replace", start_a: 10, end_a: 20, start_b: 10, end_b: 15 },
-			{ tag: "equal", start_a: 20, end_a: 35, start_b: 15, end_b: 30 },
+			{ tag: "equal", startA: 0, endA: 10, startB: 0, endB: 10 },
+			{ tag: "replace", startA: 10, endA: 20, startB: 10, endB: 15 },
+			{ tag: "equal", startA: 20, endA: 35, startB: 15, endB: 30 },
 		],
 		// Pane 2 (30) <-> Pane 3 (25)
 		[
-			{ tag: "delete", start_a: 0, end_a: 5, start_b: 0, end_b: 0 },
-			{ tag: "equal", start_a: 5, end_a: 15, start_b: 0, end_b: 10 },
-			{ tag: "replace", start_a: 15, end_a: 20, start_b: 10, end_b: 12 },
-			{ tag: "equal", start_a: 20, end_a: 30, start_b: 12, end_b: 22 },
-			{ tag: "insert", start_a: 30, end_a: 30, start_b: 22, end_b: 25 },
+			{ tag: "delete", startA: 0, endA: 5, startB: 0, endB: 0 },
+			{ tag: "equal", startA: 5, endA: 15, startB: 0, endB: 10 },
+			{ tag: "replace", startA: 15, endA: 20, startB: 10, endB: 12 },
+			{ tag: "equal", startA: 20, endA: 30, startB: 12, endB: 22 },
+			{ tag: "insert", startA: 30, endA: 30, startB: 22, endB: 25 },
 		],
 		// Pane 3 (25) <-> Pane 4 (30)
 		[
-			{ tag: "equal", start_a: 0, end_a: 5, start_b: 0, end_b: 5 },
-			{ tag: "replace", start_a: 5, end_a: 15, start_b: 5, end_b: 25 },
-			{ tag: "delete", start_a: 15, end_a: 20, start_b: 25, end_b: 25 },
-			{ tag: "equal", start_a: 20, end_a: 25, start_b: 25, end_b: 30 },
+			{ tag: "equal", startA: 0, endA: 5, startB: 0, endB: 5 },
+			{ tag: "replace", startA: 5, endA: 15, startB: 5, endB: 25 },
+			{ tag: "delete", startA: 15, endA: 20, startB: 25, endB: 25 },
+			{ tag: "equal", startA: 20, endA: 25, startB: 25, endB: 30 },
 		],
 	];
 	const complexCounts = [25, 35, 30, 25, 30];
@@ -325,7 +356,15 @@ describe("complex multi-pane scenarios", () => {
 	it("verifies scrolling all the way to the top and bottom results in all other panels hitting top and bottom relative mappings", () => {
 		for (let sIdx = 0; sIdx < 5; sIdx++) {
 			for (let tIdx = 0; tIdx < 5; tIdx++) {
-				if (sIdx === tIdx) continue;
+				if (sIdx === tIdx) {
+					continue;
+				}
+
+				const sMax = complexCounts[sIdx];
+				const tMax = complexCounts[tIdx];
+				if (sMax === undefined || tMax === undefined) {
+					throw new Error("Missing count in test");
+				}
 
 				// Instead of enforcing that 0 maps to 0 exactly, we enforce that mapping the extremes
 				// matches the manually tracked exact bounds based on consecutive differences at the edges
@@ -343,7 +382,7 @@ describe("complex multi-pane scenarios", () => {
 				expect(topRes).toBeGreaterThanOrEqual(0);
 
 				const botRes = mapLineAcrossPanes(
-					complexCounts[sIdx],
+					sMax,
 					sIdx,
 					tIdx,
 					complexDiffs,
@@ -351,7 +390,7 @@ describe("complex multi-pane scenarios", () => {
 					true,
 					[false, false, false, false],
 				);
-				expect(botRes).toBeLessThanOrEqual(complexCounts[tIdx]);
+				expect(botRes).toBeLessThanOrEqual(tMax);
 			}
 		}
 	});
@@ -359,7 +398,7 @@ describe("complex multi-pane scenarios", () => {
 	it("verifies delete regions are continuous (no snapping)", () => {
 		// Pane 0 to Pane 1 has a delete chunk at lines 15-20.
 		// Verify continuity through it: small input delta -> small output delta
-		const EPS = 1e-6;
+		const Eps = 1e-6;
 		for (let x = 13; x <= 22; x += 0.5) {
 			const val = mapLineAcrossPanes(
 				x,
@@ -371,7 +410,7 @@ describe("complex multi-pane scenarios", () => {
 				[false, false, false, false],
 			);
 			const valNext = mapLineAcrossPanes(
-				x + EPS,
+				x + Eps,
 				0,
 				1,
 				complexDiffs,
@@ -386,7 +425,7 @@ describe("complex multi-pane scenarios", () => {
 	it("verifies insert regions are continuous (no jumping)", () => {
 		// Pane 0 to Pane 1 has an insertion of 10 lines at line 5.
 		// Verify continuity through it: small input delta -> small output delta
-		const EPS = 1e-6;
+		const Eps = 1e-6;
 		for (let x = 3; x <= 8; x += 0.25) {
 			const val = mapLineAcrossPanes(
 				x,
@@ -398,7 +437,7 @@ describe("complex multi-pane scenarios", () => {
 				[false, false, false, false],
 			);
 			const valNext = mapLineAcrossPanes(
-				x + EPS,
+				x + Eps,
 				0,
 				1,
 				complexDiffs,
@@ -411,24 +450,29 @@ describe("complex multi-pane scenarios", () => {
 	});
 
 	it("verifies scrolling is continuous (no sudden jumps) across all chunk boundaries", () => {
-		const EPSILON = 1e-6;
+		const Epsilon = 1e-6;
 		// With a tiny enough step, even steep smoothing derivatives compounded
 		// across 4 chained hops produce a small delta. A true discontinuity
 		// would produce a jump of ~10 lines regardless of epsilon.
-		const MAX_DELTA = 1.0;
+		const MaxDelta = 1.0;
 
 		for (let sIdx = 0; sIdx < 5; sIdx++) {
+			const sMax = complexCounts[sIdx];
+			if (sMax === undefined) {
+				throw new Error("Missing count in test");
+			}
+
 			// Collect all relevant chunk boundaries on the source side
 			const boundaries = new Set<number>();
 			boundaries.add(0);
-			boundaries.add(complexCounts[sIdx]);
+			boundaries.add(sMax);
 
 			if (sIdx < 4) {
 				const rDiffs = complexDiffs[sIdx];
 				if (rDiffs) {
 					for (const d of rDiffs) {
-						boundaries.add(d.start_a);
-						boundaries.add(d.end_a);
+						boundaries.add(d.startA);
+						boundaries.add(d.endA);
 					}
 				}
 			}
@@ -436,16 +480,20 @@ describe("complex multi-pane scenarios", () => {
 				const lDiffs = complexDiffs[sIdx - 1];
 				if (lDiffs) {
 					for (const d of lDiffs) {
-						boundaries.add(d.start_b);
-						boundaries.add(d.end_b);
+						boundaries.add(d.startB);
+						boundaries.add(d.endB);
 					}
 				}
 			}
 
-			const sortedBoundaries = Array.from(boundaries).sort((a, b) => a - b);
+			const sortedBoundaries = Array.from(boundaries).sort(
+				(a, b) => a - b,
+			);
 
 			for (let tIdx = 0; tIdx < 5; tIdx++) {
-				if (sIdx === tIdx) continue;
+				if (sIdx === tIdx) {
+					continue;
+				}
 
 				for (const bound of sortedBoundaries) {
 					const valAtBoundary = mapLineAcrossPanes(
@@ -458,9 +506,9 @@ describe("complex multi-pane scenarios", () => {
 						[false, false, false, false],
 					);
 
-					if (bound - EPSILON >= 0) {
+					if (bound - Epsilon >= 0) {
 						const valBefore = mapLineAcrossPanes(
-							bound - EPSILON,
+							bound - Epsilon,
 							sIdx,
 							tIdx,
 							complexDiffs,
@@ -468,12 +516,14 @@ describe("complex multi-pane scenarios", () => {
 							true,
 							[false, false, false, false],
 						);
-						expect(Math.abs(valAtBoundary - valBefore)).toBeLessThan(MAX_DELTA);
+						expect(
+							Math.abs(valAtBoundary - valBefore),
+						).toBeLessThan(MaxDelta);
 					}
 
-					if (bound + EPSILON <= complexCounts[sIdx]) {
+					if (bound + Epsilon <= sMax) {
 						const valAfter = mapLineAcrossPanes(
-							bound + EPSILON,
+							bound + Epsilon,
 							sIdx,
 							tIdx,
 							complexDiffs,
@@ -481,7 +531,9 @@ describe("complex multi-pane scenarios", () => {
 							true,
 							[false, false, false, false],
 						);
-						expect(Math.abs(valAfter - valAtBoundary)).toBeLessThan(MAX_DELTA);
+						expect(Math.abs(valAfter - valAtBoundary)).toBeLessThan(
+							MaxDelta,
+						);
 					}
 				}
 			}

@@ -1,15 +1,14 @@
-import type { editor } from "monaco-editor";
-import * as monaco from "monaco-editor";
-import * as React from "react";
-import { useVSCodeMessageBus } from "./useVSCodeMessageBus";
+import { Selection, editor } from "monaco-editor";
+import React from "react";
+import { useVscodeMessageBus } from "./useVSCodeMessageBus.ts";
 
 export function useClipboardOverrides(
 	editorRefs: React.MutableRefObject<editor.IStandaloneCodeEditor[]>,
 ) {
-	const vscodeApi = useVSCodeMessageBus();
-	const clipboardPendingRef = React.useRef<Map<number, (text: string) => void>>(
-		new Map(),
-	);
+	const vscodeApi = useVscodeMessageBus();
+	const clipboardPendingRef = React.useRef<
+		Map<number, (text: string) => void>
+	>(new Map());
 	const clipboardRequestIdRef = React.useRef(0);
 
 	const requestClipboardText = React.useCallback((): Promise<string> => {
@@ -31,7 +30,9 @@ export function useClipboardOverrides(
 		(text: string) => {
 			vscodeApi?.postMessage({ command: "writeClipboard", text });
 			if (!vscodeApi) {
-				navigator.clipboard.writeText(text).catch(() => {});
+				navigator.clipboard.writeText(text).catch(() => {
+					// resolve failing is not a critical error
+				});
 			}
 		},
 		[vscodeApi],
@@ -53,10 +54,12 @@ export function useClipboardOverrides(
 			const activeEditor = editorRefs.current.find((ed) =>
 				ed?.hasWidgetFocus(),
 			);
-			if (!activeEditor) return;
+			if (!activeEditor) {
+				return;
+			}
 
 			if (e.type === "paste") {
-				if (!activeEditor.getOption(monaco.editor.EditorOption.readOnly)) {
+				if (!activeEditor.getOption(editor.EditorOption.readOnly)) {
 					e.preventDefault();
 					requestClipboardText().then((text) => {
 						activeEditor.trigger("keyboard", "paste", { text });
@@ -67,21 +70,25 @@ export function useClipboardOverrides(
 
 			// Copy or Cut
 			const selection = activeEditor.getSelection();
-			if (!selection) return;
+			if (!selection) {
+				return;
+			}
 
 			const model = activeEditor.getModel();
-			if (!model) return;
+			if (!model) {
+				return;
+			}
 
 			let text = "";
 			let rangeToDelete = selection;
 
-			if (!selection.isEmpty()) {
-				text = model.getValueInRange(selection);
-			} else {
+			if (selection.isEmpty()) {
 				// Empty selection: copy/cut the whole line (matching native behavior)
 				const line = selection.startLineNumber;
 				text = `${model.getLineContent(line)}\n`;
-				rangeToDelete = new monaco.Selection(line, 1, line + 1, 1);
+				rangeToDelete = new Selection(line, 1, line + 1, 1);
+			} else {
+				text = model.getValueInRange(selection);
 			}
 
 			if (text) {
@@ -89,7 +96,7 @@ export function useClipboardOverrides(
 				writeClipboardText(text);
 				if (
 					e.type === "cut" &&
-					!activeEditor.getOption(monaco.editor.EditorOption.readOnly)
+					!activeEditor.getOption(editor.EditorOption.readOnly)
 				) {
 					activeEditor.executeEdits("cut", [
 						{ range: rangeToDelete, text: "" },

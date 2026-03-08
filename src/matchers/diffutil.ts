@@ -19,72 +19,114 @@ import {
 	type DiffChunkTag,
 	MyersSequenceMatcher,
 	SyncPointMyersSequenceMatcher,
-} from "./myers";
+} from "./myers.ts";
 
-const opcode_reverse: Record<DiffChunkTag | string, DiffChunkTag> = {
+const THREE_PANES = 3;
+const NUM_PANES = 5;
+const NUM_DIFFS = 4;
+const PANE_0 = 0;
+const PANE_1 = 1;
+const PANE_2 = 2;
+const PANE_3 = 3;
+const PANE_4 = 4;
+const PANE_INDICES_5 = [PANE_0, PANE_1, PANE_2, PANE_3, PANE_4] as const;
+
+const opcodeReverse = {
 	replace: "replace",
 	insert: "delete",
 	delete: "insert",
 	conflict: "conflict",
 	equal: "equal",
-};
+} as const;
 
-function reverse_chunk(chunk: DiffChunk): DiffChunk {
-	const tag = opcode_reverse[chunk.tag];
+function reverseChunk(chunk: DiffChunk): DiffChunk {
+	const tag = opcodeReverse[chunk.tag as keyof typeof opcodeReverse];
 	return {
 		tag,
-		start_a: chunk.start_b,
-		end_a: chunk.end_b,
-		start_b: chunk.start_a,
-		end_b: chunk.end_a,
+		startA: chunk.startB,
+		endA: chunk.endB,
+		startB: chunk.startA,
+		endB: chunk.endA,
 	};
 }
 
-function consume_blank_lines(
+function consumeBlankLines(
 	chunk: DiffChunk | null,
-	texts: string[][],
+	texts: (readonly string[])[],
 	pane1: number,
 	pane2: number,
 ): DiffChunk | null {
-	if (!chunk) return null;
+	if (!chunk) {
+		return null;
+	}
 
-	const _find_blank_lines = (
-		txt: string[],
-		lo: number,
-		hi: number,
+	const findBlankLines = (
+		txt: readonly string[],
+		startLine: number,
+		endLine: number,
 	): [number, number] => {
-		while (lo < hi && !txt[lo]) lo++;
-		while (lo < hi && !txt[hi - 1]) hi--;
+		let lo = startLine;
+		let hi = endLine;
+		while (lo < hi && !txt[lo]) {
+			lo++;
+		}
+		while (lo < hi && !txt[hi - 1]) {
+			hi--;
+		}
 		return [lo, hi];
 	};
 
 	let tag = chunk.tag;
-	const [c1, c2] = _find_blank_lines(texts[pane1], chunk.start_a, chunk.end_a);
-	const [c3, c4] = _find_blank_lines(texts[pane2], chunk.start_b, chunk.end_b);
+	const txt1 = texts[pane1];
+	const txt2 = texts[pane2];
+	if (!(txt1 && txt2)) {
+		return chunk;
+	}
 
-	if (c1 === c2 && c3 === c4) return null;
-	if (c1 === c2 && tag === "replace") tag = "insert";
-	else if (c3 === c4 && tag === "replace") tag = "delete";
+	const [c1, c2] = findBlankLines(txt1, chunk.startA, chunk.endA);
+	const [c3, c4] = findBlankLines(txt2, chunk.startB, chunk.endB);
 
-	return { tag, start_a: c1, end_a: c2, start_b: c3, end_b: c4 };
+	if (c1 === c2 && c3 === c4) {
+		return null;
+	}
+	if (c1 === c2 && tag === "replace") {
+		tag = "insert";
+	} else if (c3 === c4 && tag === "replace") {
+		tag = "delete";
+	}
+
+	return { tag, startA: c1, endA: c2, startB: c3, endB: c4 };
 }
 
-export class Differ {
-	_matcher = MyersSequenceMatcher;
-	_sync_matcher = SyncPointMyersSequenceMatcher;
+type LineCacheEntry = [number | null, number | null, number | null];
 
-	num_sequences = 0;
-	seqlength: number[] = [0, 0, 0];
-	diffs: DiffChunk[][] = [[], []];
-	syncpoints: Array<[() => number, () => number]>[] = [];
+class Differ {
+	_matcher = MyersSequenceMatcher;
+	_syncMatcher = SyncPointMyersSequenceMatcher;
+
+	numSequences = 0;
+	seqLength: [number, number, number, number, number] = [0, 0, 0, 0, 0];
+	diffs: [DiffChunk[], DiffChunk[], DiffChunk[], DiffChunk[]] = [
+		[],
+		[],
+		[],
+		[],
+	];
+	syncPoints: [() => number, () => number][][] = [];
 	conflicts: number[] = [];
-	_old_merge_cache = new Set<string>(); // Use stringified JSON for sets in TS or manage differently
-	_changed_chunks: [DiffChunk | null, DiffChunk | null] | [] = [];
-	_merge_cache: [DiffChunk | null, DiffChunk | null][] = [];
-	_line_cache: [number | null, number | null, number | null][][] = [[], [], []];
-	ignore_blanks = false;
-	_initialised = false;
-	_has_mergeable_changes: [boolean, boolean, boolean, boolean] = [
+	_oldMergeCache = new Set<string>();
+	_changedChunks: [DiffChunk | null, DiffChunk | null] | [] = [];
+	_mergeCache: [DiffChunk | null, DiffChunk | null][] = [];
+	_lineCache: [
+		LineCacheEntry[],
+		LineCacheEntry[],
+		LineCacheEntry[],
+		LineCacheEntry[],
+		LineCacheEntry[],
+	] = [[], [], [], [], []];
+	ignoreBlanks = false;
+	_initialized = false;
+	_hasMergeableChanges: [boolean, boolean, boolean, boolean] = [
 		false,
 		false,
 		false,
@@ -94,546 +136,892 @@ export class Differ {
 	listeners: Map<string, Array<(...args: unknown[]) => void>> = new Map();
 
 	on(event: string, callback: (...args: unknown[]) => void) {
-		if (!this.listeners.has(event)) this.listeners.set(event, []);
+		if (!this.listeners.has(event)) {
+			this.listeners.set(event, []);
+		}
 		this.listeners.get(event)?.push(callback);
 	}
 
 	emit(event: string, ...args: unknown[]) {
-		if (this.listeners.has(event)) {
-			const listeners = this.listeners.get(event) ?? [];
+		const listeners = this.listeners.get(event);
+		if (listeners) {
 			for (const cb of listeners) {
 				cb(...args);
 			}
 		}
 	}
 
-	_update_merge_cache(texts: string[][]) {
-		if (this.num_sequences === 3) {
-			this._merge_cache = Array.from(
-				this._merge_diffs(this.diffs[0], this.diffs[1], texts),
+	_updateMergeCache(texts: string[][]) {
+		if (this.numSequences === THREE_PANES) {
+			this._mergeCache = Array.from(
+				this._mergeDiffs(this.diffs[0], this.diffs[1], texts),
+			).filter(
+				(pair): pair is [DiffChunk | null, DiffChunk | null] =>
+					pair[0] !== null || pair[1] !== null,
 			);
 		} else {
-			this._merge_cache = this.diffs[0].map((c) => [c, null]);
-		}
-
-		if (this.ignore_blanks) {
-			for (let i = 0; i < this._merge_cache.length; i++) {
-				const c = this._merge_cache[i];
-				this._merge_cache[i] = [
-					consume_blank_lines(c[0], texts, 1, 0),
-					consume_blank_lines(c[1], texts, 1, 2),
-				];
-			}
-			this._merge_cache = this._merge_cache.filter(
-				(x) => x[0] !== null || x[1] !== null,
+			this._mergeCache = this.diffs[0].map(
+				(c) => [c, null] as [DiffChunk | null, DiffChunk | null],
 			);
 		}
 
-		let mergeable0 = false,
-			mergeable1 = false;
-		for (const [c0, c1] of this._merge_cache) {
+		if (this.ignoreBlanks) {
+			this._mergeCache = this._mergeCache
+				.map(
+					(pair) =>
+						[
+							consumeBlankLines(pair[0], texts, 1, 0),
+							consumeBlankLines(pair[1], texts, 1, 2),
+						] as [DiffChunk | null, DiffChunk | null],
+				)
+				.filter((x) => x[0] !== null || x[1] !== null);
+		}
+
+		let mergeable0 = false;
+		let mergeable1 = false;
+		for (const [c0, c1] of this._mergeCache) {
 			mergeable0 = mergeable0 || (c0 !== null && c0.tag !== "conflict");
 			mergeable1 = mergeable1 || (c1 !== null && c1.tag !== "conflict");
-			if (mergeable0 && mergeable1) break;
+			if (mergeable0 && mergeable1) {
+				break;
+			}
 		}
-		this._has_mergeable_changes = [false, mergeable0, mergeable1, false];
+		this._hasMergeableChanges = [false, mergeable0, mergeable1, false];
 
 		this.conflicts = [];
-		for (let i = 0; i < this._merge_cache.length; i++) {
-			const [c1, c2] = this._merge_cache[i];
+		for (let i = 0; i < this._mergeCache.length; i++) {
+			const pair = this._mergeCache[i];
 			if (
-				(c1 !== null && c1.tag === "conflict") ||
-				(c2 !== null && c2.tag === "conflict")
+				pair &&
+				(pair[0]?.tag === "conflict" || pair[1]?.tag === "conflict")
 			) {
 				this.conflicts.push(i);
 			}
 		}
 
-		this._update_line_cache();
-		// Skip emitting chunk_changes for now or serialize them since TS Sets of arrays need deep equality handling
-		this.emit("diffs-changed", null /* chunk_changes stub */);
+		this._updateLineCache();
+		this.emit("diffs-changed", null);
 	}
 
-	_update_line_cache() {
-		for (let i = 0; i < this.seqlength.length; i++) {
-			this._line_cache[i] = new Array(this.seqlength[i] + 1).fill([
+	_updateLineCache() {
+		for (const i of PANE_INDICES_5) {
+			this._lineCache[i] = new Array(this.seqLength[i] + 1).fill([
 				null,
 				null,
 				null,
 			]);
 		}
 
-		const last_chunk = this._merge_cache.length;
-
-		const find_next = (
-			diff: number,
-			seq: number,
-			current: number,
-		): number | null => {
-			let next_chunk: number | null = null;
-			if (seq === 1 && current + 1 < last_chunk) {
-				next_chunk = current + 1;
-			} else {
-				for (let j = current + 1; j < last_chunk; j++) {
-					if (this._merge_cache[j][diff] !== null) {
-						next_chunk = j;
-						break;
-					}
-				}
-			}
-			return next_chunk;
-		};
-
-		const prev: (number | null)[] = [null, null, null];
-		const next: (number | null)[] = [
-			find_next(0, 0, -1),
-			find_next(0, 1, -1),
-			find_next(1, 2, -1),
+		const prev: [number | null, number | null, number | null] = [
+			null,
+			null,
+			null,
 		];
-		const old_end = [0, 0, 0];
+		const next: [number | null, number | null, number | null] = [
+			this._findNextChunk(0, 0, -1),
+			this._findNextChunk(0, 1, -1),
+			this._findNextChunk(1, 2, -1),
+		];
+		const oldEnd: [number, number, number] = [0, 0, 0];
 
-		for (let i = 0; i < this._merge_cache.length; i++) {
-			const c = this._merge_cache[i];
-			const seq_params = [
-				{ diff: 0, seq: 0, getKey: (x: DiffChunk) => [x.start_b, x.end_b] },
-				{ diff: 0, seq: 1, getKey: (x: DiffChunk) => [x.start_a, x.end_a] },
-				{ diff: 1, seq: 2, getKey: (x: DiffChunk) => [x.start_b, x.end_b] },
-			];
-
-			for (const { diff, seq, getKey } of seq_params) {
-				let actualDiff = diff;
-				let chunk = c[diff];
-				if (chunk === null) {
-					if (seq === 1) {
-						actualDiff = 1;
-						chunk = c[1];
-					} else continue;
-				}
-				if (!chunk) continue;
-
-				let [start, end] = getKey(chunk);
-				if (seq === 1 && actualDiff === 1) {
-					start = chunk.start_a;
-					end = chunk.end_a;
-				}
-
-				const last = old_end[seq];
-				if (start > last) {
-					for (let k = last; k < start; k++) {
-						this._line_cache[seq][k] = [null, prev[seq], next[seq]];
-					}
-				}
-
-				if (start === end) end++;
-				next[seq] = find_next(actualDiff, seq, i);
-
-				for (let k = start; k < end; k++) {
-					this._line_cache[seq][k] = [i, prev[seq], next[seq]];
-				}
-
-				prev[seq] = i;
-				old_end[seq] = end;
-			}
+		for (const [i, c] of this._mergeCache.entries()) {
+			this._updateLineCacheForChunk({
+				index: i,
+				chunkPair: c,
+				prev,
+				next,
+				oldEnd,
+			});
 		}
 
-		for (let seq = 0; seq < 3; seq++) {
-			const last = old_end[seq];
-			const end = this._line_cache[seq].length;
-			if (last < end) {
-				for (let k = last; k < end; k++) {
-					this._line_cache[seq][k] = [null, prev[seq], next[seq]];
+		this._fillRemainingLineCache(oldEnd, prev, next);
+	}
+
+	private _findNextChunk(
+		diffIdx: 0 | 1,
+		seq: number,
+		current: number,
+	): number | null {
+		const lastChunk = this._mergeCache.length;
+		if (seq === 1 && current + 1 < lastChunk) {
+			return current + 1;
+		}
+		for (let j = current + 1; j < lastChunk; j++) {
+			const pair = this._mergeCache[j];
+			if (pair && pair[diffIdx] !== null) {
+				return j;
+			}
+		}
+		return null;
+	}
+
+	private _updateLineCacheForChunk(params: {
+		index: number;
+		chunkPair: [DiffChunk | null, DiffChunk | null];
+		prev: [number | null, number | null, number | null];
+		next: [number | null, number | null, number | null];
+		oldEnd: [number, number, number];
+	}) {
+		const { index: i, chunkPair: c, prev, next, oldEnd } = params;
+		const seqParams = [
+			{
+				diff: 0 as const,
+				seq: 0 as const,
+				getKey: (x: DiffChunk) => [x.startB, x.endB] as const,
+			},
+			{
+				diff: 0 as const,
+				seq: 1 as const,
+				getKey: (x: DiffChunk) => [x.startA, x.endA] as const,
+			},
+			{
+				diff: 1 as const,
+				seq: 2 as const,
+				getKey: (x: DiffChunk) => [x.startB, x.endB] as const,
+			},
+		] as const;
+
+		for (const param of seqParams) {
+			const { diff: diffValue, seq: seqValue, getKey } = param;
+			let actualDiff: 0 | 1 = diffValue;
+			let chunk = c[diffValue];
+			if (chunk === null) {
+				if (seqValue === 1) {
+					actualDiff = 1;
+					chunk = c[1];
+				} else {
+					continue;
+				}
+			}
+			if (!chunk) {
+				continue;
+			}
+
+			const [start, end] = getKey(chunk);
+			const last = oldEnd[seqValue];
+			if (start > last) {
+				for (let k = last; k < start; k++) {
+					this._lineCache[seqValue][k] = [
+						null,
+						prev[seqValue],
+						next[seqValue],
+					];
+				}
+			}
+
+			const realEnd = start === end ? end + 1 : end;
+			next[seqValue] = this._findNextChunk(actualDiff, seqValue, i);
+
+			for (let k = start; k < realEnd; k++) {
+				this._lineCache[seqValue][k] = [
+					i,
+					prev[seqValue],
+					next[seqValue],
+				];
+			}
+
+			prev[seqValue] = i;
+			oldEnd[seqValue] = realEnd;
+		}
+	}
+
+	private _fillRemainingLineCache(
+		oldEnd: [number, number, number],
+		prev: [number | null, number | null, number | null],
+		next: [number | null, number | null, number | null],
+	) {
+		for (let seq = 0; seq < THREE_PANES; seq++) {
+			const last = oldEnd[seq as 0 | 1 | 2];
+			const cache = this._lineCache[seq as 0 | 1 | 2];
+			if (last < cache.length) {
+				for (let k = last; k < cache.length; k++) {
+					cache[k] = [
+						null,
+						prev[seq as 0 | 1 | 2],
+						next[seq as 0 | 1 | 2],
+					];
 				}
 			}
 		}
 	}
 
-	change_sequence(
+	changeSequence(
 		sequence: number,
 		startidx: number,
 		sizechange: number,
 		texts: string[][],
 	) {
-		if (sequence === 0 || sequence === 1) {
-			this._change_sequence(0, sequence, startidx, sizechange, texts);
+		if (sequence === PANE_0 || sequence === PANE_1) {
+			this._changeSequence({
+				which: 0,
+				sequence,
+				startidx,
+				sizechange,
+				texts,
+			});
 		}
-		if (sequence === 2 || (sequence === 1 && this.num_sequences === 3)) {
-			this._change_sequence(1, sequence, startidx, sizechange, texts);
+		if (
+			sequence === PANE_2 ||
+			(sequence === PANE_1 && this.numSequences === THREE_PANES)
+		) {
+			this._changeSequence({
+				which: 1,
+				sequence,
+				startidx,
+				sizechange,
+				texts,
+			});
 		}
-		this.seqlength[sequence] += sizechange;
-
-		const offset = (
-			c: DiffChunk | null,
-			start: number,
-			o1: number,
-			o2: number,
-		): DiffChunk | null => {
-			if (!c) return null;
-			return {
-				tag: c.tag,
-				start_a: c.start_a + (c.start_a > start ? o1 : 0),
-				end_a: c.end_a + (c.end_a > start ? o1 : 0),
-				start_b: c.start_b + (c.start_b > start ? o2 : 0),
-				end_b: c.end_b + (c.end_b > start ? o2 : 0),
-			};
-		};
-
-		this._old_merge_cache.clear();
-		this._changed_chunks = [];
-		let chunk_changed = false;
-
-		for (let i = 0; i < this._merge_cache.length; i++) {
-			let [c1, c2] = this._merge_cache[i];
-
-			if (sequence === 0) {
-				if (c1 && c1.start_b <= startidx && startidx < c1.end_b)
-					chunk_changed = true;
-				c1 = offset(c1, startidx, 0, sizechange);
-			} else if (sequence === 2) {
-				if (c2 && c2.start_b <= startidx && startidx < c2.end_b)
-					chunk_changed = true;
-				c2 = offset(c2, startidx, 0, sizechange);
-			} else {
-				if (c1 && c1.start_a <= startidx && startidx < c1.end_a)
-					chunk_changed = true;
-				c1 = offset(c1, startidx, sizechange, 0);
-				if (this.num_sequences === 3) {
-					c2 = offset(c2, startidx, sizechange, 0);
-				}
-			}
-			if (chunk_changed) {
-				this._changed_chunks = [c1, c2];
-				chunk_changed = false;
-			}
+		if (sequence >= PANE_0 && sequence < PANE_INDICES_5.length) {
+			this.seqLength[sequence as 0 | 1 | 2 | 3 | 4] += sizechange;
 		}
-		this._update_merge_cache(texts);
+
+		this._updateMergeCacheOnSequenceChange(
+			sequence,
+			startidx,
+			sizechange,
+			texts,
+		);
 	}
 
-	_locate_chunk(whichdiffs: number, sequence: number, line: number): number {
-		for (let i = 0; i < this.diffs[whichdiffs].length; i++) {
-			const c = this.diffs[whichdiffs][i];
-			const highIndexVal = sequence !== 1 ? c.end_b : c.end_a;
+	_updateMergeCacheOnSequenceChange(
+		sequence: number,
+		startidx: number,
+		sizechange: number,
+		texts: string[][],
+	) {
+		this._oldMergeCache.clear();
+		this._changedChunks = [];
+		let chunkChanged = false;
+
+		for (let i = 0; i < this._mergeCache.length; i++) {
+			const pair = this._mergeCache[i];
+			if (!pair) {
+				continue;
+			}
+			const [c1, c2] = this._offsetPair(
+				pair,
+				sequence,
+				startidx,
+				sizechange,
+			);
+
+			if (this._isChunkChanged(pair, sequence, startidx)) {
+				chunkChanged = true;
+			}
+
+			if (chunkChanged) {
+				this._changedChunks = [c1, c2];
+				chunkChanged = false;
+			}
+			this._mergeCache[i] = [c1, c2];
+		}
+		this._updateMergeCache(texts);
+	}
+
+	private _offsetPair(
+		pair: [DiffChunk | null, DiffChunk | null],
+		sequence: number,
+		startidx: number,
+		sizechange: number,
+	): [DiffChunk | null, DiffChunk | null] {
+		let [c1, c2] = pair;
+		if (sequence === PANE_0) {
+			c1 = this._offsetChunkB(c1, startidx, sizechange);
+		} else if (sequence === PANE_2) {
+			c2 = this._offsetChunkB(c2, startidx, sizechange);
+		} else {
+			c1 = this._offsetChunkA(c1, startidx, sizechange);
+			if (this.numSequences === THREE_PANES) {
+				c2 = this._offsetChunkA(c2, startidx, sizechange);
+			}
+		}
+		return [c1, c2];
+	}
+
+	private _isChunkChanged(
+		pair: [DiffChunk | null, DiffChunk | null],
+		sequence: number,
+		startidx: number,
+	): boolean {
+		const [c1, c2] = pair;
+		if (sequence === PANE_0) {
+			return Boolean(c1 && c1.startB <= startidx && startidx < c1.endB);
+		}
+		if (sequence === PANE_2) {
+			return Boolean(c2 && c2.startB <= startidx && startidx < c2.endB);
+		}
+		return Boolean(c1 && c1.startA <= startidx && startidx < c1.endA);
+	}
+
+	private _offsetChunkB(
+		c: DiffChunk | null,
+		start: number,
+		offset: number,
+	): DiffChunk | null {
+		if (!c) {
+			return null;
+		}
+		return {
+			...c,
+			startB: c.startB + (c.startB > start ? offset : 0),
+			endB: c.endB + (c.endB > start ? offset : 0),
+		};
+	}
+
+	private _offsetChunkA(
+		c: DiffChunk | null,
+		start: number,
+		offset: number,
+	): DiffChunk | null {
+		if (!c) {
+			return null;
+		}
+		return {
+			...c,
+			startA: c.startA + (c.startA > start ? offset : 0),
+			endA: c.endA + (c.endA > start ? offset : 0),
+		};
+	}
+
+	_locateChunk(
+		whichDiffs: 0 | 1 | 2 | 3,
+		sequence: number,
+		line: number,
+	): number {
+		const diffsSub = this.diffs[whichDiffs];
+		for (let i = 0; i < diffsSub.length; i++) {
+			const c = diffsSub[i];
+			if (!c) {
+				continue;
+			}
+			const highIndexVal = sequence !== 1 ? c.endB : c.endA;
 			if (line < highIndexVal) {
 				return i;
 			}
 		}
-		return this.diffs[whichdiffs].length;
+		return diffsSub.length;
 	}
 
-	get_chunk(
+	getChunk(
 		index: number,
-		from_pane: number,
-		to_pane: number | null = null,
+		fromPane: number,
+		toPane: number | null = null,
 	): DiffChunk | null {
-		const sequence = from_pane === 2 || to_pane === 2 ? 1 : 0;
-		let chunk = this._merge_cache[index][sequence];
-		if (from_pane === 0 || from_pane === 2) {
-			return chunk ? reverse_chunk(chunk) : null;
-		} else {
-			if (to_pane === null && !chunk) {
-				chunk = this._merge_cache[index][1];
-			}
-			return chunk;
+		const sequence = fromPane === 2 || toPane === 2 ? 1 : 0;
+		const pair = this._mergeCache[index];
+		if (!pair) {
+			return null;
 		}
+		let chunk = pair[sequence as 0 | 1];
+		if (fromPane === 0 || fromPane === 2) {
+			return chunk ? reverseChunk(chunk) : null;
+		}
+		if (toPane === null && !chunk) {
+			chunk = pair[1];
+		}
+		return chunk;
 	}
 
-	locate_chunk(
-		pane: number,
-		line: number,
-	): [number | null, number | null, number | null] {
-		return this._line_cache[pane]?.[line]
-			? this._line_cache[pane][line]
-			: [null, null, null];
+	locateChunk(pane: number, line: number): LineCacheEntry {
+		const cache = this._lineCache[pane as 0 | 1 | 2 | 3 | 4];
+		if (cache && line < cache.length) {
+			return cache[line] || [null, null, null];
+		}
+		return [null, null, null];
 	}
 
-	all_changes() {
-		return this._merge_cache.slice();
+	allChanges() {
+		return this._mergeCache.slice();
 	}
 
-	*pair_changes(
+	*pairChanges(
 		fromindex: number,
 		toindex: number,
 		lines: (number | null)[] = [null, null, null, null],
 	) {
-		let merge_cache = this._merge_cache;
+		let mergeCache = this._mergeCache;
 		if (!lines.includes(null)) {
-			const [start1, end1] = this._range_from_lines(fromindex, [
+			const [start1, end1] = this._rangeFromLines(fromindex, [
 				lines[0] as number,
 				lines[1] as number,
 			]);
-			const [start2, end2] = this._range_from_lines(toindex, [
+			const [start2, end2] = this._rangeFromLines(toindex, [
 				lines[2] as number,
 				lines[3] as number,
 			]);
 			if (
 				(start1 === null || end1 === null) &&
 				(start2 === null || end2 === null)
-			)
+			) {
 				return;
-			const starts = [start1, start2].filter((x) => x !== null) as number[];
-			const ends = [end1, end2].filter((x) => x !== null) as number[];
+			}
+			const starts = [start1, start2].filter(
+				(x): x is number => x !== null,
+			);
+			const ends = [end1, end2].filter((x): x is number => x !== null);
 			const start = Math.min(...starts);
 			const end = Math.max(...ends);
-			merge_cache = this._merge_cache.slice(start, end + 1);
+			mergeCache = this._mergeCache.slice(start, end + 1);
 		}
 
 		if (fromindex === 1) {
 			const seq = Math.floor(toindex / 2);
-			for (const c of merge_cache) {
-				if (c[seq]) yield c[seq] as DiffChunk;
+			for (const c of mergeCache) {
+				const chunk = c[seq as 0 | 1];
+				if (chunk) {
+					yield chunk;
+				}
 			}
 		} else {
 			const seq = Math.floor(fromindex / 2);
-			for (const c of merge_cache) {
-				if (c[seq]) yield reverse_chunk(c[seq] as DiffChunk);
+			for (const c of mergeCache) {
+				const chunk = c[seq as 0 | 1];
+				if (chunk) {
+					yield reverseChunk(chunk);
+				}
 			}
 		}
 	}
 
-	_range_from_lines(
+	_rangeFromLines(
 		textindex: number,
 		lines: number[],
 	): [number | null, number | null] {
-		const [lo_line, hi_line] = lines;
-		const top_chunk = this.locate_chunk(textindex, lo_line);
-		let start = top_chunk[0];
-		if (start === null) start = top_chunk[2];
-		const bottom_chunk = this.locate_chunk(textindex, hi_line);
-		let end = bottom_chunk[0];
-		if (end === null) end = bottom_chunk[1];
+		const loLine = lines[0];
+		const hiLine = lines[1];
+		if (loLine === undefined || hiLine === undefined) {
+			return [null, null];
+		}
+		const topChunk = this.locateChunk(textindex, loLine);
+		let start = topChunk[0];
+		if (start === null) {
+			start = topChunk[2];
+		}
+		const bottomChunk = this.locateChunk(textindex, hiLine);
+		let end = bottomChunk[0];
+		if (end === null) {
+			end = bottomChunk[1];
+		}
 		return [start, end];
 	}
 
-	_change_sequence(
-		which: number,
-		sequence: number,
-		startidx: number,
-		sizechange: number,
-		texts: string[][],
-	) {
-		const diffs = this.diffs[which];
-		const lines_added = [0, 0, 0];
-		lines_added[sequence] = sizechange;
-		let loidx = this._locate_chunk(which, sequence, startidx);
-		let hiidx =
-			sizechange < 0
-				? this._locate_chunk(which, sequence, startidx - sizechange)
-				: loidx;
-
-		let lorange: [number, number];
-		if (loidx > 0) {
-			loidx--;
-			lorange = [diffs[loidx].start_b, diffs[loidx].start_a];
-		} else {
-			lorange = [0, 0];
+	private _changeSequence(params: {
+		which: number;
+		sequence: number;
+		startidx: number;
+		sizechange: number;
+		texts: string[][];
+	}) {
+		const { which, sequence, startidx, sizechange, texts } = params;
+		if (which < 0 || which >= NUM_DIFFS) {
+			return;
+		}
+		const diffs = this.diffs[which as 0 | 1 | 2 | 3];
+		const linesAdded: [number, number, number, number, number] = [
+			0, 0, 0, 0, 0,
+		];
+		if (sequence >= 0 && sequence < NUM_PANES) {
+			linesAdded[sequence as 0 | 1 | 2 | 3 | 4] = sizechange;
 		}
 
-		const x = which * 2;
-		let hirange: [number, number];
-		if (hiidx < diffs.length) {
-			hiidx++;
-			hirange = [diffs[hiidx - 1].end_b, diffs[hiidx - 1].end_a];
-		} else {
-			hirange = [this.seqlength[x], this.seqlength[1]];
+		const loidx = this._locateChunk(
+			which as 0 | 1 | 2 | 3,
+			sequence,
+			startidx,
+		);
+		let hiidx = loidx;
+		if (sizechange < 0) {
+			hiidx = this._locateChunk(
+				which as 0 | 1 | 2 | 3,
+				sequence,
+				startidx - sizechange,
+			);
 		}
 
-		const rangex: [number, number] = [lorange[0], hirange[0] + lines_added[x]];
-		const range1: [number, number] = [lorange[1], hirange[1] + lines_added[1]];
+		const lorange = this._getLoRange(diffs, loidx);
+		const x = (which === 0 ? 0 : 2) as 0 | 2;
+		const hirange = this._getHiRange(diffs, hiidx, x);
 
-		const linesx = texts[x].slice(rangex[0], rangex[1]);
-		const lines1 = texts[1].slice(range1[0], range1[1]);
+		const rangex: [number, number] = [
+			lorange[0],
+			hirange[0] + linesAdded[x],
+		];
+		const range1: [number, number] = [
+			lorange[1],
+			hirange[1] + linesAdded[1],
+		];
 
-		const offset = (c: DiffChunk, o1: number, o2: number): DiffChunk => ({
+		const linesx = texts[x]?.slice(rangex[0], rangex[1]);
+		const lines1 = texts[1]?.slice(range1[0], range1[1]);
+
+		const offsetValue = (
+			c: DiffChunk,
+			o1: number,
+			o2: number,
+		): DiffChunk => ({
 			tag: c.tag,
-			start_a: c.start_a + o1,
-			end_a: c.end_a + o1,
-			start_b: c.start_b + o2,
-			end_b: c.end_b + o2,
+			startA: c.startA + o1,
+			endA: c.endA + o1,
+			startB: c.startB + o2,
+			endB: c.endB + o2,
 		});
 
 		let newdiffs = new this._matcher(
 			null,
 			lines1,
 			linesx,
-		).get_difference_opcodes();
-		newdiffs = newdiffs.map((c) => offset(c, range1[0], rangex[0]));
+		).getDifferenceOpcodes();
+		newdiffs = newdiffs.map((c) => offsetValue(c, range1[0], rangex[0]));
 
 		if (hiidx < diffs.length) {
-			const offset_diffs = diffs
+			const offsetDiffs = diffs
 				.slice(hiidx)
-				.map((c) => offset(c, lines_added[1], lines_added[x]));
-			this.diffs[which].splice(hiidx, diffs.length - hiidx, ...offset_diffs);
+				.map((c) => offsetValue(c, linesAdded[1], linesAdded[x]));
+			this.diffs[which as 0 | 1 | 2 | 3].splice(
+				hiidx,
+				diffs.length - hiidx,
+				...offsetDiffs,
+			);
 		}
-		this.diffs[which].splice(loidx, hiidx - loidx, ...newdiffs);
+		this.diffs[which as 0 | 1 | 2 | 3].splice(
+			loidx,
+			hiidx - loidx,
+			...newdiffs,
+		);
 	}
 
-	_merge_blocks(
-		using: DiffChunk[][],
-	): [number, number, number, number, number, number] {
-		const lowc = Math.min(using[0][0].start_a, using[1][0].start_a);
-		const highc = Math.max(
-			using[0][using[0].length - 1].end_a,
-			using[1][using[1].length - 1].end_a,
-		);
-
-		const low: number[] = [];
-		const high: number[] = [];
-		for (const i of [0, 1]) {
-			const dFirst = using[i][0];
-			low.push(lowc - dFirst.start_a + dFirst.start_b);
-			const dLast = using[i][using[i].length - 1];
-			high.push(highc - dLast.end_a + dLast.end_b);
+	private _getLoRange(diffs: DiffChunk[], loidx: number): [number, number] {
+		if (loidx > 0) {
+			const prevChunk = diffs[loidx - 1];
+			if (prevChunk) {
+				return [prevChunk.startB, prevChunk.startA];
+			}
 		}
+		return [0, 0];
+	}
+
+	private _getHiRange(
+		diffs: DiffChunk[],
+		hiidx: number,
+		x: 0 | 2,
+	): [number, number] {
+		if (hiidx < diffs.length) {
+			const nextChunk = diffs[hiidx];
+			if (nextChunk) {
+				return [nextChunk.endB, nextChunk.endA];
+			}
+		}
+		return [this.seqLength[x], this.seqLength[1]];
+	}
+
+	_mergeBlocks(
+		using: [DiffChunk[], DiffChunk[]],
+	): [number, number, number, number, number, number] {
+		const u0 = using[0];
+		const u1 = using[1];
+		const u0First = u0[0];
+		const u1First = u1[0];
+		const u0Last = u0.at(-1);
+		const u1Last = u1.at(-1);
+
+		if (!u0First) {
+			throw new Error("Invalid merge block: missing first chunk (0)");
+		}
+		if (!u1First) {
+			throw new Error("Invalid merge block: missing first chunk (1)");
+		}
+		if (!u0Last) {
+			throw new Error("Invalid merge block: missing last chunk (0)");
+		}
+		if (!u1Last) {
+			throw new Error("Invalid merge block: missing last chunk (1)");
+		}
+
+		const lowc = Math.min(u0First.startA, u1First.startA);
+		const highc = Math.max(u0Last.endA, u1Last.endA);
+
+		const low: [number, number] = [0, 0];
+		const high: [number, number] = [0, 0];
+
+		// For dFirst[0] (seq 0)
+		low[0] = lowc - u0First.startA + u0First.startB;
+		high[0] = highc - u0Last.endA + u0Last.endB;
+
+		// For dFirst[1] (seq 1)
+		low[1] = lowc - u1First.startA + u1First.startB;
+		high[1] = highc - u1Last.endA + u1Last.endB;
+
 		return [low[0], high[0], lowc, highc, low[1], high[1]];
 	}
 
-	*_auto_merge(
-		using: DiffChunk[][],
+	*_autoMerge(
+		using: [DiffChunk[], DiffChunk[]],
 		texts: string[][],
 	): Generator<[DiffChunk, DiffChunk]> {
-		const [l0, h0, l1, h1, l2, h2] = this._merge_blocks(using);
-		let tag: DiffChunkTag;
+		const [l0, h0, l1, h1, l2, h2] = this._mergeBlocks(using);
 
 		let matches = h0 - l0 === h2 - l2;
 		if (matches) {
-			for (let i = 0; i < h0 - l0; i++) {
-				if (texts[0][l0 + i] !== texts[2][l2 + i]) {
-					matches = false;
-					break;
+			const t0 = texts[PANE_0];
+			const t2 = texts[PANE_2];
+			if (t0 && t2) {
+				for (let i = 0; i < h0 - l0; i++) {
+					if (t0[l0 + i] !== t2[l2 + i]) {
+						matches = false;
+						break;
+					}
 				}
+			} else {
+				matches = false;
 			}
 		}
 
-		if (matches) {
-			if (l1 !== h1 && l0 === h0) {
-				tag = "delete";
-			} else if (l1 !== h1) {
-				tag = "replace";
-			} else {
-				tag = "insert";
-			}
-		} else {
-			tag = "conflict";
-		}
+		const tag = this._getAutoMergeTag({
+			matches,
+			l0,
+			h0,
+			l1,
+			h1,
+		});
 
 		const out0: DiffChunk = {
 			tag,
-			start_a: l1,
-			end_a: h1,
-			start_b: l0,
-			end_b: h0,
+			startA: l1,
+			endA: h1,
+			startB: l0,
+			endB: h0,
 		};
 		const out1: DiffChunk = {
 			tag,
-			start_a: l1,
-			end_a: h1,
-			start_b: l2,
-			end_b: h2,
+			startA: l1,
+			endA: h1,
+			startB: l2,
+			endB: h2,
 		};
 		yield [out0, out1];
 	}
 
-	*_merge_diffs(
+	private _getAutoMergeTag(params: {
+		matches: boolean;
+		l0: number;
+		h0: number;
+		l1: number;
+		h1: number;
+	}): DiffChunkTag {
+		const { matches, l0, h0, l1, h1 } = params;
+		if (!matches) {
+			return "conflict";
+		}
+		if (l1 !== h1 && l0 === h0) {
+			return "delete";
+		}
+		if (l1 !== h1) {
+			return "replace";
+		}
+		return "insert";
+	}
+
+	*_mergeDiffs(
 		seq0: DiffChunk[],
 		seq1: DiffChunk[],
 		texts: string[][],
 	): Generator<[DiffChunk | null, DiffChunk | null]> {
 		const s0 = seq0.slice();
 		const s1 = seq1.slice();
-		const seq = [s0, s1];
+		const seqs: [DiffChunk[], DiffChunk[]] = [s0, s1];
 
-		while (s0.length || s1.length) {
-			let high_seq = 0;
-			if (!s0.length) high_seq = 1;
-			else if (!s1.length) high_seq = 0;
-			else {
-				high_seq = s0[0].start_a > s1[0].start_a ? 1 : 0;
-				if (s0[0].start_a === s1[0].start_a) {
-					if (s0[0].tag === "insert") high_seq = 0;
-					else if (s1[0].tag === "insert") high_seq = 1;
-				}
+		while (s0.length > 0 || s1.length > 0) {
+			const highSeq = this._findHighSeq(s0, s1);
+			const seqArr = seqs[highSeq];
+			if (!seqArr) {
+				break;
+			}
+			const highDiff = seqArr.shift();
+			if (!highDiff) {
+				break;
 			}
 
-			const high_diff = seq[high_seq].shift() as DiffChunk;
-			let high_mark = high_diff.end_a;
-			let other_seq = high_seq === 1 ? 0 : 1;
+			let highMark = highDiff.endA;
+			const using: [DiffChunk[], DiffChunk[]] = [[], []];
+			using[highSeq].push(highDiff);
 
-			const using: DiffChunk[][] = [[], []];
-			using[high_seq].push(high_diff);
+			const result = this._collectOverlappingChunks({
+				seqs,
+				highSeq,
+				highMark,
+				highDiff,
+				using,
+			});
+			highMark = result.highMark;
 
-			while (seq[other_seq].length) {
-				const other_diff = seq[other_seq][0];
-				if (high_mark < other_diff.start_a) break;
-				if (
-					high_mark === other_diff.start_a &&
-					!(high_diff.tag === "insert" && other_diff.tag === "insert")
-				)
-					break;
-
-				using[other_seq].push(other_diff);
-				seq[other_seq].shift();
-
-				if (high_mark < other_diff.end_a) {
-					const temp = high_seq;
-					high_seq = other_seq;
-					other_seq = temp;
-					high_mark = other_diff.end_a;
-				}
-			}
-
-			if (using[0].length === 0) {
-				yield [null, using[1][0]];
-			} else if (using[1].length === 0) {
-				yield [using[0][0], null];
-			} else {
-				for (const c of this._auto_merge(using, texts)) {
-					yield c;
-				}
-			}
+			yield* this._yieldMergeDiffs(using, texts);
 		}
 	}
 
-	*set_sequences_iter(sequences: string[][]): Generator<number | null> {
-		this.diffs = [[], []];
-		this.num_sequences = sequences.length;
-		this.seqlength = sequences.map((s) => s.length);
+	private *_yieldMergeDiffs(
+		using: [DiffChunk[], DiffChunk[]],
+		texts: string[][],
+	): Generator<[DiffChunk | null, DiffChunk | null]> {
+		if (using[PANE_0].length === 0) {
+			const first1 = using[PANE_1][0];
+			if (first1) {
+				yield [null, first1];
+			}
+		} else if (using[PANE_1].length === 0) {
+			const first0 = using[PANE_0][0];
+			if (first0) {
+				yield [first0, null];
+			}
+		} else {
+			yield* this._autoMerge(using, texts);
+		}
+	}
 
-		for (let i = 0; i < this.num_sequences - 1; i++) {
+	private _findHighSeq(s0: DiffChunk[], s1: DiffChunk[]): 0 | 1 {
+		const first0 = s0[0];
+		const first1 = s1[0];
+		if (!first0) {
+			return 1;
+		}
+		if (!first1) {
+			return 0;
+		}
+		if (first0.startA > first1.startA) {
+			return 1;
+		}
+		if (first0.startA < first1.startA) {
+			return 0;
+		}
+		if (first0.tag === "insert") {
+			return 0;
+		}
+		if (first1.tag === "insert") {
+			return 1;
+		}
+		return 0;
+	}
+
+	private _collectOverlappingChunks(params: {
+		seqs: [DiffChunk[], DiffChunk[]];
+		highSeq: 0 | 1;
+		highMark: number;
+		highDiff: DiffChunk;
+		using: [DiffChunk[], DiffChunk[]];
+	}) {
+		const { seqs, highSeq, highMark, highDiff, using } = params;
+		let currentHighSeq = highSeq;
+		let currentHighMark = highMark;
+		let currentHighDiff = highDiff;
+
+		while (true) {
+			const otherSeq: 0 | 1 = currentHighSeq === 1 ? 0 : 1;
+			const otherSeqArr = seqs[otherSeq];
+			const otherDiff = otherSeqArr?.[0];
+			if (
+				this._shouldStopCollecting(
+					otherDiff,
+					currentHighMark,
+					currentHighDiff,
+				)
+			) {
+				break;
+			}
+			if (otherDiff) {
+				using[otherSeq].push(otherDiff);
+				otherSeqArr?.shift();
+
+				if (currentHighMark < otherDiff.endA) {
+					currentHighSeq = otherSeq;
+					currentHighMark = otherDiff.endA;
+					currentHighDiff = otherDiff;
+				}
+			}
+		}
+		return { highMark: currentHighMark };
+	}
+
+	private _shouldStopCollecting(
+		otherDiff: DiffChunk | undefined,
+		currentHighMark: number,
+		currentHighDiff: DiffChunk,
+	): boolean {
+		if (!otherDiff) {
+			return true;
+		}
+		if (currentHighMark < otherDiff.startA) {
+			return true;
+		}
+		if (currentHighMark === otherDiff.startA) {
+			return (
+				currentHighDiff.tag !== "insert" || otherDiff.tag !== "insert"
+			);
+		}
+		return false;
+	}
+
+	*setSequencesIter(sequences: string[][]): Generator<number | null> {
+		this.diffs = [[], [], [], []];
+		this.numSequences = sequences.length;
+		this.seqLength = [0, 0, 0, 0, 0];
+		for (
+			let i = 0;
+			i < this.numSequences && i < PANE_INDICES_5.length;
+			i++
+		) {
+			this.seqLength[i] = sequences[i]?.length ?? 0;
+		}
+
+		const seq1 = sequences[PANE_1] || [];
+		for (let i = 0; i < this.numSequences - 1 && i < PANE_3 + 1; i++) {
 			let matcher:
 				| MyersSequenceMatcher<string>
 				| SyncPointMyersSequenceMatcher<string>;
-			if (this.syncpoints.length) {
-				const syncpoints: [number, number][] = this.syncpoints.map((s) => [
-					s[i][0](),
-					s[i][1](),
-				]);
-				matcher = new this._sync_matcher(
+			const otherSeq = sequences[i * 2] || [];
+			if (this.syncPoints.length > 0) {
+				const syncPoints: [number, number][] = this.syncPoints
+					.map((s) => {
+						const pair = s[i];
+						return pair
+							? ([pair[0](), pair[1]()] as [number, number])
+							: null;
+					})
+					.filter((p): p is [number, number] => p !== null);
+				matcher = new this._syncMatcher(
 					null,
-					sequences[1],
-					sequences[i * 2],
-					syncpoints,
+					seq1,
+					otherSeq,
+					syncPoints,
 				);
 			} else {
-				matcher = new this._matcher(null, sequences[1], sequences[i * 2]);
+				matcher = new this._matcher(null, seq1, otherSeq);
 			}
 
-			const work = matcher.initialise();
+			const work = matcher.initialize();
 			while (true) {
 				const step = work.next();
-				if (step.done) break;
-				if (step.value === null) yield null;
+				if (step.done) {
+					break;
+				}
+				if (step.value === null) {
+					yield null;
+				}
+				// continue initialization
 			}
-			this.diffs[i] = matcher.get_difference_opcodes();
+			this.diffs[i as 0 | 1 | 2 | 3] = matcher.getDifferenceOpcodes();
 		}
-		this._initialised = true;
-		this._update_merge_cache(sequences);
+		this._initialized = true;
+		this._updateMergeCache(sequences);
 		yield 1;
 	}
 
 	clear() {
-		this.diffs = [[], []];
-		this.seqlength = new Array(this.num_sequences).fill(0);
-		this._initialised = false;
-		this._old_merge_cache.clear();
-		this._update_merge_cache(new Array(this.num_sequences).fill([]));
+		this.diffs = [[], [], [], []];
+		this.seqLength = [0, 0, 0, 0, 0];
+		this._initialized = false;
+		this._oldMergeCache.clear();
+		this._updateMergeCache([[], [], [], [], []]);
 	}
 }
+
+export { Differ };

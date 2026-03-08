@@ -1,7 +1,12 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-import * as cp from "node:child_process";
-import { getGitExecutable } from "./gitPath";
+import { execFile } from "node:child_process";
+import { getGitExecutable } from "./gitPath.ts";
+
+const LINE_BREAK_REGEX = /\r?\n/;
+const ONE_KILOBYTE = 1024;
+const TEN_MEGABYTES = 10 * ONE_KILOBYTE * ONE_KILOBYTE;
+const MAX_BUFFER_SIZE = TEN_MEGABYTES;
 
 /**
  * Executes a git command and returns the stdout.
@@ -9,10 +14,10 @@ import { getGitExecutable } from "./gitPath";
 export async function execGit(args: string[], cwd: string): Promise<string> {
 	const cmd = await getGitExecutable();
 	return new Promise((resolve, reject) => {
-		cp.execFile(
+		execFile(
 			cmd,
 			args,
-			{ cwd, maxBuffer: 1024 * 1024 * 10 },
+			{ cwd, maxBuffer: MAX_BUFFER_SIZE },
 			(err, stdout) => {
 				if (err) {
 					reject(err);
@@ -37,16 +42,17 @@ export async function getConflictedFiles(repoPath: string): Promise<string[]> {
 			.trim()
 			.split("\n")
 			.filter((f) => f);
-	} catch (_e) {
+	} catch {
 		return [];
 	}
 }
+
 /**
  * Checks for unresolved merge conflict markers or (??) markers.
  */
 export function getUnresolvedReasons(text: string): string[] {
 	const reasons: string[] = [];
-	const lines = text.split(/\r?\n/);
+	const lines = text.split(LINE_BREAK_REGEX);
 	const conflictMarkers = ["<<<<<<<", "=======", ">>>>>>>", "|||||||"];
 
 	let hasConflict = false;
@@ -61,7 +67,9 @@ export function getUnresolvedReasons(text: string): string[] {
 			hasQuestion = true;
 			reasons.push("(??) markers");
 		}
-		if (hasConflict && hasQuestion) break;
+		if (hasConflict && hasQuestion) {
+			break;
+		}
 	}
 	return reasons;
 }

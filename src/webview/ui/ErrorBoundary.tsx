@@ -1,18 +1,20 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-import * as React from "react";
+import { Component, type ErrorInfo, type ReactNode } from "react";
 
 interface Props {
-	children?: React.ReactNode;
+	children?: ReactNode;
 }
 
 interface State {
 	hasError: boolean;
 	error: Error | null;
-	errorInfo: React.ErrorInfo | null;
+	errorInfo: ErrorInfo | null;
 }
 
-export class ErrorBoundary extends React.Component<Props, State> {
+const ERROR_TITLE = "Something went wrong.";
+
+export class ErrorBoundary extends Component<Props, State> {
 	constructor(props: Props) {
 		super(props);
 		this.state = { hasError: false, error: null, errorInfo: null };
@@ -22,12 +24,11 @@ export class ErrorBoundary extends React.Component<Props, State> {
 		return { hasError: true, error, errorInfo: null };
 	}
 
-	componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-		console.error("Uncaught error:", error, errorInfo);
+	override componentDidCatch(_error: Error, errorInfo: ErrorInfo) {
 		this.setState({ errorInfo });
 	}
 
-	render() {
+	override render() {
 		if (this.state.hasError) {
 			return (
 				<div
@@ -39,8 +40,10 @@ export class ErrorBoundary extends React.Component<Props, State> {
 						overflow: "auto",
 					}}
 				>
-					<h1>Something went wrong.</h1>
-					<pre style={{ color: "red" }}>{this.state.error?.toString()}</pre>
+					<h1>{ERROR_TITLE}</h1>
+					<pre style={{ color: "red" }}>
+						{this.state.error?.toString()}
+					</pre>
 					<pre style={{ fontSize: "12px", whiteSpace: "pre-wrap" }}>
 						{this.state.errorInfo?.componentStack}
 					</pre>

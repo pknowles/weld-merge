@@ -1,101 +1,390 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
 import type { editor } from "monaco-editor";
-import * as React from "react";
-import type { DiffChunk } from "./types";
-import { DIFF_WIDTH } from "./types";
+import { type FC, useEffect, useMemo, useRef, useState } from "react";
+import { DIFF_WIDTH, type DiffChunk } from "./types.ts";
 
 interface DiffCurtainProps {
 	diffs: DiffChunk[] | undefined;
 	leftEditor: editor.IStandaloneCodeEditor;
 	rightEditor: editor.IStandaloneCodeEditor;
-	renderTrigger: number; // For triggering re-renders on scroll
-	// When true, the diff's a/b sides are reversed relative to left/right editors.
-	// diffs[0] has a=Merged(right) b=Local(left), so reversed=true swaps them.
+	renderTrigger: number;
 	reversed: boolean;
-	fadeOutLeft?: boolean;
-	fadeOutRight?: boolean;
-	onApplyChunk?: (chunk: DiffChunk) => void;
-	onDeleteChunk?: (chunk: DiffChunk) => void;
-	onCopyUpChunk?: (chunk: DiffChunk) => void;
-	onCopyDownChunk?: (chunk: DiffChunk) => void;
+	fadeOutLeft?: boolean | undefined;
+	fadeOutRight?: boolean | undefined;
+	onApplyChunk?: ((chunk: DiffChunk) => void) | undefined;
+	onDeleteChunk?: ((chunk: DiffChunk) => void) | undefined;
+	onCopyUpChunk?: ((chunk: DiffChunk) => void) | undefined;
+	onCopyDownChunk?: ((chunk: DiffChunk) => void) | undefined;
 }
 
-export const DiffCurtain: React.FC<DiffCurtainProps> = ({
-	diffs,
-	leftEditor,
-	rightEditor,
-	renderTrigger: _renderTrigger,
-	reversed,
-	fadeOutLeft,
-	fadeOutRight,
-	onApplyChunk,
-	onDeleteChunk,
-	onCopyUpChunk,
-	onCopyDownChunk,
-}) => {
-	const width = DIFF_WIDTH;
-	const curveOffset = 15;
+const CURVE_OFFSET = 15;
+const BTN_SIZE = 16;
+const BTN_MARGIN = 3;
+const TITLE_TEXT = "Diff Connections";
+const DELETE_ICON = "\u00D7";
 
-	const [leftHeaderOffset, setLeftHeaderOffset] = React.useState(0);
-	const [rightHeaderOffset, setRightHeaderOffset] = React.useState(0);
-	const curtainRef = React.useRef<HTMLDivElement>(null);
+interface ColorTheme {
+	readonly replace: string;
+	readonly conflict: string;
+	readonly delete: string;
+	readonly insert: string;
+}
 
-	React.useEffect(() => {
-		const calculateOffset = () => {
-			if (!curtainRef.current) return;
-			const curtainRect = curtainRef.current.getBoundingClientRect();
+const FILL: ColorTheme = {
+	replace:
+		"var(--vscode-meldMerge-diffCurtainReplaceFill, rgba(0, 100, 255, 0.2))",
+	conflict:
+		"var(--vscode-meldMerge-diffCurtainConflictFill, rgba(255, 0, 0, 0.2))",
+	delete: "var(--vscode-meldMerge-diffCurtainDeleteFill, rgba(0, 200, 0, 0.2))",
+	insert: "var(--vscode-meldMerge-diffCurtainInsertFill, rgba(0, 200, 0, 0.2))",
+};
 
-			if (leftEditor) {
-				const leftNode = leftEditor.getContainerDomNode();
-				if (leftNode) {
-					const leftRect = leftNode.getBoundingClientRect();
-					setLeftHeaderOffset(Math.max(0, leftRect.top - curtainRect.top));
-				}
-			}
+const STROKE: ColorTheme = {
+	replace:
+		"var(--vscode-meldMerge-diffCurtainReplaceStroke, rgba(0, 100, 255, 0.5))",
+	conflict:
+		"var(--vscode-meldMerge-diffCurtainConflictStroke, rgba(255, 0, 0, 0.5))",
+	delete: "var(--vscode-meldMerge-diffCurtainDeleteStroke, rgba(0, 200, 0, 0.5))",
+	insert: "var(--vscode-meldMerge-diffCurtainInsertStroke, rgba(0, 200, 0, 0.5))",
+};
 
-			if (rightEditor) {
-				const rightNode = rightEditor.getContainerDomNode();
-				if (rightNode) {
-					const rightRect = rightNode.getBoundingClientRect();
-					setRightHeaderOffset(Math.max(0, rightRect.top - curtainRect.top));
-				}
-			}
-		};
+function getFill(tag: string): string {
+	if (tag === "replace") {
+		return FILL.replace;
+	}
+	if (tag === "conflict") {
+		return FILL.conflict;
+	}
+	if (tag === "delete") {
+		return FILL.delete;
+	}
+	return FILL.insert;
+}
 
-		// Calculate initially
-		calculateOffset();
+function getStroke(tag: string): string {
+	if (tag === "replace") {
+		return STROKE.replace;
+	}
+	if (tag === "conflict") {
+		return STROKE.conflict;
+	}
+	if (tag === "delete") {
+		return STROKE.delete;
+	}
+	return STROKE.insert;
+}
 
-		// Recalculate if window resizes or container resizes
-		window.addEventListener("resize", calculateOffset);
+interface ChunkActionsProps {
+	chunk: DiffChunk;
+	isReplace: boolean;
+	canApply: boolean;
+	canDelete: boolean;
+	applySide: "left" | "right";
+	coords: {
+		xApp: number;
+		xDel: number;
+		yUp: number;
+		yRep: number;
+		yDwn: number;
+		yDel: number;
+	};
+	onApp: ((chunk: DiffChunk) => void) | undefined;
+	onDel: ((chunk: DiffChunk) => void) | undefined;
+	onUp: ((chunk: DiffChunk) => void) | undefined;
+	onDwn: ((chunk: DiffChunk) => void) | undefined;
+}
 
-		const observer = new ResizeObserver(() => {
-			calculateOffset();
-		});
+const ChunkActions: FC<ChunkActionsProps> = (p) => {
+	const iconApply = p.applySide === "left" ? "➔" : "⬅";
+	const iconUp = p.applySide === "left" ? "↱" : "↰";
+	const iconDown = p.applySide === "left" ? "↳" : "↲";
 
-		const leftNode = leftEditor?.getContainerDomNode();
-		if (leftNode) observer.observe(leftNode);
+	return (
+		<>
+			{p.canApply && p.onUp && p.isReplace && (
+				<foreignObject
+					x={p.coords.xApp}
+					y={p.coords.yUp}
+					width="16"
+					height="16"
+					className="diff-btn-container"
+				>
+					<button
+						type="button"
+						className="diff-btn"
+						onClick={() => p.onUp?.(p.chunk)}
+						title="Copy up"
+					>
+						{iconUp}
+					</button>
+				</foreignObject>
+			)}
+			{p.canApply && p.onApp && (
+				<foreignObject
+					x={p.coords.xApp}
+					y={p.coords.yRep}
+					width="16"
+					height="16"
+					className="diff-btn-container"
+				>
+					<button
+						type="button"
+						className="diff-btn"
+						onClick={() => p.onApp?.(p.chunk)}
+						title="Push"
+					>
+						{iconApply}
+					</button>
+				</foreignObject>
+			)}
+			{p.canApply && p.onDwn && p.isReplace && (
+				<foreignObject
+					x={p.coords.xApp}
+					y={p.coords.yDwn}
+					width="16"
+					height="16"
+					className="diff-btn-container"
+				>
+					<button
+						type="button"
+						className="diff-btn"
+						onClick={() => p.onDwn?.(p.chunk)}
+						title="Copy down"
+					>
+						{iconDown}
+					</button>
+				</foreignObject>
+			)}
+			{p.canDelete && p.onDel && (
+				<foreignObject
+					x={p.coords.xDel}
+					y={p.coords.yDel}
+					width="16"
+					height="16"
+					className="diff-btn-container"
+				>
+					<button
+						type="button"
+						className="diff-btn diff-cross-icon"
+						onClick={() => p.onDel?.(p.chunk)}
+						title="Delete"
+					>
+						{DELETE_ICON}
+					</button>
+				</foreignObject>
+			)}
+		</>
+	);
+};
 
-		const rightNode = rightEditor?.getContainerDomNode();
-		if (rightNode) observer.observe(rightNode);
+interface ChunkRendererProps {
+	chunk: DiffChunk;
+	leftEditor: editor.IStandaloneCodeEditor;
+	rightEditor: editor.IStandaloneCodeEditor;
+	leftMax: number;
+	rightMax: number;
+	leftOffset: number;
+	rightOffset: number;
+	reversed: boolean;
+	fadeL?: boolean | undefined;
+	fadeR?: boolean | undefined;
+	onApp: ((chunk: DiffChunk) => void) | undefined;
+	onDel: ((chunk: DiffChunk) => void) | undefined;
+	onUp: ((chunk: DiffChunk) => void) | undefined;
+	onDwn: ((chunk: DiffChunk) => void) | undefined;
+}
 
-		if (curtainRef.current) observer.observe(curtainRef.current);
+const getY = (ed: editor.IStandaloneCodeEditor, line: number, off: number) =>
+	ed.getTopForLineNumber(line) - ed.getScrollTop() + off;
 
-		return () => {
-			window.removeEventListener("resize", calculateOffset);
-			observer.disconnect();
-		};
-	}, [leftEditor, rightEditor]);
+function computePaths(y1T: number, y1B: number, y2T: number, y2B: number) {
+	const w = DIFF_WIDTH;
+	const c = CURVE_OFFSET;
+	const main = `M 0,${y1T} C ${c},${y1T} ${w - c},${y2T} ${w},${y2T} L ${w},${y2B} C ${w - c},${y2B} ${c},${y1B} 0,${y1B} Z`;
+	const top = `M 0,${y1T} C ${c},${y1T} ${w - c},${y2T} ${w},${y2T}`;
+	const bot = `M ${w},${y2B} C ${w - c},${y2B} ${c},${y1B} 0,${y1B}`;
+	return { main, top, bot };
+}
 
-	if (!diffs || !leftEditor || !rightEditor) {
+function getBounds(p: {
+	startA: number;
+	endA: number;
+	startB: number;
+	endB: number;
+	lMax: number;
+	rMax: number;
+	reversed: boolean;
+}) {
+	const lS = Math.min(
+		p.lMax,
+		Math.max(1, (p.reversed ? p.startB : p.startA) + 1),
+	);
+	const lE = Math.min(
+		p.lMax,
+		Math.max(1, (p.reversed ? p.endB : p.endA) + 1),
+	);
+	const rS = Math.min(
+		p.rMax,
+		Math.max(1, (p.reversed ? p.startA : p.startB) + 1),
+	);
+	const rE = Math.min(
+		p.rMax,
+		Math.max(1, (p.reversed ? p.endA : p.endB) + 1),
+	);
+	const lEmp = p.reversed ? p.startB === p.endB : p.startA === p.endA;
+	const rEmp = p.reversed ? p.startA === p.endA : p.startB === p.endB;
+	return { lS, lE, rS, rE, lEmp, rEmp };
+}
+
+const ChunkRenderer: FC<ChunkRendererProps> = (p) => {
+	if (p.chunk.tag === "equal") {
 		return null;
 	}
+
+	const { lS, lE, rS, rE, lEmp, rEmp } = getBounds({
+		startA: p.chunk.startA,
+		endA: p.chunk.endA,
+		startB: p.chunk.startB,
+		endB: p.chunk.endB,
+		lMax: p.leftMax,
+		rMax: p.rightMax,
+		reversed: p.reversed,
+	});
+	const y1T = getY(p.leftEditor, lS, p.leftOffset);
+	const y1B = lEmp ? y1T : getY(p.leftEditor, lE, p.leftOffset);
+	const y2T = getY(p.rightEditor, rS, p.rightOffset);
+	const y2B = rEmp ? y2T : getY(p.rightEditor, rE, p.rightOffset);
+
+	const { main, top, bot } = computePaths(y1T, y1B, y2T, y2B);
+	const sAp = p.reversed ? "left" : "right";
+	const sDl = p.reversed ? "right" : "left";
+	const xAp =
+		sAp === "left" ? BTN_MARGIN : DIFF_WIDTH - BTN_SIZE - BTN_MARGIN;
+	const xDl =
+		sDl === "left" ? BTN_MARGIN : DIFF_WIDTH - BTN_SIZE - BTN_MARGIN;
+	const yBa = (sAp === "left" ? y1T : y2T) + BTN_MARGIN;
+
+	let maskId: string | undefined;
+	if (p.fadeL && p.fadeR) {
+		maskId = "url(#both)";
+	} else if (p.fadeL) {
+		maskId = "url(#left)";
+	} else if (p.fadeR) {
+		maskId = "url(#right)";
+	}
+
+	return (
+		<g className="diff-container" mask={maskId}>
+			<path d={main} fill={getFill(p.chunk.tag)} stroke="none" />
+			<path
+				d={top}
+				fill="none"
+				stroke={getStroke(p.chunk.tag)}
+				strokeWidth="1"
+			/>
+			<path
+				d={bot}
+				fill="none"
+				stroke={getStroke(p.chunk.tag)}
+				strokeWidth="1"
+			/>
+			<ChunkActions
+				chunk={p.chunk}
+				isReplace={p.chunk.tag === "replace"}
+				canApply={
+					p.chunk.tag === "replace" || p.chunk.startB < p.chunk.endB
+				}
+				canDelete={
+					p.chunk.tag === "replace" || p.chunk.startA < p.chunk.endA
+				}
+				applySide={sAp}
+				onApp={p.onApp}
+				onDel={p.onDel}
+				onUp={p.onUp}
+				onDwn={p.onDwn}
+				coords={{
+					xApp: xAp,
+					xDel: xDl,
+					yRep: yBa,
+					yUp: yBa - BTN_SIZE - 2,
+					yDwn: yBa + BTN_SIZE + 2,
+					yDel: (sDl === "left" ? y1T : y2T) + BTN_MARGIN,
+				}}
+			/>
+		</g>
+	);
+};
+
+export const DiffCurtain: FC<DiffCurtainProps> = (p) => {
+	const [leftOffset, setLeftOffset] = useState(0);
+	const [rightOffset, setRightOffset] = useState(0);
+	const curtainRef = useRef<HTMLDivElement>(null);
+	const lModel = useMemo(() => p.leftEditor?.getModel(), [p.leftEditor]);
+	const rModel = useMemo(() => p.rightEditor?.getModel(), [p.rightEditor]);
+
+	useEffect(() => {
+		const calc = () => {
+			const cNode = curtainRef.current;
+			if (!cNode) {
+				return;
+			}
+			const rect = cNode.getBoundingClientRect();
+			const lNode = p.leftEditor?.getContainerDomNode();
+			const rNode = p.rightEditor?.getContainerDomNode();
+			if (lNode) {
+				const lRect = lNode.getBoundingClientRect();
+				setLeftOffset(Math.max(0, lRect.top - rect.top));
+			}
+			if (rNode) {
+				const rRect = rNode.getBoundingClientRect();
+				setRightOffset(Math.max(0, rRect.top - rect.top));
+			}
+		};
+		calc();
+		window.addEventListener("resize", calc);
+		const obs = new ResizeObserver(calc);
+		const lDom = p.leftEditor?.getContainerDomNode();
+		const rDom = p.rightEditor?.getContainerDomNode();
+		const cDom = curtainRef.current;
+		if (lDom) {
+			obs.observe(lDom);
+		}
+		if (rDom) {
+			obs.observe(rDom);
+		}
+		if (cDom) {
+			obs.observe(cDom);
+		}
+		return () => {
+			window.removeEventListener("resize", calc);
+			obs.disconnect();
+		};
+	}, [p.leftEditor, p.rightEditor]);
+
+	if (!p.diffs) {
+		return null;
+	}
+	if (!p.leftEditor) {
+		return null;
+	}
+	if (!p.rightEditor) {
+		return null;
+	}
+	if (!lModel) {
+		return null;
+	}
+	if (!rModel) {
+		return null;
+	}
+	const lMax = lModel.getLineCount();
+	const rMax = rModel.getLineCount();
 
 	return (
 		<div
 			ref={curtainRef}
 			style={{
-				width: `${width}px`,
+				width: `${DIFF_WIDTH}px`,
 				backgroundColor: "#1e1e1e",
 				position: "relative",
 				borderLeft: "1px solid #333",
@@ -113,255 +402,61 @@ export const DiffCurtain: React.FC<DiffCurtainProps> = ({
 					overflow: "visible",
 				}}
 			>
-				<title>Diff Connections</title>
+				<title>{TITLE_TEXT}</title>
 				<defs>
-					<mask id="fadeLeft">
-						<linearGradient id="gradLeft">
+					<mask id="left">
+						<linearGradient id="gl">
 							<stop offset="0%" stopColor="black" />
 							<stop offset="80%" stopColor="white" />
 							<stop offset="100%" stopColor="white" />
 						</linearGradient>
-						<rect width="100%" height="100%" fill="url(#gradLeft)" />
+						<rect width="100%" height="100%" fill="url(#gl)" />
 					</mask>
-					<mask id="fadeRight">
-						<linearGradient id="gradRight">
+					<mask id="right">
+						<linearGradient id="gr">
 							<stop offset="0%" stopColor="white" />
 							<stop offset="20%" stopColor="white" />
 							<stop offset="100%" stopColor="black" />
 						</linearGradient>
-						<rect width="100%" height="100%" fill="url(#gradRight)" />
+						<rect width="100%" height="100%" fill="url(#gr)" />
 					</mask>
-					<mask id="fadeBoth">
-						<linearGradient id="gradBoth">
+					<mask id="both">
+						<linearGradient id="gb">
 							<stop offset="0%" stopColor="black" />
 							<stop offset="20%" stopColor="white" />
 							<stop offset="80%" stopColor="white" />
 							<stop offset="100%" stopColor="black" />
 						</linearGradient>
-						<rect width="100%" height="100%" fill="url(#gradBoth)" />
+						<rect width="100%" height="100%" fill="url(#gb)" />
 					</mask>
 				</defs>
 				<style>{`
 					.diff-btn-container { opacity: 0; transition: opacity 0.1s; overflow: visible; }
 					.diff-container:hover .diff-btn-container { opacity: 1; }
-					.diff-btn {
-						width: 16px; height: 16px;
-						border: 1px solid rgba(255,255,255,0.2);
-						background: rgba(0,0,0,0.5);
-						border-radius: 3px;
-						color: white;
-						font-size: 13px;
-						display: flex;
-						align-items: center;
-						justify-content: center;
-						padding: 0;
-						cursor: pointer;
-						box-sizing: border-box;
-						line-height: 1;
-					}
+					.diff-btn { width: 16px; height: 16px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.5); border-radius: 3px; color: white; font-size: 13px; display: flex; align-items: center; justify-content: center; padding: 0; cursor: pointer; box-sizing: border-box; line-height: 1; }
 					.diff-btn:hover { background: rgba(100,100,100,0.9); border-color: rgba(255,255,255,0.6); }
 					.diff-cross-icon { font-size: 16px; font-weight: bold; margin-top: -2px; }
 				`}</style>
-				{diffs.map((chunk) => {
-					if (chunk.tag === "equal") return null;
-
-					const leftModel = leftEditor.getModel();
-					const rightModel = rightEditor.getModel();
-					const leftMax = leftModel ? leftModel.getLineCount() : 1;
-					const rightMax = rightModel ? rightModel.getLineCount() : 1;
-
-					// When reversed, a=right and b=left; otherwise a=left and b=right
-					const leftStartLine = Math.min(
-						leftMax,
-						Math.max(1, (reversed ? chunk.start_b : chunk.start_a) + 1),
-					);
-					const leftEndLine = Math.min(
-						leftMax,
-						Math.max(1, (reversed ? chunk.end_b : chunk.end_a) + 1),
-					);
-					const rightStartLine = Math.min(
-						rightMax,
-						Math.max(1, (reversed ? chunk.start_a : chunk.start_b) + 1),
-					);
-					const rightEndLine = Math.min(
-						rightMax,
-						Math.max(1, (reversed ? chunk.end_a : chunk.end_b) + 1),
-					);
-
-					const leftEmpty = reversed
-						? chunk.start_b === chunk.end_b
-						: chunk.start_a === chunk.end_a;
-					const rightEmpty = reversed
-						? chunk.start_a === chunk.end_a
-						: chunk.start_b === chunk.end_b;
-
-					const y1Top =
-						leftEditor.getTopForLineNumber(leftStartLine) -
-						leftEditor.getScrollTop() +
-						leftHeaderOffset;
-					let y1Bottom =
-						leftEditor.getTopForLineNumber(leftEndLine) -
-						leftEditor.getScrollTop() +
-						leftHeaderOffset;
-					if (leftEmpty) y1Bottom = y1Top;
-
-					const y2Top =
-						rightEditor.getTopForLineNumber(rightStartLine) -
-						rightEditor.getScrollTop() +
-						rightHeaderOffset;
-					let y2Bottom =
-						rightEditor.getTopForLineNumber(rightEndLine) -
-						rightEditor.getScrollTop() +
-						rightHeaderOffset;
-					if (rightEmpty) y2Bottom = y2Top;
-
-					const basePath = `M 0,${y1Top} C ${curveOffset},${y1Top} ${width - curveOffset},${y2Top} ${width},${y2Top} L ${width},${y2Bottom} C ${width - curveOffset},${y2Bottom} ${curveOffset},${y1Bottom} 0,${y1Bottom} Z`;
-					const topEdgePath = `M 0,${y1Top} C ${curveOffset},${y1Top} ${width - curveOffset},${y2Top} ${width},${y2Top}`;
-					const bottomEdgePath = `M ${width},${y2Bottom} C ${width - curveOffset},${y2Bottom} ${curveOffset},${y1Bottom} 0,${y1Bottom}`;
-
-					const color =
-						chunk.tag === "replace"
-							? "var(--vscode-meldMerge-diffCurtainReplaceFill, rgba(0, 100, 255, 0.2))"
-							: chunk.tag === "conflict"
-								? "var(--vscode-meldMerge-diffCurtainConflictFill, rgba(255, 0, 0, 0.2))"
-								: chunk.tag === "delete"
-									? "var(--vscode-meldMerge-diffCurtainDeleteFill, rgba(0, 200, 0, 0.2))"
-									: "var(--vscode-meldMerge-diffCurtainInsertFill, rgba(0, 200, 0, 0.2))";
-
-					const strokeColor =
-						chunk.tag === "replace"
-							? "var(--vscode-meldMerge-diffCurtainReplaceStroke, rgba(0, 100, 255, 0.5))"
-							: chunk.tag === "conflict"
-								? "var(--vscode-meldMerge-diffCurtainConflictStroke, rgba(255, 0, 0, 0.5))"
-								: chunk.tag === "delete"
-									? "var(--vscode-meldMerge-diffCurtainDeleteStroke, rgba(0, 200, 0, 0.5))"
-									: "var(--vscode-meldMerge-diffCurtainInsertStroke, rgba(0, 200, 0, 0.5))";
-
-					const isReplace = chunk.tag === "replace";
-					const canApply = isReplace || chunk.start_b < chunk.end_b;
-					const canDelete = isReplace || chunk.start_a < chunk.end_a;
-
-					const applySide = reversed ? "left" : "right";
-					const deleteSide = reversed ? "right" : "left";
-
-					const btnSize = 16;
-					const btnMargin = 3;
-					const applyX =
-						applySide === "left" ? btnMargin : width - btnSize - btnMargin;
-					const deleteX =
-						deleteSide === "left" ? btnMargin : width - btnSize - btnMargin;
-
-					const baseApplyY = applySide === "left" ? y1Top : y2Top;
-					const baseDeleteY = deleteSide === "left" ? y1Top : y2Top;
-
-					const repY = baseApplyY + btnMargin;
-					const upY = repY - btnSize - 2;
-					const downY = repY + btnSize + 2;
-					const deleteY = baseDeleteY + btnMargin;
-
-					const diffMask =
-						fadeOutLeft && fadeOutRight
-							? "url(#fadeBoth)"
-							: fadeOutLeft
-								? "url(#fadeLeft)"
-								: fadeOutRight
-									? "url(#fadeRight)"
-									: undefined;
-
-					return (
-						<g
-							key={`${chunk.start_a}-${chunk.end_a}-${chunk.start_b}-${chunk.end_b}`}
-							className="diff-container"
-							mask={diffMask}
-						>
-							<path d={basePath} fill={color} stroke="none" />
-							<path
-								d={topEdgePath}
-								fill="none"
-								stroke={strokeColor}
-								strokeWidth="1"
-							/>
-							<path
-								d={bottomEdgePath}
-								fill="none"
-								stroke={strokeColor}
-								strokeWidth="1"
-							/>
-							{canApply && onCopyUpChunk && isReplace && (
-								<foreignObject
-									x={applyX}
-									y={upY}
-									width="16"
-									height="16"
-									className="diff-btn-container"
-								>
-									<button
-										type="button"
-										className="diff-btn"
-										onClick={() => onCopyUpChunk(chunk)}
-										title="Copy chunk up"
-									>
-										{applySide === "left" ? "↱" : "↰"}
-									</button>
-								</foreignObject>
-							)}
-							{canApply && onApplyChunk && (
-								<foreignObject
-									x={applyX}
-									y={repY}
-									width="16"
-									height="16"
-									className="diff-btn-container"
-								>
-									<button
-										type="button"
-										className="diff-btn"
-										onClick={() => onApplyChunk(chunk)}
-										title="Push chunk to Merged"
-									>
-										{applySide === "left" ? "➔" : "⬅"}
-									</button>
-								</foreignObject>
-							)}
-							{canApply && onCopyDownChunk && isReplace && (
-								<foreignObject
-									x={applyX}
-									y={downY}
-									width="16"
-									height="16"
-									className="diff-btn-container"
-								>
-									<button
-										type="button"
-										className="diff-btn"
-										onClick={() => onCopyDownChunk(chunk)}
-										title="Copy chunk down"
-									>
-										{applySide === "left" ? "↳" : "↲"}
-									</button>
-								</foreignObject>
-							)}
-							{canDelete && onDeleteChunk && (
-								<foreignObject
-									x={deleteX}
-									y={deleteY}
-									width="16"
-									height="16"
-									className="diff-btn-container"
-								>
-									<button
-										type="button"
-										className="diff-btn diff-cross-icon"
-										onClick={() => onDeleteChunk(chunk)}
-										title="Delete chunk from Merged"
-									>
-										×
-									</button>
-								</foreignObject>
-							)}
-						</g>
-					);
-				})}
+				{/* biome-ignore lint/performance/useSolidForComponent: False positive in React project */}
+				{p.diffs.map((c) => (
+					<ChunkRenderer
+						key={`${c.startA}-${c.endA}-${c.startB}-${c.endB}`}
+						chunk={c}
+						leftEditor={p.leftEditor}
+						rightEditor={p.rightEditor}
+						leftMax={lMax}
+						rightMax={rMax}
+						leftOffset={leftOffset}
+						rightOffset={rightOffset}
+						reversed={p.reversed}
+						fadeL={p.fadeOutLeft}
+						fadeR={p.fadeOutRight}
+						onApp={p.onApplyChunk}
+						onDel={p.onDeleteChunk}
+						onUp={p.onCopyUpChunk}
+						onDwn={p.onCopyDownChunk}
+					/>
+				))}
 			</svg>
 		</div>
 	);

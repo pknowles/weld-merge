@@ -13,77 +13,131 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import { Merger } from "./merge";
+import type { DiffChunk } from "./myers.ts";
+import { Merger } from "./merge.ts";
+
+const CONFLICT_MARKER_LINES = 4;
 
 export class GitTextMerger extends Merger {
-	*merge_3_files_git(mark_conflicts: boolean = true) {
+	*merge3FilesGit(markConflicts = true) {
 		this.differ.unresolved = [];
-		let lastline = 0;
-		let mergedline = 0;
-		const mergedtext: string[] = [];
+		const mergedText: string[] = [];
 
-		for (const change of this.differ.all_changes()) {
+		const sequences = this._getValidTexts();
+		if (!sequences) {
+			yield "";
+			return;
+		}
+		const [_, t1] = sequences;
+
+		let state = { lastLine: 0, mergedLine: 0 };
+
+		for (const change of this.differ.allChanges()) {
 			yield null;
-			let low_mark = lastline;
-			if (change[0] !== null) low_mark = change[0].start_a;
-			if (change[1] !== null && change[1].start_a > low_mark) {
-				low_mark = change[1].start_a;
-			}
-
-			for (let i = lastline; i < low_mark; i++) {
-				mergedtext.push(this.texts[1][i]);
-			}
-			mergedline += low_mark - lastline;
-			lastline = low_mark;
-
-			if (
-				change[0] !== null &&
-				change[1] !== null &&
-				change[0].tag === "conflict"
-			) {
-				const min_mark = Math.min(change[0].start_a, change[1].start_a);
-				const high_mark = Math.max(change[0].end_a, change[1].end_a);
-				if (mark_conflicts) {
-					mergedtext.push("<<<<<<< HEAD");
-					for (let i = change[0].start_b; i < change[0].end_b; i++) {
-						mergedtext.push(this.texts[0][i]);
-					}
-					mergedtext.push("||||||| BASE");
-					for (let i = min_mark; i < high_mark; i++) {
-						mergedtext.push(this.texts[1][i]);
-					}
-					mergedtext.push("=======");
-					for (let i = change[1].start_b; i < change[1].end_b; i++) {
-						mergedtext.push(this.texts[2][i]);
-					}
-					mergedtext.push(">>>>>>> REMOTE");
-
-					const added_lines =
-						change[0].end_b -
-						change[0].start_b +
-						(high_mark - min_mark) +
-						(change[1].end_b - change[1].start_b) +
-						4;
-					for (let i = 0; i < added_lines; i++) {
-						this.differ.unresolved.push(mergedline);
-						mergedline += 1;
-					}
-					lastline = high_mark;
-				}
-			} else if (change[0] !== null) {
-				lastline += this._apply_change(this.texts[0], change[0], mergedtext);
-				mergedline += change[0].end_b - change[0].start_b;
-			} else if (change[1] !== null) {
-				lastline += this._apply_change(this.texts[2], change[1], mergedtext);
-				mergedline += change[1].end_b - change[1].start_b;
-			}
+			state = this._processChange({
+				change,
+				state,
+				mergedText,
+				texts: sequences,
+				markConflicts,
+			});
 		}
 
-		const baselen = this.texts[1].length;
-		for (let i = lastline; i < baselen; i++) {
-			mergedtext.push(this.texts[1][i]);
+		this._appendRemainingLines(state.lastLine, t1, mergedText);
+
+		yield mergedText.join("\n");
+	}
+
+	private _getValidTexts(): [string[], string[], string[]] | null {
+		const t0 = this.texts[0];
+		const t1 = this.texts[1];
+		const t2 = this.texts[2];
+		if (!(t0 && t1 && t2)) {
+			return null;
+		}
+		return [t0, t1, t2];
+	}
+
+	private _processChange(params: {
+		change: [DiffChunk | null, DiffChunk | null];
+		state: { lastLine: number; mergedLine: number };
+		mergedText: string[];
+		texts: [string[], string[], string[]];
+		markConflicts: boolean;
+	}) {
+		const { change, state, mergedText, texts, markConflicts } = params;
+		const [t0, t1, t2] = texts;
+		const [ch0, ch1] = change;
+		let { lastLine, mergedLine } = state;
+
+		const lowMark = this._calculateLowMark(ch0, ch1, lastLine);
+
+		if (lowMark > lastLine) {
+			this._appendLines(lastLine, lowMark, t1, mergedText);
 		}
 
-		yield mergedtext.join("\n");
+		mergedLine += lowMark - lastLine;
+		lastLine = lowMark;
+
+		if (ch0 !== null && ch1 !== null && ch0.tag === "conflict") {
+			if (markConflicts) {
+				const result = this._handleConflict({
+					ch0,
+					ch1,
+					mergedLine,
+					mergedText,
+					texts,
+				});
+				mergedLine = result.mergedLine;
+				lastLine = result.lastLine;
+			}
+		} else if (ch0 !== null) {
+			lastLine += this._applyChange(t0, ch0, mergedText);
+			mergedLine += ch0.endB - ch0.startB;
+		} else if (ch1 !== null) {
+			lastLine += this._applyChange(t2, ch1, mergedText);
+			mergedLine += ch1.endB - ch1.startB;
+		}
+
+		return { lastLine, mergedLine };
+	}
+
+	private _handleConflict(params: {
+		ch0: DiffChunk;
+		ch1: DiffChunk;
+		mergedLine: number;
+		mergedText: string[];
+		texts: [string[], string[], string[]];
+	}) {
+		const { ch0, ch1, mergedLine, mergedText, texts } = params;
+		const [t0, t1, t2] = texts;
+		const minMark = Math.min(ch0.startA, ch1.startA);
+		const highMark = Math.max(ch0.endA, ch1.endA);
+
+		mergedText.push("<<<<<<< HEAD");
+		this._appendLines(ch0.startB, ch0.endB, t0, mergedText);
+
+		mergedText.push("||||||| BASE");
+		this._appendLines(minMark, highMark, t1, mergedText);
+
+		mergedText.push("=======");
+		this._appendLines(ch1.startB, ch1.endB, t2, mergedText);
+
+		mergedText.push(">>>>>>> REMOTE");
+
+		const conflictAddedLines =
+			ch0.endB -
+			ch0.startB +
+			(highMark - minMark) +
+			(ch1.endB - ch1.startB) +
+			CONFLICT_MARKER_LINES;
+
+		let currentMergedLine = mergedLine;
+		for (let i = 0; i < conflictAddedLines; i++) {
+			this.differ.unresolved.push(currentMergedLine);
+			currentMergedLine += 1;
+		}
+
+		return { mergedLine: currentMergedLine, lastLine: highMark };
 	}
 }

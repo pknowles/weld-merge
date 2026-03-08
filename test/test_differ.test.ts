@@ -1,4 +1,4 @@
-import { Differ } from "../src/matchers/diffutil";
+import { Differ } from "../src/matchers/diffutil.ts";
 
 describe("Differ algorithm robustness", () => {
 	it("does not produce NaN when deleting a massive chunk from the middle", () => {
@@ -7,8 +7,10 @@ describe("Differ algorithm robustness", () => {
 		const oldRight = Array.from({ length: 1000 }, (_, i) => `Line R${i}`);
 
 		const differ = new Differ();
-		const it = differ.set_sequences_iter([oldLeft, oldMid, oldRight]);
-		for (const _step of it);
+		const it = differ.setSequencesIter([oldLeft, oldMid, oldRight]);
+		for (const _step of it) {
+			// consume iterator
+		}
 
 		const newMid = [...oldMid];
 		newMid.splice(100, 800); // delete 800 lines!
@@ -20,7 +22,7 @@ describe("Differ algorithm robustness", () => {
 		}
 		const sizechange = newMid.length - oldMid.length;
 
-		differ.change_sequence(1, startidx, sizechange, [
+		differ.changeSequence(1, startidx, sizechange, [
 			oldLeft,
 			newMid,
 			oldRight,
@@ -28,10 +30,10 @@ describe("Differ algorithm robustness", () => {
 
 		const nans = differ.diffs[0].filter(
 			(c) =>
-				Number.isNaN(c.start_a) ||
-				Number.isNaN(c.end_a) ||
-				Number.isNaN(c.start_b) ||
-				Number.isNaN(c.end_b),
+				Number.isNaN(c.startA) ||
+				Number.isNaN(c.endA) ||
+				Number.isNaN(c.startB) ||
+				Number.isNaN(c.endB),
 		);
 		expect(nans.length).toBe(0);
 	});
@@ -42,8 +44,10 @@ describe("Differ algorithm robustness", () => {
 		const oldRight = Array.from({ length: 100 }, (_, i) => `Line R${i}`);
 
 		const differ = new Differ();
-		const it = differ.set_sequences_iter([oldLeft, oldMid, oldRight]);
-		for (const _step of it);
+		const it = differ.setSequencesIter([oldLeft, oldMid, oldRight]);
+		for (const _step of it) {
+			// consume iterator
+		}
 
 		const newMid: string[] = [];
 
@@ -54,7 +58,7 @@ describe("Differ algorithm robustness", () => {
 		}
 		const sizechange = newMid.length - oldMid.length;
 
-		differ.change_sequence(1, startidx, sizechange, [
+		differ.changeSequence(1, startidx, sizechange, [
 			oldLeft,
 			newMid,
 			oldRight,
@@ -62,10 +66,10 @@ describe("Differ algorithm robustness", () => {
 
 		const nans = differ.diffs[0].filter(
 			(c) =>
-				Number.isNaN(c.start_a) ||
-				Number.isNaN(c.end_a) ||
-				Number.isNaN(c.start_b) ||
-				Number.isNaN(c.end_b),
+				Number.isNaN(c.startA) ||
+				Number.isNaN(c.endA) ||
+				Number.isNaN(c.startB) ||
+				Number.isNaN(c.endB),
 		);
 		expect(nans.length).toBe(0);
 	});

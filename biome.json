@@ -8,28 +8,104 @@
 	"files": {
 		"ignoreUnknown": true
 	},
+	"formatter": {
+		"enabled": true,
+		"formatWithErrors": false,
+		"attributePosition": "auto",
+		"indentStyle": "tab",
+		"indentWidth": 4,
+		"lineWidth": 80,
+		"lineEnding": "lf"
+	},
+	"javascript": {
+		"jsxRuntime": "transparent"
+	},
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"recommended": true
+			"recommended": true,
+			"correctness": "error",
+			"suspicious": "error",
+			"style": "error",
+			"complexity": "warn",
+			"performance": "error",
+			"security": "error",
+			"nursery": "off"
 		}
 	},
 	"overrides": [
 		{
-			"includes": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"],
+			"includes": ["**/*"],
 			"linter": {
 				"rules": {
-					"recommended": true,
+					"correctness": {
+						"useQwikValidLexicalScope": "off",
+						"noUnresolvedImports": "off",
+						"noSolidDestructuredProps": "off",
+						"noNodejsModules": "off",
+						"noUndeclaredDependencies": "off",
+						"useUniqueElementIds": "off"
+					},
+					"complexity": {
+						"noExcessiveLinesPerFunction": {
+							"level": "error",
+							"options": {
+								"maxLines": 4000
+							}
+						},
+						"useMaxParams": {
+							"level": "error",
+							"options": {
+								"max": 10
+							}
+						},
+						"noExcessiveCognitiveComplexity": {
+							"level": "error",
+							"options": {
+								"maxAllowedComplexity": 200
+							}
+						}
+					},
+					"security": {
+						"noSecrets": "off"
+					},
 					"style": {
-						"useConst": "error",
-						"noNonNullAssertion": "error"
+						"noMagicNumbers": "off",
+						"useFilenamingConvention": {
+							"level": "error",
+							"options": {
+								"strictCase": false
+							}
+						},
+						"noNestedTernary": "off",
+						"noJsxLiterals": "off",
+						"noParameterAssign": "off"
 					},
 					"suspicious": {
-						"noExplicitAny": "error"
-					},
-					"correctness": {
-						"useExhaustiveDependencies": "error",
-						"useHookAtTopLevel": "error"
+						"noBitwiseOperators": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["**/*.ts", "**/*.js"]
+		},
+		{
+			"includes": ["**/*.tsx", "**/*.jsx"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noReactSpecificProps": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["jest.config.js", ".dependency-cruiser.js"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noReactSpecificProps": "off"
 					}
 				}
 			}

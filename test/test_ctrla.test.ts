@@ -1,4 +1,4 @@
-import { Differ } from "../src/matchers/diffutil";
+import { Differ } from "../src/matchers/diffutil.ts";
 
 describe("Ctrl+A delete", () => {
 	it("does not crash when deleting everything", () => {
@@ -18,8 +18,10 @@ describe("Ctrl+A delete", () => {
 		const oldRight = ["A", "B", "X"];
 
 		const differ = new Differ();
-		const it = differ.set_sequences_iter([oldLeft, oldMid, oldRight]);
-		for (const _step of it);
+		const stepIter = differ.setSequencesIter([oldLeft, oldMid, oldRight]);
+		for (const _step of stepIter) {
+			// consume iterator
+		}
 
 		const newMid = [""]; // Ctrl+A, Delete
 
@@ -30,7 +32,7 @@ describe("Ctrl+A delete", () => {
 		}
 		const sizechange = newMid.length - oldMid.length;
 
-		differ.change_sequence(1, startidx, sizechange, [
+		differ.changeSequence(1, startidx, sizechange, [
 			oldLeft,
 			newMid,
 			oldRight,

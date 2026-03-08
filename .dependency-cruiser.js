@@ -1,5 +1,6 @@
 /** @type {import('dependency-cruiser').IConfiguration} */
-module.exports = {
+// biome-ignore lint/style/noDefaultExport: config files often require default export
+export default {
 	forbidden: [
 		{
 			name: "no-circular",

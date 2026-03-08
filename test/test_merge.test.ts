@@ -1,4 +1,9 @@
-import { Merger } from "../src/matchers/merge";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { Merger } from "../src/matchers/merge.ts";
+
+// biome-ignore lint: __dirname is necessary in tests when ES modules are not fully supported or configured
+const testDir = __dirname;
 
 describe("Merger", () => {
 	let merger: Merger;
@@ -37,28 +42,24 @@ describe("Merger", () => {
 			val = init.next();
 		}
 
-		const mergeGen = merger.merge_3_files(true);
-		let finalMergedText: string | null = null;
-		for (const res of mergeGen) {
-			if (res !== null && typeof res === "string") {
-				finalMergedText = res;
-			}
+		const mergeGen = merger.merge3Files(true);
+		let res = mergeGen.next();
+		while (!res.done) {
+			res = mergeGen.next();
 		}
+		const finalMergedText = res.value ?? null;
 
 		expect(finalMergedText).not.toBeNull();
 	});
 });
 
-import * as fs from "node:fs";
-import * as path from "node:path";
-
 describe("End-to-End Meld Parity", () => {
 	it("matches exact output of the original Python Meld backend", () => {
-		const testCasesPath = path.join(__dirname, "test_cases.txt");
-		const expectedOutputsPath = path.join(__dirname, "expected_outputs.txt");
+		const testCasesPath = join(testDir, "test_cases.txt");
+		const expectedOutputsPath = join(testDir, "expected_outputs.txt");
 
-		const casesContent = fs.readFileSync(testCasesPath, "utf-8");
-		const expectedContent = fs.readFileSync(expectedOutputsPath, "utf-8");
+		const casesContent = readFileSync(testCasesPath, "utf-8");
+		const expectedContent = readFileSync(expectedOutputsPath, "utf-8");
 
 		// Split exact same way python does
 		const cases = casesContent
@@ -71,11 +72,15 @@ describe("End-to-End Meld Parity", () => {
 
 		for (let i = 0; i < cases.length; i++) {
 			const rawCase = cases[i];
+			if (!rawCase) {
+				continue;
+			}
+
 			const parts = rawCase.trim().split("===");
 
 			// Replicate the python reading logic EXACTLY
-			const extract = (part: string) =>
-				part
+			const extract = (part: string | undefined) =>
+				(part || "")
 					.trim()
 					.split("\n")
 					.filter((p) => p !== "");
@@ -92,13 +97,12 @@ describe("End-to-End Meld Parity", () => {
 				val = initGen.next();
 			}
 
-			const mergeGen = merger.merge_3_files(true);
-			let finalMergedText: string | null = null;
-			for (const res of mergeGen) {
-				if (res !== null && typeof res === "string") {
-					finalMergedText = res;
-				}
+			const mergeGen = merger.merge3Files(true);
+			let res = mergeGen.next();
+			while (!res.done) {
+				res = mergeGen.next();
 			}
+			const finalMergedText = res.value ?? null;
 
 			// Note: Since our version drops trailing newlines from lines and expected includes them (because of "\n".join())
 			expect(finalMergedText).toBe(expected[i]);
