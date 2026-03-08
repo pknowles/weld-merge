@@ -1,38 +1,38 @@
 import {
-	find_common_prefix,
-	find_common_suffix,
+	findCommonPrefix,
+	findCommonSuffix,
 	InlineMyersSequenceMatcher,
 	MyersSequenceMatcher,
 	SyncPointMyersSequenceMatcher,
-} from "../src/matchers/myers";
+} from "../src/matchers/myers.ts";
 
 describe("MyersSequenceMatcher", () => {
 	describe("Prefix/Suffix matching", () => {
 		it("finds common prefix", () => {
-			expect(find_common_prefix("abcdef", "abcfed")).toBe(3);
-			expect(find_common_prefix("abcdef", "abcdef")).toBe(6);
-			expect(find_common_prefix("abcdef", "")).toBe(0);
+			expect(findCommonPrefix("abcdef", "abcfed")).toBe(3);
+			expect(findCommonPrefix("abcdef", "abcdef")).toBe(6);
+			expect(findCommonPrefix("abcdef", "")).toBe(0);
 		});
 
 		it("finds common suffix", () => {
-			expect(find_common_suffix("abcdef", "feddef")).toBe(3);
-			expect(find_common_suffix("abcdef", "abcdef")).toBe(6);
-			expect(find_common_suffix("abcdef", "")).toBe(0);
+			expect(findCommonSuffix("abcdef", "feddef")).toBe(3);
+			expect(findCommonSuffix("abcdef", "abcdef")).toBe(6);
+			expect(findCommonSuffix("abcdef", "")).toBe(0);
 		});
 	});
 
 	describe("Sequence matching", () => {
 		it("matches identical sequences", () => {
 			const matcher = new MyersSequenceMatcher(null, "abcdef", "abcdef");
-			expect(matcher.get_opcodes()).toEqual([
-				{ tag: "equal", start_a: 0, end_a: 6, start_b: 0, end_b: 6 },
+			expect(matcher.getOpcodes()).toEqual([
+				{ tag: "equal", startA: 0, endA: 6, startB: 0, endB: 6 },
 			]);
 		});
 
 		it("handles complete replacements", () => {
 			const matcher = new MyersSequenceMatcher(null, "abc", "def");
-			expect(matcher.get_opcodes()).toEqual([
-				{ tag: "replace", start_a: 0, end_a: 3, start_b: 0, end_b: 3 },
+			expect(matcher.getOpcodes()).toEqual([
+				{ tag: "replace", startA: 0, endA: 3, startB: 0, endB: 3 },
 			]);
 		});
 	});
@@ -47,7 +47,7 @@ describe("MyersSequenceMatcher", () => {
 				[15, 10, 0],
 			];
 			const matcher = new MyersSequenceMatcher(null, a, b);
-			const blocks = matcher.get_matching_blocks();
+			const blocks = matcher.getMatchingBlocks();
 			expect(blocks).toEqual(r);
 		});
 
@@ -61,7 +61,7 @@ describe("MyersSequenceMatcher", () => {
 				[9, 14, 0],
 			];
 			const matcher = new MyersSequenceMatcher(null, a, b);
-			const blocks = matcher.get_matching_blocks();
+			const blocks = matcher.getMatchingBlocks();
 			expect(blocks).toEqual(r);
 		});
 	});
@@ -76,7 +76,7 @@ describe("InlineMyersSequenceMatcher", () => {
 			[24, 23, 0],
 		];
 		const matcher = new InlineMyersSequenceMatcher(null, a, b);
-		const blocks = matcher.get_matching_blocks();
+		const blocks = matcher.getMatchingBlocks();
 		expect(blocks).toEqual(r);
 	});
 });
@@ -93,7 +93,7 @@ describe("SyncPointMyersSequenceMatcher", () => {
 			[12, 11, 0],
 		];
 		const matcher = new SyncPointMyersSequenceMatcher(null, a, b);
-		const blocks = matcher.get_matching_blocks();
+		const blocks = matcher.getMatchingBlocks();
 		expect(blocks).toEqual(r);
 	});
 
@@ -108,7 +108,7 @@ describe("SyncPointMyersSequenceMatcher", () => {
 			[12, 11, 0],
 		];
 		const matcher = new SyncPointMyersSequenceMatcher(null, a, b, [[3, 6]]);
-		const blocks = matcher.get_matching_blocks();
+		const blocks = matcher.getMatchingBlocks();
 		expect(blocks).toEqual(r);
 	});
 
@@ -126,7 +126,7 @@ describe("SyncPointMyersSequenceMatcher", () => {
 			[3, 2],
 			[8, 6],
 		]);
-		const blocks = matcher.get_matching_blocks();
+		const blocks = matcher.getMatchingBlocks();
 		expect(blocks).toEqual(r);
 	});
 });

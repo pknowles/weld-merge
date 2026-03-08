@@ -1,4 +1,4 @@
-import { Differ } from "../src/matchers/diffutil";
+import { Differ } from "../src/matchers/diffutil.ts";
 
 describe("Differ with conflict markers", () => {
 	it("does not crash when deleting all conflict markers", () => {
@@ -18,8 +18,10 @@ describe("Differ with conflict markers", () => {
 		const oldRight = ["A", "B", "X"];
 
 		const differ = new Differ();
-		const it = differ.set_sequences_iter([oldLeft, oldMid, oldRight]);
-		for (const _step of it);
+		const it = differ.setSequencesIter([oldLeft, oldMid, oldRight]);
+		for (const _step of it) {
+			// consume iterator
+		}
 
 		const newMid = [
 			"A",
@@ -35,7 +37,7 @@ describe("Differ with conflict markers", () => {
 		}
 		const sizechange = newMid.length - oldMid.length;
 
-		differ.change_sequence(1, startidx, sizechange, [
+		differ.changeSequence(1, startidx, sizechange, [
 			oldLeft,
 			newMid,
 			oldRight,
@@ -43,10 +45,10 @@ describe("Differ with conflict markers", () => {
 
 		const nans = differ.diffs[1].filter(
 			(c) =>
-				Number.isNaN(c.start_a) ||
-				Number.isNaN(c.end_a) ||
-				Number.isNaN(c.start_b) ||
-				Number.isNaN(c.end_b),
+				Number.isNaN(c.startA) ||
+				Number.isNaN(c.endA) ||
+				Number.isNaN(c.startB) ||
+				Number.isNaN(c.endB),
 		);
 		expect(nans.length).toBe(0);
 	});

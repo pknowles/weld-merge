@@ -16,81 +16,48 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import Editor from "@monaco-editor/react";
-import { diffLines } from "diff";
-import type { editor } from "monaco-editor";
-import * as monaco from "monaco-editor";
-import * as React from "react";
-import type { FileState, Highlight } from "./types";
+import { editor, Selection, KeyMod, KeyCode } from "monaco-editor";
+import {
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	type FC,
+	type CSSProperties,
+	type MouseEvent,
+	type FocusEvent,
+} from "react";
+import type { FileState, Highlight } from "./types.ts";
+import { computeMinimalEdits } from "./editorUtil.ts";
 
-const computeMinimalEdits = (
-	model: editor.ITextModel,
-	newText: string,
-): editor.IIdentifiedSingleEditOperation[] => {
-	const originalText = model.getValue();
-	if (originalText === newText) return [];
+const NEWLINE_REGEX = /\r?\n/;
 
-	const changes = diffLines(originalText, newText);
-	let currentOffset = 0;
-	const edits: editor.IIdentifiedSingleEditOperation[] = [];
-
-	for (const change of changes) {
-		const changeLen = change.value.length;
-		if (change.added) {
-			const pos = model.getPositionAt(currentOffset);
-			edits.push({
-				range: {
-					startLineNumber: pos.lineNumber,
-					startColumn: pos.column,
-					endLineNumber: pos.lineNumber,
-					endColumn: pos.column,
-				},
-				text: change.value,
-			});
-		} else if (change.removed) {
-			const startPos = model.getPositionAt(currentOffset);
-			const endPos = model.getPositionAt(currentOffset + changeLen);
-			edits.push({
-				range: {
-					startLineNumber: startPos.lineNumber,
-					startColumn: startPos.column,
-					endLineNumber: endPos.lineNumber,
-					endColumn: endPos.column,
-				},
-				text: "",
-			});
-			currentOffset += changeLen;
-		} else {
-			currentOffset += changeLen;
-		}
-	}
-	return edits;
-};
 interface CodePaneProps {
 	file: FileState;
 	index: number;
 	onMount: (editor: editor.IStandaloneCodeEditor, index: number) => void;
 	onChange: (value: string | undefined, index: number) => void;
 	isMiddle: boolean;
-	highlights?: Highlight[];
-	onCompleteMerge?: () => void;
-	onCopyHash?: (hash: string) => void;
-	externalSyncId?: number;
-	onShowDiff?: () => void;
-	requestClipboardText?: () => Promise<string>;
-	writeClipboardText?: (text: string) => void;
-	syntaxHighlighting?: boolean;
-	onToggleBase?: () => void;
-	baseSide?: "left" | "right";
-	isBaseActive?: boolean;
-	style?: React.CSSProperties;
-	onPrevDiff?: () => void;
-	onNextDiff?: () => void;
-	onPrevConflict?: () => void;
-	onNextConflict?: () => void;
-	autoFocusConflict?: boolean;
+	highlights?: Highlight[] | undefined;
+	onCompleteMerge?: (() => void) | undefined;
+	onCopyHash?: ((hash: string) => void) | undefined;
+	externalSyncId?: number | undefined;
+	onShowDiff?: (() => void) | undefined;
+	requestClipboardText?: (() => Promise<string>) | undefined;
+	writeClipboardText?: ((text: string) => void) | undefined;
+	syntaxHighlighting?: boolean | undefined;
+	onToggleBase?: (() => void) | undefined;
+	baseSide?: "left" | "right" | undefined;
+	isBaseActive?: boolean | undefined;
+	style?: CSSProperties | undefined;
+	onPrevDiff?: (() => void) | undefined;
+	onNextDiff?: (() => void) | undefined;
+	onPrevConflict?: (() => void) | undefined;
+	onNextConflict?: (() => void) | undefined;
+	autoFocusConflict?: boolean | undefined;
 }
 
-export const CodePane: React.FC<CodePaneProps> = ({
+export const CodePane: FC<CodePaneProps> = ({
 	file,
 	index,
 	onMount,
@@ -115,19 +82,21 @@ export const CodePane: React.FC<CodePaneProps> = ({
 	autoFocusConflict,
 }) => {
 	const [editorInstance, setEditorInstance] =
-		React.useState<editor.IStandaloneCodeEditor | null>(null);
-	const [lastSyncId, setLastSyncId] = React.useState(externalSyncId);
+		useState<editor.IStandaloneCodeEditor | null>(null);
+	const [lastSyncId, setLastSyncId] = useState(externalSyncId);
 
-	const isApplyingExternalSync = React.useRef(false);
-	const [showHover, setShowHover] = React.useState(false);
-	const [hoverPos, setHoverPos] = React.useState({ x: 0, y: 0 });
-	const hoverRef = React.useRef<HTMLDivElement>(null);
-	const hoverTimerRef = React.useRef<NodeJS.Timeout | null>(null);
+	const isApplyingExternalSync = useRef(false);
+	const [showHover, setShowHover] = useState(false);
+	const [hoverPos, setHoverPos] = useState({ x: 0, y: 0 });
+	const hoverRef = useRef<HTMLDivElement>(null);
+	const hoverTimerRef = useRef<NodeJS.Timeout | null>(null);
 
 	const handleMouseEnter = (
-		e: React.MouseEvent<HTMLElement> | React.FocusEvent<HTMLElement>,
+		e: MouseEvent<HTMLElement> | FocusEvent<HTMLElement>,
 	) => {
-		if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+		if (hoverTimerRef.current) {
+			clearTimeout(hoverTimerRef.current);
+		}
 		const rect = e.currentTarget.getBoundingClientRect();
 		// Compute safe coordinates to prevent clipping
 		const cardWidth = 350;
@@ -138,7 +107,9 @@ export const CodePane: React.FC<CodePaneProps> = ({
 
 		const maxY = Math.max(8, window.innerHeight - cardHeight - 20);
 		let y = rect.bottom + 4;
-		if (y > maxY && rect.top - cardHeight - 4 > 8) {
+		const isTooLow = y > maxY;
+		const hasSpaceAbove = rect.top - cardHeight - 4 > 8;
+		if (isTooLow && hasSpaceAbove) {
 			y = rect.top - cardHeight - 4; // flip to above if it flows off bottom
 		}
 
@@ -152,14 +123,14 @@ export const CodePane: React.FC<CodePaneProps> = ({
 		}, 300); // 300ms delay before closing
 	};
 
-	const handleCopyHash = (e: React.MouseEvent) => {
+	const handleCopyHash = (e: MouseEvent) => {
 		e.stopPropagation();
 		if (file.commit && onCopyHash) {
 			onCopyHash(file.commit.hash);
 		}
 	};
 
-	const handleTitleClick = (e: React.MouseEvent) => {
+	const handleTitleClick = (e: MouseEvent) => {
 		if (hoverRef.current?.contains(e.target as Node)) {
 			return; // Ignore clicks inside the hover card
 		}
@@ -168,10 +139,12 @@ export const CodePane: React.FC<CodePaneProps> = ({
 		}
 	};
 
-	const decorationsRef = React.useRef<string[]>([]);
+	const decorationsRef = useRef<string[]>([]);
 
-	React.useEffect(() => {
-		if (!editorInstance || !highlights) return;
+	useEffect(() => {
+		if (!(editorInstance && highlights)) {
+			return;
+		}
 
 		const newDecorations = highlights
 			.filter((h) => h.startLine <= h.endLine)
@@ -184,12 +157,16 @@ export const CodePane: React.FC<CodePaneProps> = ({
 				},
 				options: {
 					isWholeLine: h.isWholeLine,
-					className: h.isWholeLine ? `diff-${h.tag}` : undefined,
-					inlineClassName: !h.isWholeLine ? `diff-${h.tag}-inline` : undefined,
+					className: h.isWholeLine ? `diff-${h.tag}` : null,
+					inlineClassName: h.isWholeLine
+						? null
+						: `diff-${h.tag}-inline`,
 					linesDecorationsClassName: h.isWholeLine
 						? `diff-${h.tag}-margin`
-						: undefined,
-					marginClassName: h.isWholeLine ? `diff-${h.tag}-margin` : undefined,
+						: null,
+					marginClassName: h.isWholeLine
+						? `diff-${h.tag}-margin`
+						: null,
 				},
 			}));
 
@@ -207,29 +184,33 @@ export const CodePane: React.FC<CodePaneProps> = ({
 			monacoEditor.addAction({
 				id: "custom-copy",
 				label: "Copy",
-				keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC],
+				keybindings: [KeyMod.CtrlCmd | KeyCode.KeyC],
 				contextMenuGroupId: "9_cutcopypaste",
 				contextMenuOrder: 2,
 				run: (ed) => {
 					const model = ed.getModel();
 					const selection = ed.getSelection();
-					if (!model || !selection) return;
+					if (!(model && selection)) {
+						return;
+					}
 
 					let text = "";
-					if (!selection.isEmpty()) {
-						text = model.getValueInRange(selection);
-					} else {
+					if (selection.isEmpty()) {
 						const line = selection.startLineNumber;
 						text = `${model.getLineContent(line)}\n`;
+					} else {
+						text = model.getValueInRange(selection);
 					}
-					if (text) writeClipboardText(text);
+					if (text) {
+						writeClipboardText(text);
+					}
 				},
 			});
 
 			monacoEditor.addAction({
 				id: "custom-cut",
 				label: "Cut",
-				keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyX],
+				keybindings: [KeyMod.CtrlCmd | KeyCode.KeyX],
 				contextMenuGroupId: "9_cutcopypaste",
 				contextMenuOrder: 1,
 				precondition: "!editorReadonly",
@@ -237,25 +218,27 @@ export const CodePane: React.FC<CodePaneProps> = ({
 					const model = ed.getModel();
 					const selection = ed.getSelection();
 					if (
-						!model ||
-						!selection ||
-						ed.getOption(monaco.editor.EditorOption.readOnly)
-					)
+						!(model && selection) ||
+						ed.getOption(editor.EditorOption.readOnly)
+					) {
 						return;
+					}
 
 					let text = "";
 					let rangeToDelete = selection;
-					if (!selection.isEmpty()) {
-						text = model.getValueInRange(selection);
-					} else {
+					if (selection.isEmpty()) {
 						const line = selection.startLineNumber;
 						text = `${model.getLineContent(line)}\n`;
-						rangeToDelete = new monaco.Selection(line, 1, line + 1, 1);
+						rangeToDelete = new Selection(line, 1, line + 1, 1);
+					} else {
+						text = model.getValueInRange(selection);
 					}
 
 					if (text) {
 						writeClipboardText(text);
-						ed.executeEdits("cut", [{ range: rangeToDelete, text: "" }]);
+						ed.executeEdits("cut", [
+							{ range: rangeToDelete, text: "" },
+						]);
 					}
 				},
 			});
@@ -267,7 +250,7 @@ export const CodePane: React.FC<CodePaneProps> = ({
 			monacoEditor.addAction({
 				id: "custom-paste",
 				label: "Paste",
-				keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV],
+				keybindings: [KeyMod.CtrlCmd | KeyCode.KeyV],
 				contextMenuGroupId: "9_cutcopypaste",
 				contextMenuOrder: 3,
 				run: (ed) => {
@@ -282,25 +265,25 @@ export const CodePane: React.FC<CodePaneProps> = ({
 			monacoEditor.addAction({
 				id: "prev-diff",
 				label: "Previous Diff",
-				keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.UpArrow],
+				keybindings: [KeyMod.Alt | KeyCode.UpArrow],
 				run: () => onPrevDiff?.(),
 			});
 			monacoEditor.addAction({
 				id: "next-diff",
 				label: "Next Diff",
-				keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.DownArrow],
+				keybindings: [KeyMod.Alt | KeyCode.DownArrow],
 				run: () => onNextDiff?.(),
 			});
 			monacoEditor.addAction({
 				id: "prev-conflict",
 				label: "Previous Conflict",
-				keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyJ],
+				keybindings: [KeyMod.CtrlCmd | KeyCode.KeyJ],
 				run: () => onPrevConflict?.(),
 			});
 			monacoEditor.addAction({
 				id: "next-conflict",
 				label: "Next Conflict",
-				keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK],
+				keybindings: [KeyMod.CtrlCmd | KeyCode.KeyK],
 				run: () => onNextConflict?.(),
 			});
 
@@ -312,7 +295,7 @@ export const CodePane: React.FC<CodePaneProps> = ({
 		}
 	};
 
-	React.useEffect(() => {
+	useEffect(() => {
 		if (
 			editorInstance &&
 			file.content !== null &&
@@ -342,12 +325,14 @@ export const CodePane: React.FC<CodePaneProps> = ({
 		}
 	}, [editorInstance, file.content, externalSyncId, lastSyncId]);
 
-	const [isFlashing, setIsFlashing] = React.useState(false);
-	const flashTimerRef = React.useRef<NodeJS.Timeout | null>(null);
+	const [isFlashing, setIsFlashing] = useState(false);
+	const flashTimerRef = useRef<NodeJS.Timeout | null>(null);
 
 	const triggerFlash = () => {
 		setIsFlashing(true);
-		if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+		if (flashTimerRef.current) {
+			clearTimeout(flashTimerRef.current);
+		}
 		flashTimerRef.current = setTimeout(() => setIsFlashing(false), 1000);
 	};
 
@@ -493,7 +478,8 @@ export const CodePane: React.FC<CodePaneProps> = ({
 									boxShadow: "0 4px 10px rgba(0, 0, 0, 0.2)",
 									color: "var(--vscode-editor-foreground, #cccccc)",
 									fontSize: "13px",
-									fontFamily: "var(--vscode-font-family, sans-serif)",
+									fontFamily:
+										"var(--vscode-font-family, sans-serif)",
 									pointerEvents: "auto",
 									textAlign: "left",
 									lineHeight: 1.4,
@@ -510,12 +496,25 @@ export const CodePane: React.FC<CodePaneProps> = ({
 								>
 									{file.commit.title}
 								</div>
-								<div style={{ opacity: 0.8, marginBottom: "4px" }}>
-									<strong>{file.commit.authorName}</strong> &lt;
+								<div
+									style={{
+										opacity: 0.8,
+										marginBottom: "4px",
+									}}
+								>
+									<strong>{file.commit.authorName}</strong>{" "}
+									&lt;
 									{file.commit.authorEmail}&gt;
 								</div>
-								<div style={{ opacity: 0.8, marginBottom: "12px" }}>
-									{new Date(file.commit.date).toLocaleString()}
+								<div
+									style={{
+										opacity: 0.8,
+										marginBottom: "12px",
+									}}
+								>
+									{new Date(
+										file.commit.date,
+									).toLocaleString()}
 								</div>
 
 								<div
@@ -532,7 +531,8 @@ export const CodePane: React.FC<CodePaneProps> = ({
 								>
 									<span
 										style={{
-											fontFamily: "var(--vscode-editor-font-family, monospace)",
+											fontFamily:
+												"var(--vscode-editor-font-family, monospace)",
 										}}
 									>
 										{file.commit.hash.substring(0, 8)}
@@ -583,7 +583,8 @@ export const CodePane: React.FC<CodePaneProps> = ({
 												"1px solid var(--vscode-widget-border, #454545)",
 											paddingTop: "12px",
 											whiteSpace: "pre-wrap",
-											fontFamily: "var(--vscode-editor-font-family, monospace)",
+											fontFamily:
+												"var(--vscode-editor-font-family, monospace)",
 											margin: 0,
 										}}
 									>
@@ -650,7 +651,10 @@ export const CodePane: React.FC<CodePaneProps> = ({
 						>
 							<svg width="16" height="16" viewBox="0 0 16 16">
 								<title>Previous Conflict</title>
-								<path fill="currentColor" d="M8 3.5l-4 4h3V12h2V7.5h3z" />
+								<path
+									fill="currentColor"
+									d="M8 3.5l-4 4h3V12h2V7.5h3z"
+								/>
 								<path
 									fill="currentColor"
 									opacity="0.5"
@@ -666,7 +670,10 @@ export const CodePane: React.FC<CodePaneProps> = ({
 						>
 							<svg width="16" height="16" viewBox="0 0 16 16">
 								<title>Next Conflict</title>
-								<path fill="currentColor" d="M8 12.5l4-4h-3V4H7v4.5H4z" />
+								<path
+									fill="currentColor"
+									d="M8 12.5l4-4h-3V4H7v4.5H4z"
+								/>
 								<path
 									fill="currentColor"
 									opacity="0.5"
@@ -718,7 +725,7 @@ export const CodePane: React.FC<CodePaneProps> = ({
 					language={syntaxHighlighting ? "typescript" : "plaintext"}
 					defaultValue={file.content}
 					theme="vs-dark"
-					options={React.useMemo(
+					options={useMemo(
 						() => ({
 							minimap: { enabled: false },
 							readOnly: !isMiddle,
@@ -730,7 +737,9 @@ export const CodePane: React.FC<CodePaneProps> = ({
 					)}
 					onMount={handleMount}
 					onChange={(value) => {
-						if (isApplyingExternalSync.current) return;
+						if (isApplyingExternalSync.current) {
+							return;
+						}
 						onChange(value, index);
 					}}
 				/>
@@ -754,7 +763,7 @@ export const CodePane: React.FC<CodePaneProps> = ({
 						onClick={() => {
 							if (editorInstance && onCompleteMerge) {
 								const text = editorInstance.getValue();
-								const lines = text.split(/\r?\n/);
+								const lines = text.split(NEWLINE_REGEX);
 								const conflictMarkers = [
 									"<<<<<<<",
 									"=======",
@@ -763,15 +772,22 @@ export const CodePane: React.FC<CodePaneProps> = ({
 								];
 								const firstUnresolvedLineIdx = lines.findIndex(
 									(line) =>
-										conflictMarkers.some((m) => line.startsWith(m)) ||
-										line.startsWith("(??)"),
+										conflictMarkers.some((m) =>
+											line.startsWith(m),
+										) || line.startsWith("(??)"),
 								);
 
 								if (firstUnresolvedLineIdx !== -1) {
 									triggerFlash();
-									const lineNumber = firstUnresolvedLineIdx + 1;
-									editorInstance.revealLineInCenter(lineNumber);
-									editorInstance.setPosition({ lineNumber, column: 1 });
+									const lineNumber =
+										firstUnresolvedLineIdx + 1;
+									editorInstance.revealLineInCenter(
+										lineNumber,
+									);
+									editorInstance.setPosition({
+										lineNumber,
+										column: 1,
+									});
 									editorInstance.focus();
 								}
 								onCompleteMerge();

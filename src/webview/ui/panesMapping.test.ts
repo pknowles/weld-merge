@@ -1,123 +1,135 @@
-import { mapLineAcrossPanes } from "./scrollMapping";
-import type { DiffChunk } from "./types";
+// Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-describe("5-Pane Scroll Mapping Regression Test", () => {
-	// The setup that caused the bug:
-	// Pane 1 (Local): 10 lines
-	// Pane 2 (Merged): 100 lines
-	// diffs[1] (Local-Merged): A=Merged(100 lines), B=Local(10 lines)
-	// Note: Our scrollMapping utility expects diffs[i] to connect Pane i and Pane i+1.
-	// In our case:
-	// diffs[1] connects Pane 1 (Local) and Pane 2 (Merged).
-	// By original convention (A=left, B=right), it SHOULD have been A=Local, B=Merged.
-	// BUT the data payload provides it as A=Merged, B=Local.
-	// So diffIsReversed[1] must be true.
+import { mapLineAcrossPanes } from "./scrollMapping.ts";
+import type { DiffChunk } from "./types.ts";
 
-	const paneCounts = [100, 10, 100, 10, 100]; // Base, Local, Merged, Remote, BaseR
+const LINE_COUNT_STANDARD = 100;
+const LINE_COUNT_SHORT = 10;
+const LINE_COUNT_VERY_SHORT = 1;
+const LINE_COUNT_COMPLEX = 30;
 
-	// A replacement chunk that covers the whole file.
-	// In Merged (Pane 2, Side A), it's lines 0-100.
-	// In Local (Pane 1, Side B), it's lines 0-10.
-	const diffs: (DiffChunk[] | null)[] = [
-		null, // diffs[0] (Base - Local)
-		[{ tag: "replace", start_a: 0, end_a: 100, start_b: 0, end_b: 10 }], // diffs[1] (Local - Merged)
-		null, // diffs[2] (Merged - Remote)
-		null, // diffs[3] (Remote - BaseR)
-	];
+const SOURCE_LINE_MIDDLE = 5;
+const SOURCE_LINE_COMPLEX = 15;
+const TARGET_LINE_EXPECTED_50 = 50;
+const TARGET_LINE_EXPECTED_55 = 55;
 
+const PANE_LOCAL = 1;
+const PANE_MERGED = 2;
+const PANE_REMOTE = 3;
+
+const PANE_COUNTS = [
+	LINE_COUNT_STANDARD,
+	LINE_COUNT_SHORT,
+	LINE_COUNT_STANDARD,
+	LINE_COUNT_SHORT,
+	LINE_COUNT_STANDARD,
+];
+
+const STANDARD_DIFFS: (DiffChunk[] | null)[] = [
+	null,
+	[{ tag: "replace", startA: 0, endA: 100, startB: 0, endB: 10 }],
+	null,
+	null,
+];
+
+describe("5-Pane Scroll Mapping Basic Tests", () => {
 	it("should map from Local to Merged without throwing even if Merged is longer", () => {
-		const sourceIdx = 1; // Local
-		const targetIdx = 2; // Merged
-		const sourceLine = 5; // Middle of Local
-
 		expect(() => {
 			mapLineAcrossPanes(
-				sourceLine,
-				sourceIdx,
-				targetIdx,
-				diffs,
-				paneCounts,
-				true, // smooth
+				SOURCE_LINE_MIDDLE,
+				PANE_LOCAL,
+				PANE_MERGED,
+				STANDARD_DIFFS,
+				PANE_COUNTS,
+				true,
 				[false, true, false, false],
 			);
 		}).not.toThrow();
 	});
 
 	it("should throw if the reversal is NOT specified (repro of the bug)", () => {
-		const sourceIdx = 1; // Local
-		const targetIdx = 2; // Merged
-		const sourceLine = 5;
-
 		expect(() => {
 			mapLineAcrossPanes(
-				sourceLine,
-				sourceIdx,
-				targetIdx,
-				diffs,
-				paneCounts,
+				SOURCE_LINE_MIDDLE,
+				PANE_LOCAL,
+				PANE_MERGED,
+				STANDARD_DIFFS,
+				PANE_COUNTS,
 				true,
 				[false, false, false, false],
 			);
 		}).toThrow("last chunk outside _sourceMaxLines");
 	});
 
-	it("maps correctly from Local to Merged with disproportionate sizes", () => {
-		const sourceIdx = 1; // Local
-		const targetIdx = 2; // Merged
-		const sourceLine = 5; // 50% through Local
-
-		const result = mapLineAcrossPanes(
-			sourceLine,
-			sourceIdx,
-			targetIdx,
-			diffs,
-			paneCounts,
-			true,
-			[false, true, false, true],
-		);
-
-		expect(result).toBeCloseTo(50, 0);
-	});
-
 	it("handles mapping into a single-line file side gracefully", () => {
 		const emptyDiffs: (DiffChunk[] | null)[] = [
 			null,
-			[{ tag: "delete", start_a: 0, end_a: 10, start_b: 0, end_b: 0 }],
+			[{ tag: "delete", startA: 0, endA: 10, startB: 0, endB: 0 }],
 			null,
 			null,
 		];
-		const counts = [10, 1, 10, 10, 10]; // 1 line minimum for "empty"
-
-		const res = mapLineAcrossPanes(5, 2, 1, emptyDiffs, counts, true, [
-			false,
+		const counts = [
+			LINE_COUNT_SHORT,
+			LINE_COUNT_VERY_SHORT,
+			LINE_COUNT_SHORT,
+			LINE_COUNT_SHORT,
+			LINE_COUNT_SHORT,
+		];
+		const res = mapLineAcrossPanes(
+			SOURCE_LINE_MIDDLE,
+			PANE_MERGED,
+			PANE_LOCAL,
+			emptyDiffs,
+			counts,
 			true,
-			false,
-			false,
-		]);
+			[false, true, false, false],
+		);
 		expect(res).toBeLessThan(1);
 		expect(res).toBeGreaterThanOrEqual(0);
+	});
+});
+
+describe("5-Pane Scroll Mapping Advanced Tests", () => {
+	it("maps correctly from Local to Merged with disproportionate sizes", () => {
+		const result = mapLineAcrossPanes(
+			SOURCE_LINE_MIDDLE,
+			PANE_LOCAL,
+			PANE_MERGED,
+			STANDARD_DIFFS,
+			PANE_COUNTS,
+			true,
+			[false, true, false, true],
+		);
+		expect(result).toBeCloseTo(TARGET_LINE_EXPECTED_50, 0);
 	});
 
 	it("handles multiple chunks across panes with mixed reversal states", () => {
 		const complexDiffs: (DiffChunk[] | null)[] = [
 			null,
 			[
-				{ tag: "replace", start_a: 0, end_a: 50, start_b: 0, end_b: 10 },
-				{ tag: "equal", start_a: 50, end_a: 60, start_b: 10, end_b: 20 },
-				{ tag: "replace", start_a: 60, end_a: 100, start_b: 20, end_b: 30 },
+				{ tag: "replace", startA: 0, endA: 50, startB: 0, endB: 10 },
+				{ tag: "equal", startA: 50, endA: 60, startB: 10, endB: 20 },
+				{ tag: "replace", startA: 60, endA: 100, startB: 20, endB: 30 },
 			],
-			[{ tag: "equal", start_a: 0, end_a: 100, start_b: 0, end_b: 100 }],
+			[{ tag: "equal", startA: 0, endA: 100, startB: 0, endB: 100 }],
 			null,
 		];
-		const counts = [100, 30, 100, 100, 100];
-
-		// Complex case: Local(1) to Remote(3) through Merged(2)
-		const res = mapLineAcrossPanes(15, 1, 3, complexDiffs, counts, true, [
-			false,
+		const counts = [
+			LINE_COUNT_STANDARD,
+			LINE_COUNT_COMPLEX,
+			LINE_COUNT_STANDARD,
+			LINE_COUNT_STANDARD,
+			LINE_COUNT_STANDARD,
+		];
+		const res = mapLineAcrossPanes(
+			SOURCE_LINE_COMPLEX,
+			PANE_LOCAL,
+			PANE_REMOTE,
+			complexDiffs,
+			counts,
 			true,
-			false,
-			false,
-		]);
-		expect(res).toBeCloseTo(55, 0);
+			[false, true, false, false],
+		);
+		expect(res).toBeCloseTo(TARGET_LINE_EXPECTED_55, 0);
 	});
 });

@@ -7,10 +7,10 @@ try {
 	vscodeApi = (
 		window as unknown as { acquireVsCodeApi: () => VsCodeApi }
 	).acquireVsCodeApi();
-} catch (_e) {
-	// Not in a VS Code webview
+} catch {
+	// Not in a VS Code webview, ignore
 }
 
-export function useVSCodeMessageBus() {
+export function useVscodeMessageBus() {
 	return vscodeApi;
 }
