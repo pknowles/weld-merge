@@ -1000,7 +1000,7 @@ const App: React.FC = () => {
 										leftEditor={editorRefs.current[leftEditorIdx]}
 										rightEditor={editorRefs.current[rightEditorIdx]}
 										renderTrigger={renderTrigger}
-										reversed={index === 1} // diffs[1] is Merged(a) <-> Local(b)
+										reversed={index === 1 || index === 3} // diffs[1] (A=2, B=1) and diff[3] (A=4, B=3) are reversed
 										fadeOutLeft={fadeOutLeft}
 										fadeOutRight={fadeOutRight}
 										onApplyChunk={

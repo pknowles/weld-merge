@@ -3,8 +3,8 @@ import type { DiffChunk } from "./types";
 
 describe("mapLineAcrossChunks", () => {
 	it("maps 1:1 when chunks are null or empty", () => {
-		expect(mapLineAcrossChunks(5.5, null, true, 20, 20)).toBe(5.5);
-		expect(mapLineAcrossChunks(3.1, [], false, 20, 20)).toBe(3.1);
+		expect(mapLineAcrossChunks(5.5, null, true, 20, 20, true)).toBe(5.5);
+		expect(mapLineAcrossChunks(3.1, [], false, 20, 20, false)).toBe(3.1);
 	});
 
 	it("clamps to target boundaries when provided", () => {
@@ -61,16 +61,16 @@ describe("mapLineAcrossChunks", () => {
 			// Disabled until AI can explain what it was trying to do or fix its non-smooth implementation
 			//expect(mapLineAcrossChunks(3, chunks, true)).toBe(4);
 			// A: =4 -> 2 lines into A -> 4 lines into B -> B=6
-			expect(mapLineAcrossChunks(4, chunks, true, 10, 15)).toBe(6);
+			expect(mapLineAcrossChunks(4, chunks, true, 10, 15, true)).toBe(6);
 
 			// B to A (Reverse)
 			// B: start=2, b=6 -> 4 lines into B -> 2 lines into A -> A=4
-			expect(mapLineAcrossChunks(6, chunks, false, 15, 10)).toBe(4);
+			expect(mapLineAcrossChunks(6, chunks, false, 15, 10, true)).toBe(4);
 		});
 
 		it("maps correctly before the first asymmetric chunk", () => {
-			expect(mapLineAcrossChunks(1, chunks, true, 10, 15)).toBe(1);
-			expect(mapLineAcrossChunks(1, chunks, false, 15, 10)).toBe(1);
+			expect(mapLineAcrossChunks(1, chunks, true, 10, 15, true)).toBe(1);
+			expect(mapLineAcrossChunks(1, chunks, false, 15, 10, true)).toBe(1);
 		});
 	});
 
@@ -118,14 +118,28 @@ describe("mapLineAcrossChunks", () => {
 			// Verify continuity across the insert: small delta in -> small delta out
 			const EPS = 1e-6;
 			for (let x = 3; x <= 4.9; x += 0.25) {
-				const val = mapLineAcrossChunks(x, chunks, true, 20, 30);
-				const valNext = mapLineAcrossChunks(x + EPS, chunks, true, 20, 30);
+				const val = mapLineAcrossChunks(x, chunks, true, 20, 30, true);
+				const valNext = mapLineAcrossChunks(
+					x + EPS,
+					chunks,
+					true,
+					20,
+					30,
+					true,
+				);
 				expect(Math.abs(valNext - val)).toBeLessThan(1.0);
 			}
 			// And the reverse direction
 			for (let x = 3; x <= 17; x += 0.5) {
-				const val = mapLineAcrossChunks(x, chunks, false, 30, 20);
-				const valNext = mapLineAcrossChunks(x + EPS, chunks, false, 30, 20);
+				const val = mapLineAcrossChunks(x, chunks, false, 30, 20, true);
+				const valNext = mapLineAcrossChunks(
+					x + EPS,
+					chunks,
+					false,
+					30,
+					20,
+					true,
+				);
 				expect(Math.abs(valNext - val)).toBeLessThan(1.0);
 			}
 		});
@@ -138,13 +152,27 @@ describe("mapLineAcrossChunks", () => {
 			// Delete maps a range to a point — already continuous. Verify reverse too.
 			const EPS = 1e-6;
 			for (let x = 4; x <= 18; x += 0.5) {
-				const val = mapLineAcrossChunks(x, chunks, true, 30, 20);
-				const valNext = mapLineAcrossChunks(x + EPS, chunks, true, 30, 20);
+				const val = mapLineAcrossChunks(x, chunks, true, 30, 20, true);
+				const valNext = mapLineAcrossChunks(
+					x + EPS,
+					chunks,
+					true,
+					30,
+					20,
+					true,
+				);
 				expect(Math.abs(valNext - val)).toBeLessThan(1.0);
 			}
 			for (let x = 4; x <= 8; x += 0.25) {
-				const val = mapLineAcrossChunks(x, chunks, false, 20, 30);
-				const valNext = mapLineAcrossChunks(x + EPS, chunks, false, 20, 30);
+				const val = mapLineAcrossChunks(x, chunks, false, 20, 30, true);
+				const valNext = mapLineAcrossChunks(
+					x + EPS,
+					chunks,
+					false,
+					20,
+					30,
+					true,
+				);
 				expect(Math.abs(valNext - val)).toBeLessThan(1.0);
 			}
 		});
@@ -169,9 +197,9 @@ describe("mapLineAcrossChunks", () => {
 				{ tag: "replace", start_a: 5, end_a: 1005, start_b: 5, end_b: 6 },
 			];
 
-			mapLineAcrossChunks(5, chunks, true, 1100, 100);
-			mapLineAcrossChunks(505, chunks, true, 1100, 100);
-			mapLineAcrossChunks(1004, chunks, true, 1100, 100);
+			mapLineAcrossChunks(5, chunks, true, 1100, 100, true);
+			mapLineAcrossChunks(505, chunks, true, 1100, 100, true);
+			mapLineAcrossChunks(1004, chunks, true, 1100, 100, true);
 		});
 	});
 
@@ -211,13 +239,35 @@ describe("mapLineAcrossPanes", () => {
 		const eIn = 1e-8;
 		const eOut = 1e-6;
 		for (let x = 0; x < 20; x++) {
-			const val = mapLineAcrossPanes(Math.max(0, x - eIn), 0, 2, diffs, counts);
-			const valNext = mapLineAcrossPanes(x + eIn, 0, 2, diffs, counts);
+			const val = mapLineAcrossPanes(
+				Math.max(0, x - eIn),
+				0,
+				2,
+				diffs,
+				counts,
+				true,
+				[false, false],
+			);
+			const valNext = mapLineAcrossPanes(x + eIn, 0, 2, diffs, counts, true, [
+				false,
+				false,
+			]);
 			expect(Math.abs(valNext - val)).toBeLessThan(eOut);
 		}
 		for (let x = 0; x < 30; x++) {
-			const val = mapLineAcrossPanes(Math.max(0, x - eIn), 2, 0, diffs, counts);
-			const valNext = mapLineAcrossPanes(x + eIn, 2, 0, diffs, counts);
+			const val = mapLineAcrossPanes(
+				Math.max(0, x - eIn),
+				2,
+				0,
+				diffs,
+				counts,
+				true,
+				[false, false],
+			);
+			const valNext = mapLineAcrossPanes(x + eIn, 2, 0, diffs, counts, true, [
+				false,
+				false,
+			]);
 			expect(Math.abs(valNext - val)).toBeLessThan(eOut);
 		}
 	});
@@ -229,7 +279,10 @@ describe("mapLineAcrossPanes", () => {
 		];
 
 		// Just verify it doesn't throw and produces a finite value
-		const result = mapLineAcrossPanes(5, 0, 2, diffs, [20, 30, 30]);
+		const result = mapLineAcrossPanes(5, 0, 2, diffs, [20, 30, 30], true, [
+			false,
+			false,
+		]);
 		expect(Number.isFinite(result)).toBe(true);
 		expect(result).toBeGreaterThanOrEqual(0);
 	});
@@ -284,6 +337,8 @@ describe("complex multi-pane scenarios", () => {
 					tIdx,
 					complexDiffs,
 					complexCounts,
+					true,
+					[false, false, false, false],
 				);
 				expect(topRes).toBeGreaterThanOrEqual(0);
 
@@ -293,6 +348,8 @@ describe("complex multi-pane scenarios", () => {
 					tIdx,
 					complexDiffs,
 					complexCounts,
+					true,
+					[false, false, false, false],
 				);
 				expect(botRes).toBeLessThanOrEqual(complexCounts[tIdx]);
 			}
@@ -304,13 +361,23 @@ describe("complex multi-pane scenarios", () => {
 		// Verify continuity through it: small input delta -> small output delta
 		const EPS = 1e-6;
 		for (let x = 13; x <= 22; x += 0.5) {
-			const val = mapLineAcrossPanes(x, 0, 1, complexDiffs, complexCounts);
+			const val = mapLineAcrossPanes(
+				x,
+				0,
+				1,
+				complexDiffs,
+				complexCounts,
+				true,
+				[false, false, false, false],
+			);
 			const valNext = mapLineAcrossPanes(
 				x + EPS,
 				0,
 				1,
 				complexDiffs,
 				complexCounts,
+				true,
+				[false, false, false, false],
 			);
 			expect(Math.abs(valNext - val)).toBeLessThan(1.0);
 		}
@@ -321,13 +388,23 @@ describe("complex multi-pane scenarios", () => {
 		// Verify continuity through it: small input delta -> small output delta
 		const EPS = 1e-6;
 		for (let x = 3; x <= 8; x += 0.25) {
-			const val = mapLineAcrossPanes(x, 0, 1, complexDiffs, complexCounts);
+			const val = mapLineAcrossPanes(
+				x,
+				0,
+				1,
+				complexDiffs,
+				complexCounts,
+				true,
+				[false, false, false, false],
+			);
 			const valNext = mapLineAcrossPanes(
 				x + EPS,
 				0,
 				1,
 				complexDiffs,
 				complexCounts,
+				true,
+				[false, false, false, false],
 			);
 			expect(Math.abs(valNext - val)).toBeLessThan(1.0);
 		}
@@ -377,6 +454,8 @@ describe("complex multi-pane scenarios", () => {
 						tIdx,
 						complexDiffs,
 						complexCounts,
+						true,
+						[false, false, false, false],
 					);
 
 					if (bound - EPSILON >= 0) {
@@ -386,6 +465,8 @@ describe("complex multi-pane scenarios", () => {
 							tIdx,
 							complexDiffs,
 							complexCounts,
+							true,
+							[false, false, false, false],
 						);
 						expect(Math.abs(valAtBoundary - valBefore)).toBeLessThan(MAX_DELTA);
 					}
@@ -397,6 +478,8 @@ describe("complex multi-pane scenarios", () => {
 							tIdx,
 							complexDiffs,
 							complexCounts,
+							true,
+							[false, false, false, false],
 						);
 						expect(Math.abs(valAfter - valAtBoundary)).toBeLessThan(MAX_DELTA);
 					}

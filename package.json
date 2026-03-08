@@ -313,7 +313,7 @@
 		"vscode:prepublish": "npm run build",
 		"build:webview": "esbuild ./src/webview/ui/index.tsx --bundle --outfile=./out/webview/index.js --format=iife --platform=browser --loader:.ttf=file",
 		"build:extension": "esbuild ./src/extension.ts --bundle --outfile=./out/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
-		"build": "npm run format && npm run lint && npm run knip && npm run build:webview && npm run build:extension && tsc --noEmit",
+		"build": "tsc --noEmit && npm run format && npm run lint && npm run knip && npm run build:webview && npm run build:extension",
 		"watch:webview": "esbuild ./src/webview/ui/index.tsx --bundle --outfile=./out/webview/index.js --format=iife --platform=browser --loader:.ttf=file --watch",
 		"watch:extension": "esbuild ./src/extension.ts --bundle --outfile=./out/extension.js --external:vscode --format=cjs --platform=node --sourcemap --watch",
 		"watch": "npm run watch:webview & npm run watch:extension & tsc --noEmit --watch",
