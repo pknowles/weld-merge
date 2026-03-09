@@ -539,4 +539,82 @@ describe("complex multi-pane scenarios", () => {
 			}
 		}
 	});
+
+	it("regression: mapping Pane 3 to 4 with realistic line counts should not throw", () => {
+		const diffs: (DiffChunk[] | null)[] = [
+			null,
+			null,
+			null,
+			[
+				{ tag: "replace", startA: 23, endA: 24, startB: 23, endB: 26 },
+				{ tag: "insert", startA: 40, endA: 40, startB: 42, endB: 43 },
+				{ tag: "replace", startA: 56, endA: 58, startB: 59, endB: 61 },
+				{ tag: "replace", startA: 65, endA: 66, startB: 68, endB: 69 },
+				{
+					tag: "insert",
+					startA: 109,
+					endA: 109,
+					startB: 112,
+					endB: 113,
+				},
+				{
+					tag: "insert",
+					startA: 128,
+					endA: 128,
+					startB: 132,
+					endB: 141,
+				},
+				{
+					tag: "insert",
+					startA: 131,
+					endA: 131,
+					startB: 144,
+					endB: 148,
+				},
+				{
+					tag: "insert",
+					startA: 138,
+					endA: 138,
+					startB: 155,
+					endB: 159,
+				},
+				{
+					tag: "replace",
+					startA: 142,
+					endA: 143,
+					startB: 163,
+					endB: 167,
+				},
+				{
+					tag: "replace",
+					startA: 165,
+					endA: 175,
+					startB: 189,
+					endB: 190,
+				},
+				{
+					tag: "insert",
+					startA: 190,
+					endA: 190,
+					startB: 205,
+					endB: 387,
+				},
+			],
+		];
+		const paneLineCounts = [1, 386, 388, 191, 388];
+		const diffIsReversed = [false, true, false, false];
+		const sourceLine = 183.439_754_207_854_66;
+
+		expect(() => {
+			mapLineAcrossPanes(
+				sourceLine,
+				3, // sourceIdx (Remote)
+				4, // targetIdx (BaseR)
+				diffs,
+				paneLineCounts,
+				true, // smooth
+				diffIsReversed,
+			);
+		}).not.toThrow();
+	});
 });

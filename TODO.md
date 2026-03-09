@@ -1,5 +1,16 @@
 # Future Improvements & Known Issues
 
+## Quick perf
+
+Debounce connection rendering more
+
+Scroll the connections vertically to reduce visual jump when debouncing.
+
+Only render connections that are possibly on-screen, i.e. their min-max bounds
+pass through the scrolled/rendered region.
+
+Update SVG connection attributes rather than re-render the entire SVG. This involves keeping track of which we've displayed/culled, only updating the svg if those changed, and otherwise just updating the path coordinates.
+
 ## Detect when the user forgot to resolve a conflict and preserve conflict markers
 
 This is a feature meld doesn't have; probably because it's hard.

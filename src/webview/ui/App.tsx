@@ -33,19 +33,19 @@ import { Differ } from "../../matchers/diffutil.ts";
 import { CodePane } from "./CodePane.tsx";
 import { DiffCurtain } from "./DiffCurtain.tsx";
 import { ErrorBoundary } from "./ErrorBoundary.tsx";
+import { processChunk } from "./highlightUtil.ts";
 import {
 	type BaseDiffPayload,
+	DIFF_WIDTH,
 	type DiffChunk,
 	DiffIndex,
 	type FileState,
 	type Highlight,
 	PaneIndex,
 } from "./types.ts";
-import { DIFF_WIDTH } from "./types.ts";
 import { useClipboardOverrides } from "./useClipboardOverrides.ts";
 import { useSynchronizedScrolling } from "./useSynchronizedScrolling.ts";
 import { useVscodeMessageBus } from "./useVSCodeMessageBus.ts";
-import { processChunk } from "./highlightUtil.ts";
 
 const ANIMATION_DURATION = 430;
 const ANIMATION_TRANSITION = "margin 0.4s cubic-bezier(0.4, 0, 0.2, 1)";
@@ -175,7 +175,7 @@ export const App: FC = () => {
 	const [smoothScrolling, setSmoothScrolling] = useState(true);
 	const [renderTrigger, setRenderTrigger] = useState(0);
 	const editorRefs = useRef<editor.IStandaloneCodeEditor[]>([]);
-	const diffsAreReversedRef = useRef<boolean[]>([false, true, false, true]);
+	const diffsAreReversedRef = useRef<boolean[]>([false, true, false, false]);
 
 	const [renderBaseLeft, setRenderBaseLeft] = useState(
 		Boolean(files[PaneIndex.baseLeft]),
