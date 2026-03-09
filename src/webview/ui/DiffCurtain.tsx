@@ -1,5 +1,6 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
+import debounce from "lodash.debounce";
 import type { editor } from "monaco-editor";
 import { type FC, useEffect, useMemo, useRef, useState } from "react";
 import { DIFF_WIDTH, type DiffChunk } from "./types.ts";
@@ -186,6 +187,8 @@ interface ChunkRendererProps {
 	rightMax: number;
 	leftOffset: number;
 	rightOffset: number;
+	leftScroll: number;
+	rightScroll: number;
 	reversed: boolean;
 	fadeL?: boolean | undefined;
 	fadeR?: boolean | undefined;
@@ -195,8 +198,12 @@ interface ChunkRendererProps {
 	onDwn: ((chunk: DiffChunk) => void) | undefined;
 }
 
-const getY = (ed: editor.IStandaloneCodeEditor, line: number, off: number) =>
-	ed.getTopForLineNumber(line) - ed.getScrollTop() + off;
+const getY = (
+	ed: editor.IStandaloneCodeEditor,
+	line: number,
+	off: number,
+	scrollTop: number,
+) => ed.getTopForLineNumber(line) - scrollTop + off;
 
 function computePaths(y1T: number, y1B: number, y2T: number, y2B: number) {
 	const w = DIFF_WIDTH;
@@ -251,10 +258,12 @@ const ChunkRenderer: FC<ChunkRendererProps> = (p) => {
 		rMax: p.rightMax,
 		reversed: p.reversed,
 	});
-	const y1T = getY(p.leftEditor, lS, p.leftOffset);
-	const y1B = lEmp ? y1T : getY(p.leftEditor, lE, p.leftOffset);
-	const y2T = getY(p.rightEditor, rS, p.rightOffset);
-	const y2B = rEmp ? y2T : getY(p.rightEditor, rE, p.rightOffset);
+	const y1T = getY(p.leftEditor, lS, p.leftOffset, p.leftScroll);
+	const y1B = lEmp ? y1T : getY(p.leftEditor, lE, p.leftOffset, p.leftScroll);
+	const y2T = getY(p.rightEditor, rS, p.rightOffset, p.rightScroll);
+	const y2B = rEmp
+		? y2T
+		: getY(p.rightEditor, rE, p.rightOffset, p.rightScroll);
 
 	const { main, top, bot } = computePaths(y1T, y1B, y2T, y2B);
 	const sAp = p.reversed ? "left" : "right";
@@ -324,6 +333,22 @@ const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 	const lModel = useMemo(() => p.leftEditor?.getModel(), [p.leftEditor]);
 	const rModel = useMemo(() => p.rightEditor?.getModel(), [p.rightEditor]);
 
+	const [activeScrollTops, setActiveScrollTops] = useState<{
+		left: number;
+		right: number;
+	}>({
+		left: p.leftEditor?.getScrollTop() ?? 0,
+		right: p.rightEditor?.getScrollTop() ?? 0,
+	});
+
+	const debouncedUpdate = useMemo(
+		() =>
+			debounce((left: number, right: number) => {
+				setActiveScrollTops({ left, right });
+			}, 60),
+		[],
+	);
+
 	useEffect(() => {
 		const calc = () => {
 			const cNode = curtainRef.current;
@@ -364,6 +389,27 @@ const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 		};
 	}, [p.leftEditor, p.rightEditor]);
 
+	useEffect(() => {
+		const lEd = p.leftEditor;
+		const rEd = p.rightEditor;
+		if (!(lEd && rEd)) {
+			return;
+		}
+
+		const handleScroll = () => {
+			debouncedUpdate(lEd.getScrollTop(), rEd.getScrollTop());
+		};
+
+		const lDisp = lEd.onDidScrollChange(handleScroll);
+		const rDisp = rEd.onDidScrollChange(handleScroll);
+
+		return () => {
+			lDisp.dispose();
+			rDisp.dispose();
+			debouncedUpdate.cancel();
+		};
+	}, [p.leftEditor, p.rightEditor, debouncedUpdate]);
+
 	const lMax = lModel?.getLineCount() ?? 0;
 	const rMax = rModel?.getLineCount() ?? 0;
 
@@ -388,15 +434,35 @@ const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 				reversed: p.reversed,
 			});
 
-			const y1T = getY(p.leftEditor, lS, leftOffset);
-			const y2T = getY(p.rightEditor, rS, rightOffset);
+			const y1T = getY(
+				p.leftEditor,
+				lS,
+				leftOffset,
+				activeScrollTops.left,
+			);
+			const y2T = getY(
+				p.rightEditor,
+				rS,
+				rightOffset,
+				activeScrollTops.right,
+			);
 
 			if (Math.min(y1T, y2T) > curtainHeight + cullSafetyMargin) {
 				return false;
 			}
 
-			const y1B = lEmp ? y1T : getY(p.leftEditor, lE, leftOffset);
-			const y2B = rEmp ? y2T : getY(p.rightEditor, rE, rightOffset);
+			const y1B = getY(
+				p.leftEditor,
+				lEmp ? lS : lE,
+				leftOffset,
+				activeScrollTops.left,
+			);
+			const y2B = getY(
+				p.rightEditor,
+				rEmp ? rS : rE,
+				rightOffset,
+				activeScrollTops.right,
+			);
 
 			if (Math.max(y1B, y2B) < -cullSafetyMargin) {
 				return false;
@@ -415,6 +481,7 @@ const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 		curtainHeight,
 		leftOffset,
 		rightOffset,
+		activeScrollTops,
 		p.renderTrigger,
 	]);
 
@@ -502,6 +569,8 @@ const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 						rightMax={rMax}
 						leftOffset={leftOffset}
 						rightOffset={rightOffset}
+						leftScroll={activeScrollTops.left}
+						rightScroll={activeScrollTops.right}
 						reversed={p.reversed}
 						fadeL={p.fadeOutLeft}
 						fadeR={p.fadeOutRight}
