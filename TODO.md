@@ -1,13 +1,6 @@
 # Future Improvements & Known Issues
 
-## Quick perf
-
-Debounce connection rendering more
-
-Scroll the connections vertically to reduce visual jump when debouncing.
-
-Only render connections that are possibly on-screen, i.e. their min-max bounds
-pass through the scrolled/rendered region.
+## Perf improvements
 
 Update SVG connection attributes rather than re-render the entire SVG. This involves keeping track of which we've displayed/culled, only updating the svg if those changed, and otherwise just updating the path coordinates.
 

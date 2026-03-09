@@ -341,6 +341,14 @@ const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 		right: p.rightEditor?.getScrollTop() ?? 0,
 	});
 
+	const [liveScrollTops, setLiveScrollTops] = useState<{
+		left: number;
+		right: number;
+	}>({
+		left: p.leftEditor?.getScrollTop() ?? 0,
+		right: p.rightEditor?.getScrollTop() ?? 0,
+	});
+
 	const debouncedUpdate = useMemo(
 		() =>
 			debounce((left: number, right: number) => {
@@ -397,7 +405,10 @@ const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 		}
 
 		const handleScroll = () => {
-			debouncedUpdate(lEd.getScrollTop(), rEd.getScrollTop());
+			const lTop = lEd.getScrollTop();
+			const rTop = rEd.getScrollTop();
+			setLiveScrollTops({ left: lTop, right: rTop });
+			debouncedUpdate(lTop, rTop);
 		};
 
 		const lDisp = lEd.onDidScrollChange(handleScroll);
@@ -558,28 +569,34 @@ const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 					.diff-btn:hover { background: rgba(100,100,100,0.9); border-color: rgba(255,255,255,0.6); }
 					.diff-cross-icon { font-size: 16px; font-weight: bold; margin-top: -2px; }
 				`}</style>
-				{/* biome-ignore lint/performance/useSolidForComponent: False positive in React project */}
-				{filteredDiffs.map((c) => (
-					<ChunkRenderer
-						key={`${c.startA}-${c.endA}-${c.startB}-${c.endB}`}
-						chunk={c}
-						leftEditor={p.leftEditor}
-						rightEditor={p.rightEditor}
-						leftMax={lMax}
-						rightMax={rMax}
-						leftOffset={leftOffset}
-						rightOffset={rightOffset}
-						leftScroll={activeScrollTops.left}
-						rightScroll={activeScrollTops.right}
-						reversed={p.reversed}
-						fadeL={p.fadeOutLeft}
-						fadeR={p.fadeOutRight}
-						onApp={p.onApplyChunk}
-						onDel={p.onDeleteChunk}
-						onUp={p.onCopyUpChunk}
-						onDwn={p.onCopyDownChunk}
-					/>
-				))}
+				<g
+					style={{
+						transform: `translateY(${activeScrollTops.left - liveScrollTops.left}px)`,
+					}}
+				>
+					{/* biome-ignore lint: Solid false positive in React project */}
+					{filteredDiffs.map((c) => (
+						<ChunkRenderer
+							key={`${c.startA}-${c.endA}-${c.startB}-${c.endB}`}
+							chunk={c}
+							leftEditor={p.leftEditor}
+							rightEditor={p.rightEditor}
+							leftMax={lMax}
+							rightMax={rMax}
+							leftOffset={leftOffset}
+							rightOffset={rightOffset}
+							leftScroll={activeScrollTops.left}
+							rightScroll={activeScrollTops.right}
+							reversed={p.reversed}
+							fadeL={p.fadeOutLeft}
+							fadeR={p.fadeOutRight}
+							onApp={p.onApplyChunk}
+							onDel={p.onDeleteChunk}
+							onUp={p.onCopyUpChunk}
+							onDwn={p.onCopyDownChunk}
+						/>
+					))}
+				</g>
 			</svg>
 		</div>
 	);
