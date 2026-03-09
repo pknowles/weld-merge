@@ -316,9 +316,10 @@ const ChunkRenderer: FC<ChunkRendererProps> = (p) => {
 	);
 };
 
-export const DiffCurtain: FC<DiffCurtainProps> = (p) => {
+const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 	const [leftOffset, setLeftOffset] = useState(0);
 	const [rightOffset, setRightOffset] = useState(0);
+	const [curtainHeight, setCurtainHeight] = useState(0);
 	const curtainRef = useRef<HTMLDivElement>(null);
 	const lModel = useMemo(() => p.leftEditor?.getModel(), [p.leftEditor]);
 	const rModel = useMemo(() => p.rightEditor?.getModel(), [p.rightEditor]);
@@ -330,6 +331,7 @@ export const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 				return;
 			}
 			const rect = cNode.getBoundingClientRect();
+			setCurtainHeight(rect.height);
 			const lNode = p.leftEditor?.getContainerDomNode();
 			const rNode = p.rightEditor?.getContainerDomNode();
 			if (lNode) {
@@ -362,6 +364,60 @@ export const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 		};
 	}, [p.leftEditor, p.rightEditor]);
 
+	const lMax = lModel?.getLineCount() ?? 0;
+	const rMax = rModel?.getLineCount() ?? 0;
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: p.renderTrigger is required for scroll-reactive filtering
+	const filteredDiffs = useMemo(() => {
+		if (curtainHeight === 0 || !p.diffs) {
+			return p.diffs ?? [];
+		}
+		const cullSafetyMargin = 200; // px above and below the viewport for quick scrolling
+		const filtered = p.diffs.filter((c) => {
+			if (c.tag === "equal") {
+				return false;
+			}
+
+			const { lS, lE, rS, rE, lEmp, rEmp } = getBounds({
+				startA: c.startA,
+				endA: c.endA,
+				startB: c.startB,
+				endB: c.endB,
+				lMax,
+				rMax,
+				reversed: p.reversed,
+			});
+
+			const y1T = getY(p.leftEditor, lS, leftOffset);
+			const y2T = getY(p.rightEditor, rS, rightOffset);
+
+			if (Math.min(y1T, y2T) > curtainHeight + cullSafetyMargin) {
+				return false;
+			}
+
+			const y1B = lEmp ? y1T : getY(p.leftEditor, lE, leftOffset);
+			const y2B = rEmp ? y2T : getY(p.rightEditor, rE, rightOffset);
+
+			if (Math.max(y1B, y2B) < -cullSafetyMargin) {
+				return false;
+			}
+
+			return true;
+		});
+		return filtered;
+	}, [
+		p.diffs,
+		p.leftEditor,
+		p.rightEditor,
+		p.reversed,
+		lMax,
+		rMax,
+		curtainHeight,
+		leftOffset,
+		rightOffset,
+		p.renderTrigger,
+	]);
+
 	if (!p.diffs) {
 		return null;
 	}
@@ -377,8 +433,6 @@ export const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 	if (!rModel) {
 		return null;
 	}
-	const lMax = lModel.getLineCount();
-	const rMax = rModel.getLineCount();
 
 	return (
 		<div
@@ -438,7 +492,7 @@ export const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 					.diff-cross-icon { font-size: 16px; font-weight: bold; margin-top: -2px; }
 				`}</style>
 				{/* biome-ignore lint/performance/useSolidForComponent: False positive in React project */}
-				{p.diffs.map((c) => (
+				{filteredDiffs.map((c) => (
 					<ChunkRenderer
 						key={`${c.startA}-${c.endA}-${c.startB}-${c.endB}`}
 						chunk={c}
@@ -461,3 +515,5 @@ export const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 		</div>
 	);
 };
+
+export { DiffCurtain };
