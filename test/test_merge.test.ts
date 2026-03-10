@@ -1,9 +1,5 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { Merger } from "../src/matchers/merge.ts";
-
-// biome-ignore lint: __dirname is necessary in tests when ES modules are not fully supported or configured
-const testDir = __dirname;
 
 describe("Merger", () => {
 	let merger: Merger;
@@ -55,8 +51,8 @@ describe("Merger", () => {
 
 describe("End-to-End Meld Parity", () => {
 	it("matches exact output of the original Python Meld backend", () => {
-		const testCasesPath = join(testDir, "test_cases.txt");
-		const expectedOutputsPath = join(testDir, "expected_outputs.txt");
+		const testCasesPath = require.resolve("./test_cases.txt");
+		const expectedOutputsPath = require.resolve("./expected_outputs.txt");
 
 		const casesContent = readFileSync(testCasesPath, "utf-8");
 		const expectedContent = readFileSync(expectedOutputsPath, "utf-8");

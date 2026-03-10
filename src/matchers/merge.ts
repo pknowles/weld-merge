@@ -1,4 +1,3 @@
-// biome-ignore-all lint: Legacy ported logic
 // Copyright (C) 2009-2010 Piotr Piastucki <the_leech@users.berlios.de>
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,12 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import { Differ } from "./diffutil";
+import { Differ } from "./diffutil.ts";
 import {
 	type DiffChunk,
 	type DiffChunkTag,
 	MyersSequenceMatcher,
-} from "./myers";
+} from "./myers.ts";
 
 class AutoMergeDiffer extends Differ {
 	autoMerge = false;
@@ -39,12 +38,12 @@ class AutoMergeDiffer extends Differ {
 			let out1 = out1Orig;
 
 			if (this.autoMerge && (out0.tag as string) === "conflict") {
-				const l0 = out0.startB,
-					h0 = out0.endB;
-				const l1 = out0.startA,
-					h1 = out0.endA;
-				const l2 = out1.startB,
-					h2 = out1.endB;
+				const l0 = out0.startB;
+				const h0 = out0.endB;
+				const l1 = out0.startA;
+				const h1 = out0.endA;
+				const l2 = out1.startB;
+				const h2 = out1.endB;
 
 				const len0 = h0 - l0;
 				const len1 = h1 - l1;
@@ -55,164 +54,177 @@ class AutoMergeDiffer extends Differ {
 					len2 > 0 &&
 					(len0 === len1 || len2 === len1 || len1 === 0)
 				) {
-					const matcher = new this._matcher(
-						null,
-						texts[0]!.slice(l0, h0),
-						texts[2]!.slice(l2, h2),
-					);
-					for (const chunk of matcher.getOpcodes()) {
-						let s1 = l1;
-						let e1 = l1;
-						if (len0 === len1) {
-							s1 += chunk.startA;
-							e1 += chunk.endA;
-						} else if (len2 === len1) {
-							s1 += chunk.startB;
-							e1 += chunk.endB;
-						}
+					const baseLines = texts[0];
+					const incomingLines = texts[2];
+					if (baseLines && incomingLines) {
+						const matcher = new this._matcher(
+							null,
+							baseLines.slice(l0, h0),
+							incomingLines.slice(l2, h2),
+						);
+						for (const chunk of matcher.getOpcodes()) {
+							let s1 = l1;
+							let e1 = l1;
+							if (len0 === len1) {
+								s1 += chunk.startA;
+								e1 += chunk.endA;
+							} else if (len2 === len1) {
+								s1 += chunk.startB;
+								e1 += chunk.endB;
+							}
 
-						const out0Bounds = {
-							startA: s1,
-							endA: e1,
-							startB: l0 + chunk.startA,
-							endB: l0 + chunk.endA,
-						};
-						const out1Bounds = {
-							startA: s1,
-							endA: e1,
-							startB: l2 + chunk.startB,
-							endB: l2 + chunk.endB,
-						};
+							const out0Bounds = {
+								startA: s1,
+								endA: e1,
+								startB: l0 + chunk.startA,
+								endB: l0 + chunk.endA,
+							};
+							const out1Bounds = {
+								startA: s1,
+								endA: e1,
+								startB: l2 + chunk.startB,
+								endB: l2 + chunk.endB,
+							};
 
-						if (chunk.tag === "equal") {
-							out0 = { tag: "replace", ...out0Bounds };
-							out1 = { tag: "replace", ...out1Bounds };
-						} else {
-							out0 = { tag: "conflict", ...out0Bounds };
-							out1 = { tag: "conflict", ...out1Bounds };
+							if (chunk.tag === "equal") {
+								out0 = { tag: "replace", ...out0Bounds };
+								out1 = { tag: "replace", ...out1Bounds };
+							} else {
+								out0 = { tag: "conflict", ...out0Bounds };
+								out1 = { tag: "conflict", ...out1Bounds };
+							}
+							yield [out0, out1];
 						}
-						yield [out0, out1];
+						continue;
 					}
-					continue;
-				} else {
-					let chunktype: DiffChunkTag | null =
-						using[0][0]?.tag ?? null;
-					for (const chunkarr of using) {
-						for (const chunk of chunkarr) {
-							if (chunk.tag !== chunktype) {
-								chunktype = null;
+				}
+
+				let chunkType: DiffChunkTag | null = using[0][0]?.tag ?? null;
+				for (const chunkArr of using) {
+					for (const chunk of chunkArr) {
+						if (chunk.tag !== chunkType) {
+							chunkType = null;
+							break;
+						}
+					}
+					if (!chunkType) {
+						break;
+					}
+				}
+
+				if (chunkType === "delete") {
+					let seq0: DiffChunk | null = null;
+					let seq1: DiffChunk | null = null;
+					let i0 = 0;
+					let i1 = 0;
+					let end0 = 0;
+					let end1 = 0;
+					const using0 = using[0].slice();
+					const using1 = using[1].slice();
+
+					while (true) {
+						if (!seq0) {
+							seq0 = using0.shift() || null;
+							if (!seq0) {
 								break;
 							}
+							i0 = seq0.startA;
+							end0 = seq0.endB;
 						}
-						if (!chunktype) break;
-					}
-
-					if (chunktype === "delete") {
-						let seq0: DiffChunk | null = null;
-						let seq1: DiffChunk | null = null;
-						let i0 = 0,
-							i1 = 0,
-							end0 = 0,
-							end1 = 0;
-						const using0 = using[0].slice();
-						const using1 = using[1].slice();
-
-						while (true) {
-							if (!seq0) {
-								seq0 = using0.shift() || null;
-								if (!seq0) break;
-								i0 = seq0.startA;
-								end0 = seq0.endB;
-							}
+						if (!seq1) {
+							seq1 = using1.shift() || null;
 							if (!seq1) {
-								seq1 = using1.shift() || null;
-								if (!seq1) break;
-								i1 = seq1.startA;
-								end1 = seq1.endB;
+								break;
 							}
-
-							const highstart = Math.max(i0, i1);
-							if (i0 !== i1) {
-								yield [
-									{
-										tag: "conflict",
-										startA: i0 - highstart + i1,
-										endA: highstart,
-										startB: seq0.startB - highstart + i1,
-										endB: seq0.startB,
-									},
-									{
-										tag: "conflict",
-										startA: i1 - highstart + i0,
-										endA: highstart,
-										startB: seq1.startB - highstart + i0,
-										endB: seq1.startB,
-									},
-								];
-							}
-
-							const lowend = Math.min(seq0.endA, seq1.endA);
-							if (highstart !== lowend) {
-								yield [
-									{
-										tag: "delete",
-										startA: highstart,
-										endA: lowend,
-										startB: seq0.startB,
-										endB: seq0.endB,
-									},
-									{
-										tag: "delete",
-										startA: highstart,
-										endA: lowend,
-										startB: seq1.startB,
-										endB: seq1.endB,
-									},
-								];
-							}
-
-							i0 = i1 = lowend;
-							if (lowend === seq0.endA) seq0 = null;
-							if (lowend === seq1.endA) seq1 = null;
+							i1 = seq1.startA;
+							end1 = seq1.endB;
 						}
 
-						if (seq0) {
+						const highStart = Math.max(i0, i1);
+						if (i0 !== i1) {
 							yield [
 								{
 									tag: "conflict",
-									startA: i0,
-									endA: seq0.endA,
+									startA: i0 - highStart + i1,
+									endA: highStart,
+									startB: seq0.startB - highStart + i1,
+									endB: seq0.startB,
+								},
+								{
+									tag: "conflict",
+									startA: i1 - highStart + i0,
+									endA: highStart,
+									startB: seq1.startB - highStart + i0,
+									endB: seq1.startB,
+								},
+							];
+						}
+
+						const lowEnd = Math.min(seq0.endA, seq1.endA);
+						if (highStart !== lowEnd) {
+							yield [
+								{
+									tag: "delete",
+									startA: highStart,
+									endA: lowEnd,
 									startB: seq0.startB,
 									endB: seq0.endB,
 								},
 								{
-									tag: "conflict",
-									startA: i0,
-									endA: seq0.endA,
-									startB: end1,
-									endB: end1 + seq0.endA - i0,
-								},
-							];
-						} else if (seq1) {
-							yield [
-								{
-									tag: "conflict",
-									startA: i1,
-									endA: seq1.endA,
-									startB: end0,
-									endB: end0 + seq1.endA - i1,
-								},
-								{
-									tag: "conflict",
-									startA: i1,
-									endA: seq1.endA,
+									tag: "delete",
+									startA: highStart,
+									endA: lowEnd,
 									startB: seq1.startB,
 									endB: seq1.endB,
 								},
 							];
 						}
-						continue;
+
+						i0 = i1 = lowEnd;
+						if (lowEnd === seq0.endA) {
+							seq0 = null;
+						}
+						if (lowEnd === seq1.endA) {
+							seq1 = null;
+						}
 					}
+
+					if (seq0) {
+						yield [
+							{
+								tag: "conflict",
+								startA: i0,
+								endA: seq0.endA,
+								startB: seq0.startB,
+								endB: seq0.endB,
+							},
+							{
+								tag: "conflict",
+								startA: i0,
+								endA: seq0.endA,
+								startB: end1,
+								endB: end1 + seq0.endA - i0,
+							},
+						];
+					} else if (seq1) {
+						yield [
+							{
+								tag: "conflict",
+								startA: i1,
+								endA: seq1.endA,
+								startB: end0,
+								endB: end0 + seq1.endA - i1,
+							},
+							{
+								tag: "conflict",
+								startA: i1,
+								endA: seq1.endA,
+								startB: seq1.startB,
+								endB: seq1.endB,
+							},
+						];
+					}
+					continue;
 				}
 			}
 			yield [out0, out1];
@@ -221,26 +233,30 @@ class AutoMergeDiffer extends Differ {
 
 	override changeSequence(
 		sequence: number,
-		startidx: number,
-		sizechange: number,
+		startIdx: number,
+		sizeChange: number,
 		texts: string[][],
 	) {
 		if (sequence === 1) {
 			let lo = 0;
 			for (const c of this.unresolved) {
-				if (startidx <= c) break;
+				if (startIdx <= c) {
+					break;
+				}
 				lo++;
 			}
 			if (lo < this.unresolved.length) {
 				let hi = lo;
-				if (sizechange < 0) {
+				if (sizeChange < 0) {
 					for (const c of this.unresolved.slice(lo)) {
-						if (startidx - sizechange <= c) break;
+						if (startIdx - sizeChange <= c) {
+							break;
+						}
 						hi++;
 					}
 				} else if (
-					sizechange === 0 &&
-					startidx === this.unresolved[lo]
+					sizeChange === 0 &&
+					startIdx === this.unresolved[lo]
 				) {
 					hi++;
 				}
@@ -248,7 +264,7 @@ class AutoMergeDiffer extends Differ {
 				if (hi < this.unresolved.length) {
 					const shifted = this.unresolved
 						.slice(hi)
-						.map((c) => c + sizechange);
+						.map((c) => c + sizeChange);
 					this.unresolved.splice(
 						hi,
 						this.unresolved.length - hi,
@@ -258,7 +274,7 @@ class AutoMergeDiffer extends Differ {
 				this.unresolved.splice(lo, hi - lo);
 			}
 		}
-		super.changeSequence(sequence, startidx, sizechange, texts);
+		super.changeSequence(sequence, startIdx, sizeChange, texts);
 	}
 
 	getUnresolvedCount(): number {
@@ -284,8 +300,12 @@ export class Merger extends Differ {
 		const step = this.differ.setSequencesIter(sequences);
 		while (true) {
 			const result = step.next();
-			if (result.done) break;
-			if (result.value === null) yield null;
+			if (result.done) {
+				break;
+			}
+			if (result.value === null) {
+				yield null;
+			}
 		}
 		this.texts = texts;
 		yield 1;
@@ -298,20 +318,21 @@ export class Merger extends Differ {
 	): number {
 		if (change.tag === "insert") {
 			for (let i = change.startB; i < change.endB; i++) {
-				mergedtext.push(text[i]!);
+				const line = text[i];
+				mergedtext.push(line ?? "");
 			}
 			return 0;
-		} else if (
-			change.tag === "replace" ||
-			(change.tag as string) === "conflict"
-		) {
+		}
+
+		if (change.tag === "replace" || (change.tag as string) === "conflict") {
 			for (let i = change.startB; i < change.endB; i++) {
-				mergedtext.push(text[i]!);
+				const line = text[i];
+				mergedtext.push(line ?? "");
 			}
 			return change.endA - change.startA;
-		} else {
-			return change.endA - change.startA;
 		}
+
+		return change.endA - change.startA;
 	}
 
 	*merge3Files(
@@ -327,14 +348,18 @@ export class Merger extends Differ {
 			const ch0 = change[0];
 			const ch1 = change[1];
 
-			if (ch0 !== null) lowMark = ch0.startA;
+			if (ch0 !== null) {
+				lowMark = ch0.startA;
+			}
 			if (ch1 !== null && ch1.startA > lowMark) {
 				lowMark = ch1.startA;
 			}
 
-			if (this.texts[1]) {
+			const lines = this.texts[1];
+			if (lines) {
 				for (let i = lastline; i < lowMark; i++) {
-					mergedtext.push(this.texts[1][i]!);
+					const line = lines[i];
+					mergedtext.push(line ?? "");
 				}
 			}
 			mergedline += lowMark - lastline;
@@ -350,9 +375,11 @@ export class Merger extends Differ {
 				const highMark = Math.max(ch0.endA, ch1.endA);
 				if (markConflicts) {
 					if (lowMark < highMark) {
-						if (this.texts[1]) {
+						const lines = this.texts[1];
+						if (lines) {
 							for (let i = lowMark; i < highMark; i++) {
-								mergedtext.push(`(??)${this.texts[1][i]}`);
+								const line = lines[i];
+								mergedtext.push(`(??)${line ?? ""}`);
 								this.differ.unresolved.push(mergedline);
 								mergedline += 1;
 							}
@@ -381,10 +408,11 @@ export class Merger extends Differ {
 			}
 		}
 
-		if (this.texts[1]) {
-			const baselen = this.texts[1].length;
-			for (let i = lastline; i < baselen; i++) {
-				mergedtext.push(this.texts[1][i]!);
+		const baseLines = this.texts[1];
+		if (baseLines) {
+			for (let i = lastline; i < baseLines.length; i++) {
+				const line = baseLines[i];
+				mergedtext.push(line ?? "");
 			}
 		}
 

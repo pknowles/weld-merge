@@ -71,6 +71,12 @@
 					},
 					"style": {
 						"noMagicNumbers": "off",
+						"useNamingConvention": {
+							"level": "error",
+							"options": {
+								"strictCase": false
+							}
+						},
 						"useFilenamingConvention": {
 							"level": "error",
 							"options": {
@@ -106,6 +112,9 @@
 				"rules": {
 					"suspicious": {
 						"noReactSpecificProps": "off"
+					},
+					"style": {
+						"noDefaultExport": "off"
 					}
 				}
 			}
