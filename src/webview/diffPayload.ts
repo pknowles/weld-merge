@@ -97,21 +97,27 @@ const getCommitInfo = async (
 	});
 };
 
-const getRemoteRef = async (repoPath: string): Promise<string | undefined> => {
+const getRemoteRef = (repoPath: string): Promise<string | undefined> => {
 	const refs = [
 		"MERGE_HEAD",
 		"CHERRY_PICK_HEAD",
 		"REVERT_HEAD",
 		"REBASE_HEAD",
 	];
-	for (const ref of refs) {
-		// biome-ignore lint/performance/noAwaitInLoops: sequential search for priority ref is intended
+
+	const checkNext = async (index: number): Promise<string | undefined> => {
+		const ref = refs[index];
+		if (!ref) {
+			return;
+		}
 		const commit = await getCommitInfo(repoPath, ref);
 		if (commit) {
 			return ref;
 		}
-	}
-	return;
+		return checkNext(index + 1);
+	};
+
+	return checkNext(0);
 };
 
 const getBaseCommitInfo = async (repoPath: string) => {

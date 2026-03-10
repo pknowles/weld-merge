@@ -1,5 +1,6 @@
 import "@testing-library/jest-dom";
 import { render } from "@testing-library/react";
+import type { editor } from "monaco-editor";
 import { DiffCurtain } from "./DiffCurtain.tsx";
 import { getBounds } from "./diffCurtainUtils.ts";
 import { mapLineAcrossPanes } from "./scrollMapping.ts";
@@ -40,8 +41,7 @@ const mockEditor = (lineCount: number, scrollTop: number) =>
 		})),
 		getLayoutInfo: jest.fn(() => ({ height: 1000 })),
 		getContentHeight: jest.fn(() => lineCount * 20),
-		// biome-ignore lint/suspicious/noExplicitAny: mock editor
-	}) as any;
+	}) as unknown as editor.IStandaloneCodeEditor;
 
 const OUT_OF_BOUNDS_ERROR = /DiffCurtain connection out of bounds/;
 
@@ -120,8 +120,7 @@ describe("Connection Directions and Bounds Checking", () => {
 			});
 		});
 		afterAll(() => {
-			// biome-ignore lint/suspicious/noExplicitAny: mockRestore
-			(console.error as any).mockRestore();
+			(console.error as unknown as jest.SpyInstance).mockRestore();
 		});
 
 		it("should NOT throw during rendering when reversed=false for the 4th curtain", () => {

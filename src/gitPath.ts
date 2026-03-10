@@ -1,19 +1,28 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-// biome-ignore lint/performance/noNamespaceImport: vscode namespace is standard for extensions
-import * as vscode from "vscode";
+import { extensions, workspace } from "vscode";
+
+interface GitAPI {
+	git: {
+		path: string;
+	};
+}
+
+interface GitExtension {
+	getAPI(version: number): GitAPI;
+}
 
 async function getExtensionPath(): Promise<string | undefined> {
-	const gitExtension = vscode.extensions.getExtension("vscode.git");
+	const gitExtension = extensions.getExtension<GitExtension>("vscode.git");
 	if (gitExtension) {
 		if (!gitExtension.isActive) {
 			await gitExtension.activate();
 		}
 		const exports = gitExtension.exports;
-		if (typeof exports?.getAPI === "function") {
+		if (exports && typeof exports.getAPI === "function") {
 			const api = exports.getAPI(1);
 			if (api?.git?.path) {
-				return api.git.path as string;
+				return api.git.path;
 			}
 		}
 	}
@@ -21,7 +30,7 @@ async function getExtensionPath(): Promise<string | undefined> {
 }
 
 function getConfigPath(): string | undefined {
-	const configPath = vscode.workspace
+	const configPath = workspace
 		.getConfiguration("git")
 		.get<string | string[]>("path");
 
