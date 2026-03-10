@@ -4,6 +4,16 @@
 
 Update SVG connection attributes rather than re-render the entire SVG. This involves keeping track of which we've displayed/culled, only updating the svg if those changed, and otherwise just updating the path coordinates.
 
+## Fix commit message titles
+
+Make sure the toggle compare-with-base icons are always visible - currently if there's not enough spacing they disappear
+
+Make the commit title fill the space but use a ... ellipsis when the title is too long; remove the square brackets around it
+
+Check the commit message font matches the rest - it looks odd. Maybe even just replace the message with an icon to see the card.
+
+Match the commit mssage card contents in upstream vscode?
+
 ## Detect when the user forgot to resolve a conflict and preserve conflict markers
 
 This is a feature meld doesn't have; probably because it's hard.

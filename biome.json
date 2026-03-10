@@ -109,6 +109,28 @@
 					}
 				}
 			}
+		},
+		{
+			"includes": ["**/*.test.ts", "**/*.test.tsx"],
+			"javascript": {
+				"globals": [
+					"jest",
+					"expect",
+					"describe",
+					"it",
+					"beforeAll",
+					"afterAll",
+					"beforeEach",
+					"afterEach"
+				]
+			},
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noConsole": "off"
+					}
+				}
+			}
 		}
 	]
 }

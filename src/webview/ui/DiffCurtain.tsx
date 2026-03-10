@@ -3,6 +3,7 @@
 import debounce from "lodash.debounce";
 import type { editor } from "monaco-editor";
 import { type FC, useEffect, useMemo, useRef, useState } from "react";
+import { getBounds } from "./diffCurtainUtils.ts";
 import { DIFF_WIDTH, type DiffChunk } from "./types.ts";
 
 interface DiffCurtainProps {
@@ -214,36 +215,6 @@ function computePaths(y1T: number, y1B: number, y2T: number, y2B: number) {
 	return { main, top, bot };
 }
 
-function getBounds(p: {
-	startA: number;
-	endA: number;
-	startB: number;
-	endB: number;
-	lMax: number;
-	rMax: number;
-	reversed: boolean;
-}) {
-	const lS = Math.min(
-		p.lMax,
-		Math.max(1, (p.reversed ? p.startB : p.startA) + 1),
-	);
-	const lE = Math.min(
-		p.lMax,
-		Math.max(1, (p.reversed ? p.endB : p.endA) + 1),
-	);
-	const rS = Math.min(
-		p.rMax,
-		Math.max(1, (p.reversed ? p.startA : p.startB) + 1),
-	);
-	const rE = Math.min(
-		p.rMax,
-		Math.max(1, (p.reversed ? p.endA : p.endB) + 1),
-	);
-	const lEmp = p.reversed ? p.startB === p.endB : p.startA === p.endA;
-	const rEmp = p.reversed ? p.startA === p.endA : p.startB === p.endB;
-	return { lS, lE, rS, rE, lEmp, rEmp };
-}
-
 const ChunkRenderer: FC<ChunkRendererProps> = (p) => {
 	if (p.chunk.tag === "equal") {
 		return null;
@@ -258,6 +229,11 @@ const ChunkRenderer: FC<ChunkRendererProps> = (p) => {
 		rMax: p.rightMax,
 		reversed: p.reversed,
 	});
+
+	if (lS < 1 || lE > p.leftMax || rS < 1 || rE > p.rightMax) {
+		throw new Error("ChunkRenderer: calculated bounds are still invalid");
+	}
+
 	const y1T = getY(p.leftEditor, lS, p.leftOffset, p.leftScroll);
 	const y1B = lEmp ? y1T : getY(p.leftEditor, lE, p.leftOffset, p.leftScroll);
 	const y2T = getY(p.rightEditor, rS, p.rightOffset, p.rightScroll);

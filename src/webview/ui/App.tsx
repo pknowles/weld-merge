@@ -1187,18 +1187,18 @@ export const App: FC = () => {
 										leftEditor={leftEditor}
 										rightEditor={rightEditor}
 										renderTrigger={renderTrigger}
-										reversed={index === 1 || index === 3} // diffs[1] (A=2, B=1) and diff[3] (A=4, B=3) are reversed
+										reversed={index === 1} // diffs[1] (A=2, B=1) is reversed
 										fadeOutLeft={fadeOutLeft}
 										fadeOutRight={fadeOutRight}
 										onApplyChunk={
 											index === 1
-												? (chunk) =>
+												? (chunk: DiffChunk) =>
 														handleApplyChunk(
 															1,
 															chunk,
 														)
 												: index === 2
-													? (chunk) =>
+													? (chunk: DiffChunk) =>
 															handleApplyChunk(
 																3,
 																chunk,
@@ -1207,7 +1207,7 @@ export const App: FC = () => {
 										}
 										onDeleteChunk={
 											index === 1 || index === 2
-												? (chunk) =>
+												? (chunk: DiffChunk) =>
 														handleDeleteChunk(
 															index,
 															chunk,
@@ -1216,13 +1216,13 @@ export const App: FC = () => {
 										}
 										onCopyUpChunk={
 											index === 1
-												? (chunk) =>
+												? (chunk: DiffChunk) =>
 														handleCopyUpChunk(
 															1,
 															chunk,
 														)
 												: index === 2
-													? (chunk) =>
+													? (chunk: DiffChunk) =>
 															handleCopyUpChunk(
 																3,
 																chunk,
@@ -1231,7 +1231,7 @@ export const App: FC = () => {
 										}
 										onCopyDownChunk={
 											index === 1
-												? (chunk) =>
+												? (chunk: DiffChunk) =>
 														handleCopyDownChunk(
 															1,
 															chunk,
