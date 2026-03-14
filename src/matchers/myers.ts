@@ -16,78 +16,12 @@
 
 type MyersNode = [MyersNode | null, number, number, number] | null;
 
-export type DiffChunkTag =
-	| "replace"
-	| "delete"
-	| "insert"
-	| "conflict"
-	| "equal";
-
 export interface DiffChunk {
 	tag: DiffChunkTag;
 	startA: number;
 	endA: number;
 	startB: number;
 	endB: number;
-}
-
-export function findCommonPrefix<T>(a: T[] | string, b: T[] | string): number {
-	if (a.length === 0 || b.length === 0) {
-		return 0;
-	}
-	if (a[0] === b[0]) {
-		let pointermax = Math.min(a.length, b.length);
-		let pointermid = pointermax;
-		let pointermin = 0;
-		while (pointermin < pointermid) {
-			let matches = true;
-			for (let i = pointermin; i < pointermid; i++) {
-				if (a[i] !== b[i]) {
-					matches = false;
-					break;
-				}
-			}
-			if (matches) {
-				pointermin = pointermid;
-			} else {
-				pointermax = pointermid;
-			}
-			pointermid = Math.floor((pointermax - pointermin) / 2 + pointermin);
-		}
-		return pointermid;
-	}
-	return 0;
-}
-
-export function findCommonSuffix<T>(a: T[] | string, b: T[] | string): number {
-	if (a.length === 0 || b.length === 0) {
-		return 0;
-	}
-	if (a.at(-1) === b.at(-1)) {
-		let pointermax = Math.min(a.length, b.length);
-		let pointermid = pointermax;
-		let pointermin = 0;
-		while (pointermin < pointermid) {
-			let matches = true;
-			for (let i = 0; i < pointermid - pointermin; i++) {
-				if (
-					a[a.length - pointermid + i] !==
-					b[b.length - pointermid + i]
-				) {
-					matches = false;
-					break;
-				}
-			}
-			if (matches) {
-				pointermin = pointermid;
-			} else {
-				pointermax = pointermid;
-			}
-			pointermid = Math.floor((pointermax - pointermin) / 2 + pointermin);
-		}
-		return pointermid;
-	}
-	return 0;
 }
 
 export class MyersSequenceMatcher<T> {
@@ -271,28 +205,14 @@ export class MyersSequenceMatcher<T> {
 				if (!prevBlock) {
 					break;
 				}
+
 				const [prevA, prevB, prevLen] = prevBlock;
-				if (prevB + prevLen === curB || prevA + prevLen === curA) {
-					const prevSliceA = this.a.slice(curA - prevLen, curA);
-					const prevSliceB = this.b.slice(curB - prevLen, curB);
-
-					let slicesMatch = prevSliceA.length === prevSliceB.length;
-					if (slicesMatch) {
-						for (let k = 0; k < prevSliceA.length; k++) {
-							if (prevSliceA[k] !== prevSliceB[k]) {
-								slicesMatch = false;
-								break;
-							}
-						}
-					}
-
-					if (slicesMatch) {
-						curB -= prevLen;
-						curA -= prevLen;
-						curLen += prevLen;
-						i -= 1;
-						continue;
-					}
+				if (this._canMergeBlocks(prevA, prevB, prevLen, curA, curB)) {
+					curB -= prevLen;
+					curA -= prevLen;
+					curLen += prevLen;
+					i -= 1;
+					continue;
 				}
 				break;
 			}
@@ -302,76 +222,109 @@ export class MyersSequenceMatcher<T> {
 		this.matchingBlocks = mb;
 	}
 
+	protected _canMergeBlocks(
+		prevA: number,
+		prevB: number,
+		prevLen: number,
+		curA: number,
+		curB: number,
+	): boolean {
+		if (prevB + prevLen !== curB && prevA + prevLen !== curA) {
+			return false;
+		}
+
+		const prevSliceA = this.a.slice(curA - prevLen, curA);
+		const prevSliceB = this.b.slice(curB - prevLen, curB);
+		return this._slicesMatch(prevSliceA, prevSliceB);
+	}
+
+	protected _slicesMatch<T>(a: T[] | string, b: T[] | string): boolean {
+		if (a.length !== b.length) {
+			return false;
+		}
+		for (let k = 0; k < a.length; k++) {
+			if (a[k] !== b[k]) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	buildMatchingBlocks(lastsnake: MyersNode): void {
 		const matchingBlocks: [number, number, number][] = [];
 		this.matchingBlocks = matchingBlocks;
 
-		const commonPrefix = this.commonPrefix;
-		const commonSuffix = this.commonSuffix;
-		const aindex = this.aindex;
-		const bindex = this.bindex;
-		if (!(aindex && bindex)) {
-			return;
-		}
-
 		while (lastsnake !== null) {
-			const [prevSnake, xValRaw, yValRaw, snakeVal] = lastsnake;
-			let x = xValRaw;
-			let y = yValRaw;
-			const snake = snakeVal;
-
-			if (this.linesDiscarded) {
-				x += snake - 1;
-				y += snake - 1;
-				const ax = aindex[x];
-				const by = bindex[y];
-				let xprev = (ax ?? 0) + commonPrefix;
-				let yprev = (by ?? 0) + commonPrefix;
-				if (snake > 1) {
-					let newsnake = 1;
-					for (let i = 1; i < snake; i++) {
-						x -= 1;
-						y -= 1;
-						const axNext = aindex[x];
-						const byNext = bindex[y];
-						const xnext = (axNext ?? 0) + commonPrefix;
-						const ynext = (byNext ?? 0) + commonPrefix;
-						if (xprev - xnext !== 1 || yprev - ynext !== 1) {
-							matchingBlocks.unshift([xprev, yprev, newsnake]);
-							newsnake = 0;
-						}
-						xprev = xnext;
-						yprev = ynext;
-						newsnake += 1;
-					}
-					matchingBlocks.unshift([xprev, yprev, newsnake]);
-				} else {
-					matchingBlocks.unshift([xprev, yprev, snake]);
-				}
-			} else {
-				matchingBlocks.unshift([
-					x + commonPrefix,
-					y + commonPrefix,
-					snake,
-				]);
-			}
+			const [prevSnake, x, y, snake] = lastsnake;
+			this._processSnake(x, y, snake, matchingBlocks);
 			lastsnake = prevSnake;
 		}
 
-		if (commonPrefix) {
-			matchingBlocks.unshift([0, 0, commonPrefix]);
+		if (this.commonPrefix) {
+			matchingBlocks.unshift([0, 0, this.commonPrefix]);
 		}
-		if (commonSuffix) {
+		if (this.commonSuffix) {
 			matchingBlocks.push([
-				this.a.length - commonSuffix,
-				this.b.length - commonSuffix,
-				commonSuffix,
+				this.a.length - this.commonSuffix,
+				this.b.length - this.commonSuffix,
+				this.commonSuffix,
 			]);
 		}
 		matchingBlocks.push([this.a.length, this.b.length, 0]);
 
 		this.aindex = null;
 		this.bindex = null;
+	}
+
+	protected _processSnake(
+		x: number,
+		y: number,
+		snake: number,
+		matchingBlocks: [number, number, number][],
+	): void {
+		const commonPrefix = this.commonPrefix;
+		if (this.linesDiscarded && this.aindex && this.bindex) {
+			this._processDiscardedSnake(x, y, snake, matchingBlocks);
+		} else {
+			matchingBlocks.unshift([x + commonPrefix, y + commonPrefix, snake]);
+		}
+	}
+
+	protected _processDiscardedSnake(
+		x: number,
+		y: number,
+		snake: number,
+		matchingBlocks: [number, number, number][],
+	): void {
+		const commonPrefix = this.commonPrefix;
+		if (this.aindex === null || this.bindex === null) {
+			return;
+		}
+
+		let curX = x + snake - 1;
+		let curY = y + snake - 1;
+		let xprev = (this.aindex[curX] ?? 0) + commonPrefix;
+		let yprev = (this.bindex[curY] ?? 0) + commonPrefix;
+
+		if (snake > 1) {
+			let newsnake = 1;
+			for (let i = 1; i < snake; i++) {
+				curX -= 1;
+				curY -= 1;
+				const xnext = (this.aindex[curX] ?? 0) + commonPrefix;
+				const ynext = (this.bindex[curY] ?? 0) + commonPrefix;
+				if (xprev - xnext !== 1 || yprev - ynext !== 1) {
+					matchingBlocks.unshift([xprev, yprev, newsnake]);
+					newsnake = 0;
+				}
+				xprev = xnext;
+				yprev = ynext;
+				newsnake += 1;
+			}
+			matchingBlocks.unshift([xprev, yprev, newsnake]);
+		} else {
+			matchingBlocks.unshift([xprev, yprev, snake]);
+		}
 	}
 
 	*initialize(): Generator<number | null, void, unknown> {
@@ -394,78 +347,24 @@ export class MyersSequenceMatcher<T> {
 					yield null;
 				}
 
-				let yv = -1;
-				let node: MyersNode = null;
-				for (let km = dmin - p; km < delta; km++) {
-					const t = fp[km + 1];
-					if (t && yv < t[0]) {
-						yv = t[0];
-						node = t[1];
-					} else {
-						yv += 1;
-					}
-					let x = yv - km + middle;
-					if (x < m && yv < n && a[x] === b[yv]) {
-						let snake = x;
-						x += 1;
-						yv += 1;
-						while (x < m && yv < n && a[x] === b[yv]) {
-							x += 1;
-							yv += 1;
-						}
-						snake = x - snake;
-						node = [node, x - snake, yv - snake, snake];
-					}
-					fp[km] = [yv, node];
-				}
+				this._findVerticalSnakes(a, b, {
+					fp,
+					startKm: dmin - p,
+					delta,
+					middle,
+				});
+				this._findHorizontalSnakes(a, b, {
+					fp,
+					startKm: dmax + p,
+					delta,
+					middle,
+				});
 
-				let yh = -1;
-				node = null;
-				for (let km = dmax + p; km > delta; km--) {
-					const t = fp[km - 1];
-					if (t && yh <= t[0]) {
-						yh = t[0];
-						node = t[1];
-						yh += 1;
-					}
-					let x = yh - km + middle;
-					if (x < m && yh < n && a[x] === b[yh]) {
-						let snake = x;
-						x += 1;
-						yh += 1;
-						while (x < m && yh < n && a[x] === b[yh]) {
-							x += 1;
-							yh += 1;
-						}
-						snake = x - snake;
-						node = [node, x - snake, yh - snake, snake];
-					}
-					fp[km] = [yh, node];
-				}
-
-				let y: number;
-				if (yv < yh) {
-					const t = fp[delta + 1];
-					y = t ? t[0] : 0;
-					node = t ? t[1] : null;
-				} else {
-					const t = fp[delta - 1];
-					y = t ? t[0] + 1 : 0;
-					node = t ? t[1] : null;
-				}
-
-				let x = y - delta + middle;
-				if (x < m && y < n && a[x] === b[y]) {
-					let snake = x;
-					x += 1;
-					y += 1;
-					while (x < m && y < n && a[x] === b[y]) {
-						x += 1;
-						y += 1;
-					}
-					snake = x - snake;
-					node = [node, x - snake, y - snake, snake];
-				}
+				const [y, node] = this._findFinalSnake(a, b, {
+					fp,
+					delta,
+					middle,
+				});
 				fp[delta] = [y, node];
 				if (y >= n) {
 					lastsnake = node;
@@ -476,6 +375,132 @@ export class MyersSequenceMatcher<T> {
 		this.buildMatchingBlocks(lastsnake);
 		this.postprocess();
 		yield 1;
+	}
+
+	protected _findVerticalSnakes(
+		a: T[] | string,
+		b: T[] | string,
+		params: {
+			fp: [number, MyersNode][];
+			startKm: number;
+			delta: number;
+			middle: number;
+		},
+	): void {
+		const { fp, startKm, delta, middle } = params;
+		const m = a.length;
+		const n = b.length;
+		let yv = -1;
+		let node: MyersNode = null;
+		for (let km = startKm; km < delta; km++) {
+			const t = fp[km + 1];
+			if (t && yv < t[0]) {
+				yv = t[0];
+				node = t[1];
+			} else {
+				yv += 1;
+			}
+			const result = this._extendSnake(a, b, {
+				y: yv,
+				km,
+				middle,
+				node,
+				m,
+				n,
+			});
+			fp[km] = result;
+			[yv, node] = result;
+		}
+	}
+
+	protected _findHorizontalSnakes(
+		a: T[] | string,
+		b: T[] | string,
+		params: {
+			fp: [number, MyersNode][];
+			startKm: number;
+			delta: number;
+			middle: number;
+		},
+	): void {
+		const { fp, startKm, delta, middle } = params;
+		const m = a.length;
+		const n = b.length;
+		let yh = -1;
+		let node: MyersNode = null;
+		for (let km = startKm; km > delta; km--) {
+			const t = fp[km - 1];
+			if (t && yh <= t[0]) {
+				yh = t[0];
+				node = t[1];
+				yh += 1;
+			}
+			const result = this._extendSnake(a, b, {
+				y: yh,
+				km,
+				middle,
+				node,
+				m,
+				n,
+			});
+			fp[km] = result;
+			[yh, node] = result;
+		}
+	}
+
+	protected _findFinalSnake(
+		a: T[] | string,
+		b: T[] | string,
+		params: { fp: [number, MyersNode][]; delta: number; middle: number },
+	): [number, MyersNode] {
+		const { fp, delta, middle } = params;
+		const m = a.length;
+		const n = b.length;
+		let y: number;
+		let node: MyersNode;
+
+		const t1 = fp[delta + 1] as [number, MyersNode] | undefined;
+		const t2 = fp[delta - 1] as [number, MyersNode] | undefined;
+		const yv = t2 ? t2[0] : -1;
+		const yh = t1 ? t1[0] : -1;
+
+		if (yv < yh) {
+			y = t1 ? t1[0] : 0;
+			node = t1 ? t1[1] : null;
+		} else {
+			y = t2 ? t2[0] + 1 : 0;
+			node = t2 ? t2[1] : null;
+		}
+
+		return this._extendSnake(a, b, { y, km: delta, middle, node, m, n });
+	}
+
+	protected _extendSnake(
+		a: T[] | string,
+		b: T[] | string,
+		params: {
+			y: number;
+			km: number;
+			middle: number;
+			node: MyersNode;
+			m: number;
+			n: number;
+		},
+	): [number, MyersNode] {
+		const { y, km, middle, m, n } = params;
+		let { node } = params;
+		let curX = y - km + middle;
+		let curY = y;
+		if (curX < m && curY < n && a[curX] === b[curY]) {
+			const snakeStart = curX;
+			while (curX < m && curY < n && a[curX] === b[curY]) {
+				curX += 1;
+				curY += 1;
+			}
+			const snakeLen = curX - snakeStart;
+			node = [node, curX - snakeLen, curY - snakeLen, snakeLen];
+		}
+		return [curY, node];
 	}
 }
 
@@ -566,54 +591,60 @@ export class SyncPointMyersSequenceMatcher<T> extends MyersSequenceMatcher<T> {
 
 	override *initialize(): Generator<number | null, void, unknown> {
 		if (!this.syncpoints || this.syncpoints.length === 0) {
-			for (const i of super.initialize()) {
-				yield i;
-			}
+			yield* super.initialize();
 		} else {
-			const chunks: [number, number, T[] | string, T[] | string][] = [];
-			let ai = 0;
-			let bi = 0;
-			for (const [aj, bj] of this.syncpoints) {
-				chunks.push([
-					ai,
-					bi,
-					this.a.slice(ai, aj),
-					this.b.slice(bi, bj),
-				]);
-				ai = aj;
-				bi = bj;
-			}
-			if (ai < this.a.length || bi < this.b.length) {
-				chunks.push([ai, bi, this.a.slice(ai), this.b.slice(bi)]);
-			}
-
+			const chunks = this._prepareChunks();
 			this.splitMatchingBlocks = [];
 			this.matchingBlocks = [];
+
 			for (const [chunkAi, chunkBi, a, b] of chunks) {
-				const matchingBlocks: [number, number, number][] = [];
-				const matcher = new MyersSequenceMatcher<T>(this.isjunk, a, b);
-				for (const _ of matcher.initialize()) {
-					yield null;
-				}
-				const blocks = matcher.getMatchingBlocks();
-				for (let idx = 0; idx < blocks.length - 1; idx++) {
-					const block = blocks[idx];
-					if (block) {
-						const [x, y, length] = block;
-						matchingBlocks.push([chunkAi + x, chunkBi + y, length]);
-					}
-				}
-				this.matchingBlocks.push(...matchingBlocks);
-				const aLen = a.length;
-				const bLen = b.length;
-				this.splitMatchingBlocks.push([
-					...matchingBlocks,
-					[chunkAi + aLen, chunkBi + bLen, 0],
-				]);
+				yield* this._processChunk(chunkAi, chunkBi, a, b);
 			}
+
 			this.matchingBlocks.push([this.a.length, this.b.length, 0]);
 			yield 1;
 		}
+	}
+
+	protected _prepareChunks(): [number, number, T[] | string, T[] | string][] {
+		const chunks: [number, number, T[] | string, T[] | string][] = [];
+		let ai = 0;
+		let bi = 0;
+		for (const [aj, bj] of this.syncpoints || []) {
+			chunks.push([ai, bi, this.a.slice(ai, aj), this.b.slice(bi, bj)]);
+			ai = aj;
+			bi = bj;
+		}
+		if (ai < this.a.length || bi < this.b.length) {
+			chunks.push([ai, bi, this.a.slice(ai), this.b.slice(bi)]);
+		}
+		return chunks;
+	}
+
+	protected *_processChunk(
+		chunkAi: number,
+		chunkBi: number,
+		a: T[] | string,
+		b: T[] | string,
+	): Generator<number | null, void, unknown> {
+		const matchingBlocks: [number, number, number][] = [];
+		const matcher = new MyersSequenceMatcher<T>(this.isjunk, a, b);
+		yield* matcher.initialize();
+
+		const blocks = matcher.getMatchingBlocks();
+		for (let idx = 0; idx < blocks.length - 1; idx++) {
+			const block = blocks[idx];
+			if (block) {
+				const [x, y, length] = block;
+				matchingBlocks.push([chunkAi + x, chunkBi + y, length]);
+			}
+		}
+
+		this.matchingBlocks?.push(...matchingBlocks);
+		this.splitMatchingBlocks.push([
+			...matchingBlocks,
+			[chunkAi + a.length, chunkBi + b.length, 0],
+		]);
 	}
 
 	override getOpcodes(): DiffChunk[] {
@@ -626,23 +657,7 @@ export class SyncPointMyersSequenceMatcher<T> extends MyersSequenceMatcher<T> {
 		this.getMatchingBlocks();
 		for (const matchingBlocks of this.splitMatchingBlocks) {
 			for (const [ai, bj, size] of matchingBlocks) {
-				let tag: DiffChunkTag | "" = "";
-				if (i < ai && j < bj) {
-					tag = "replace";
-				} else if (i < ai) {
-					tag = "delete";
-				} else if (j < bj) {
-					tag = "insert";
-				}
-				if (tag) {
-					this.opcodes.push({
-						tag,
-						startA: i,
-						endA: ai,
-						startB: j,
-						endB: bj,
-					});
-				}
+				this._addOpcode(i, ai, j, bj);
 				i = ai + size;
 				j = bj + size;
 				if (size) {
@@ -658,4 +673,54 @@ export class SyncPointMyersSequenceMatcher<T> extends MyersSequenceMatcher<T> {
 		}
 		return this.opcodes;
 	}
+
+	protected _addOpcode(i: number, ai: number, j: number, bj: number): void {
+		let tag: DiffChunkTag | "" = "";
+		if (i < ai && j < bj) {
+			tag = "replace";
+		} else if (i < ai) {
+			tag = "delete";
+		} else if (j < bj) {
+			tag = "insert";
+		}
+
+		if (tag && this.opcodes) {
+			this.opcodes.push({
+				tag,
+				startA: i,
+				endA: ai,
+				startB: j,
+				endB: bj,
+			});
+		}
+	}
 }
+
+export function findCommonPrefix<T>(a: T[] | string, b: T[] | string): number {
+	const minLength = Math.min(a.length, b.length);
+	for (let i = 0; i < minLength; i++) {
+		if (a[i] !== b[i]) {
+			return i;
+		}
+	}
+	return minLength;
+}
+
+export function findCommonSuffix<T>(a: T[] | string, b: T[] | string): number {
+	const minLength = Math.min(a.length, b.length);
+	const aLen = a.length;
+	const bLen = b.length;
+	for (let i = 1; i <= minLength; i++) {
+		if (a[aLen - i] !== b[bLen - i]) {
+			return i - 1;
+		}
+	}
+	return minLength;
+}
+
+export type DiffChunkTag =
+	| "replace"
+	| "delete"
+	| "insert"
+	| "conflict"
+	| "equal";
