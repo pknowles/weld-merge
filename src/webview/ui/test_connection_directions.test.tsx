@@ -41,6 +41,7 @@ const mockEditor = (lineCount: number, scrollTop: number) =>
 		})),
 		getLayoutInfo: jest.fn(() => ({ height: 1000 })),
 		getContentHeight: jest.fn(() => lineCount * 20),
+		getDomNode: jest.fn(() => null),
 	}) as unknown as editor.IStandaloneCodeEditor;
 
 const OUT_OF_BOUNDS_ERROR = /DiffCurtain connection out of bounds/;
@@ -64,7 +65,9 @@ describe("Connection Directions and Bounds Checking", () => {
 			{ tag: "insert", startA: 190, endA: 190, startB: 205, endB: 387 },
 		],
 	];
-	const paneLineCounts = [1, 386, 388, 191, 388];
+	const paneLineCounts: [number, number, number, number, number] = [
+		1, 386, 388, 191, 388,
+	];
 
 	describe("getBounds Unit Test", () => {
 		it("should NOT throw when mapping lines with correct reversal (false)", () => {
@@ -144,15 +147,12 @@ describe("Connection Directions and Bounds Checking", () => {
 	describe("mapLineAcrossPanes Verification", () => {
 		it("should work correctly with correct reversal flags (already fixed in scrollMapping)", () => {
 			const diffIsReversed = [false, true, false, false];
-			const result = mapLineAcrossPanes(
-				190, // last line of Remote
-				3, // Remote
-				4, // BaseR
+			const result = mapLineAcrossPanes(190, 3, 4, {
 				diffs,
 				paneLineCounts,
-				true,
+				smooth: true,
 				diffIsReversed,
-			);
+			});
 			expect(result).toBeLessThanOrEqual(388);
 			expect(result).toBeGreaterThan(200);
 		});

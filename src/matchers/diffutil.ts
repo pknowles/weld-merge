@@ -152,6 +152,14 @@ class Differ {
 	}
 
 	_updateMergeCache(texts: string[][]) {
+		this._computeRawMergeCache(texts);
+		this._applyIgnoreBlanks(texts);
+		this._calculateMergeableState();
+		this._updateLineCache();
+		this.emit("diffs-changed", null);
+	}
+
+	private _computeRawMergeCache(texts: string[][]) {
 		if (this.numSequences === THREE_PANES) {
 			this._mergeCache = Array.from(
 				this._mergeDiffs(this.diffs[0], this.diffs[1], texts),
@@ -164,7 +172,9 @@ class Differ {
 				(c) => [c, null] as [DiffChunk | null, DiffChunk | null],
 			);
 		}
+	}
 
+	private _applyIgnoreBlanks(texts: string[][]) {
 		if (this.ignoreBlanks) {
 			this._mergeCache = this._mergeCache
 				.map(
@@ -176,7 +186,9 @@ class Differ {
 				)
 				.filter((x) => x[0] !== null || x[1] !== null);
 		}
+	}
 
+	private _calculateMergeableState() {
 		let mergeable0 = false;
 		let mergeable1 = false;
 		for (const [c0, c1] of this._mergeCache) {
@@ -198,9 +210,6 @@ class Differ {
 				this.conflicts.push(i);
 			}
 		}
-
-		this._updateLineCache();
-		this.emit("diffs-changed", null);
 	}
 
 	_updateLineCache() {
@@ -540,29 +549,9 @@ class Differ {
 		toindex: number,
 		lines: (number | null)[] = [null, null, null, null],
 	) {
-		let mergeCache = this._mergeCache;
-		if (!lines.includes(null)) {
-			const [start1, end1] = this._rangeFromLines(fromindex, [
-				lines[0] as number,
-				lines[1] as number,
-			]);
-			const [start2, end2] = this._rangeFromLines(toindex, [
-				lines[2] as number,
-				lines[3] as number,
-			]);
-			if (
-				(start1 === null || end1 === null) &&
-				(start2 === null || end2 === null)
-			) {
-				return;
-			}
-			const starts = [start1, start2].filter(
-				(x): x is number => x !== null,
-			);
-			const ends = [end1, end2].filter((x): x is number => x !== null);
-			const start = Math.min(...starts);
-			const end = Math.max(...ends);
-			mergeCache = this._mergeCache.slice(start, end + 1);
+		const mergeCache = this._getMergeCacheSubset(fromindex, toindex, lines);
+		if (mergeCache.length === 0) {
+			return;
 		}
 
 		if (fromindex === 1) {
@@ -582,6 +571,35 @@ class Differ {
 				}
 			}
 		}
+	}
+
+	private _getMergeCacheSubset(
+		fromindex: number,
+		toindex: number,
+		lines: (number | null)[],
+	): [DiffChunk | null, DiffChunk | null][] {
+		if (lines.includes(null)) {
+			return this._mergeCache;
+		}
+		const [start1, end1] = this._rangeFromLines(fromindex, [
+			lines[0] as number,
+			lines[1] as number,
+		]);
+		const [start2, end2] = this._rangeFromLines(toindex, [
+			lines[2] as number,
+			lines[3] as number,
+		]);
+		if (
+			(start1 === null || end1 === null) &&
+			(start2 === null || end2 === null)
+		) {
+			return [];
+		}
+		const starts = [start1, start2].filter((x): x is number => x !== null);
+		const ends = [end1, end2].filter((x): x is number => x !== null);
+		const start = Math.min(...starts);
+		const end = Math.max(...ends);
+		return this._mergeCache.slice(start, end + 1);
 	}
 
 	_rangeFromLines(

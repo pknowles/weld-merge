@@ -27,7 +27,7 @@
 			"correctness": "error",
 			"suspicious": "error",
 			"style": "error",
-			"complexity": "warn",
+			"complexity": "error",
 			"performance": "error",
 			"security": "error",
 			"nursery": "off"
@@ -50,19 +50,19 @@
 						"noExcessiveLinesPerFunction": {
 							"level": "error",
 							"options": {
-								"maxLines": 4000
+								"maxLines": 100
 							}
 						},
 						"useMaxParams": {
 							"level": "error",
 							"options": {
-								"max": 10
+								"max": 5
 							}
 						},
 						"noExcessiveCognitiveComplexity": {
 							"level": "error",
 							"options": {
-								"maxAllowedComplexity": 200
+								"maxAllowedComplexity": 15
 							}
 						}
 					},

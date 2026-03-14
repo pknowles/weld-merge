@@ -17,7 +17,7 @@ const PANE_LOCAL = 1;
 const PANE_MERGED = 2;
 const PANE_REMOTE = 3;
 
-const PANE_COUNTS = [
+const PANE_COUNTS: [number, number, number, number, number] = [
 	LINE_COUNT_STANDARD,
 	LINE_COUNT_SHORT,
 	LINE_COUNT_STANDARD,
@@ -35,29 +35,23 @@ const STANDARD_DIFFS: (DiffChunk[] | null)[] = [
 describe("5-Pane Scroll Mapping Basic Tests", () => {
 	it("should map from Local to Merged without throwing even if Merged is longer", () => {
 		expect(() => {
-			mapLineAcrossPanes(
-				SOURCE_LINE_MIDDLE,
-				PANE_LOCAL,
-				PANE_MERGED,
-				STANDARD_DIFFS,
-				PANE_COUNTS,
-				true,
-				[false, true, false, false],
-			);
+			mapLineAcrossPanes(SOURCE_LINE_MIDDLE, PANE_LOCAL, PANE_MERGED, {
+				diffs: STANDARD_DIFFS,
+				paneLineCounts: PANE_COUNTS,
+				smooth: true,
+				diffIsReversed: [false, true, false, false],
+			});
 		}).not.toThrow();
 	});
 
 	it("should throw if the reversal is NOT specified (repro of the bug)", () => {
 		expect(() => {
-			mapLineAcrossPanes(
-				SOURCE_LINE_MIDDLE,
-				PANE_LOCAL,
-				PANE_MERGED,
-				STANDARD_DIFFS,
-				PANE_COUNTS,
-				true,
-				[false, false, false, false],
-			);
+			mapLineAcrossPanes(SOURCE_LINE_MIDDLE, PANE_LOCAL, PANE_MERGED, {
+				diffs: STANDARD_DIFFS,
+				paneLineCounts: PANE_COUNTS,
+				smooth: true,
+				diffIsReversed: [false, false, false, false],
+			});
 		}).toThrow("last chunk outside _sourceMaxLines");
 	});
 
@@ -68,7 +62,7 @@ describe("5-Pane Scroll Mapping Basic Tests", () => {
 			null,
 			null,
 		];
-		const counts = [
+		const counts: [number, number, number, number, number] = [
 			LINE_COUNT_SHORT,
 			LINE_COUNT_VERY_SHORT,
 			LINE_COUNT_SHORT,
@@ -79,10 +73,12 @@ describe("5-Pane Scroll Mapping Basic Tests", () => {
 			SOURCE_LINE_MIDDLE,
 			PANE_MERGED,
 			PANE_LOCAL,
-			emptyDiffs,
-			counts,
-			true,
-			[false, true, false, false],
+			{
+				diffs: emptyDiffs,
+				paneLineCounts: counts,
+				smooth: true,
+				diffIsReversed: [false, true, false, false],
+			},
 		);
 		expect(res).toBeLessThan(1);
 		expect(res).toBeGreaterThanOrEqual(0);
@@ -95,10 +91,12 @@ describe("5-Pane Scroll Mapping Advanced Tests", () => {
 			SOURCE_LINE_MIDDLE,
 			PANE_LOCAL,
 			PANE_MERGED,
-			STANDARD_DIFFS,
-			PANE_COUNTS,
-			true,
-			[false, true, false, true],
+			{
+				diffs: STANDARD_DIFFS,
+				paneLineCounts: PANE_COUNTS,
+				smooth: true,
+				diffIsReversed: [false, true, false, true],
+			},
 		);
 		expect(result).toBeCloseTo(TARGET_LINE_EXPECTED_50, 0);
 	});
@@ -114,7 +112,7 @@ describe("5-Pane Scroll Mapping Advanced Tests", () => {
 			[{ tag: "equal", startA: 0, endA: 100, startB: 0, endB: 100 }],
 			null,
 		];
-		const counts = [
+		const counts: [number, number, number, number, number] = [
 			LINE_COUNT_STANDARD,
 			LINE_COUNT_COMPLEX,
 			LINE_COUNT_STANDARD,
@@ -125,10 +123,12 @@ describe("5-Pane Scroll Mapping Advanced Tests", () => {
 			SOURCE_LINE_COMPLEX,
 			PANE_LOCAL,
 			PANE_REMOTE,
-			complexDiffs,
-			counts,
-			true,
-			[false, true, false, false],
+			{
+				diffs: complexDiffs,
+				paneLineCounts: counts,
+				smooth: true,
+				diffIsReversed: [false, true, false, false],
+			},
 		);
 		expect(res).toBeCloseTo(TARGET_LINE_EXPECTED_55, 0);
 	});
