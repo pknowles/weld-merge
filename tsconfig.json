@@ -28,5 +28,5 @@
 		"moduleResolution": "bundler",
 		"strictNullChecks": true
 	},
-	"exclude": ["node_modules", "test"]
+	"exclude": ["node_modules", "test", "scripts"]
 }
