@@ -7,6 +7,8 @@ node_modules
 src
 test
 jest.config.js
+jest.fuzz.config.js
+stryker.config.json
 tsconfig.json
 biome.json
 TODO.md
@@ -20,3 +22,7 @@ test-split.js
 package-lock.json
 .antigravityignore
 *.vsix
+coverage
+reports
+.cifuzz-corpus
+.stryker-tmp

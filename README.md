@@ -273,10 +273,13 @@ Example `settings.json` snippet to tweak colors:
 We use Jest to verify the TypeScript port against Meld's original Python logic:
 
 ```bash
-npm test         # run unit tests
-npm run lint     # lint and format check
-npm run build    # build, lint etc
-npx vsce package # build a .vsix installer
+npm test              # run unit tests
+npm run test:coverage # run unit tests with code coverage report
+npm run test:mutate   # run Stryker mutation testing
+npm run test:fuzz     # run Jazzer.js fuzz testing
+npm run lint          # lint and format check
+npm run build         # build, lint etc
+npx vsce package      # build a .vsix installer
 ```
 
 To install the built `.vsix` locally:
