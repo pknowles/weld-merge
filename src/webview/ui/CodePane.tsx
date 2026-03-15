@@ -35,9 +35,14 @@ const CommitHover: FC<{
 	pos: { x: number; y: number };
 	hoverRef: React.RefObject<HTMLDivElement | null>;
 	onCopyHash: (e: MouseEvent) => void;
-}> = ({ commit, pos, hoverRef, onCopyHash }) => (
+	onMouseEnter?: () => void;
+	onMouseLeave?: () => void;
+}> = ({ commit, pos, hoverRef, onCopyHash, onMouseEnter, onMouseLeave }) => (
 	<div
 		ref={hoverRef}
+		onMouseEnter={onMouseEnter}
+		onMouseLeave={onMouseLeave}
+		role="tooltip"
 		style={{
 			position: "fixed",
 			top: pos.y,
@@ -166,40 +171,46 @@ const CommitInfo: FC<{
 		setShowHover(true);
 	};
 	const onLeave = () => {
+		if (hoverTimerRef.current) {
+			clearTimeout(hoverTimerRef.current);
+		}
 		hoverTimerRef.current = setTimeout(() => {
 			setShowHover(false);
 		}, 300);
 	};
+	const onHoverStay = () => {
+		if (hoverTimerRef.current) {
+			clearTimeout(hoverTimerRef.current);
+		}
+	};
 	return (
-		<button
-			type="button"
-			style={{
-				position: "relative",
-				background: "none",
-				border: "none",
-				padding: 0,
-				margin: "0 8px",
-				color: "inherit",
-				font: "inherit",
-				display: "inline-block",
-				cursor: "pointer",
-				opacity: 0.7,
-				textDecoration: "underline",
-				whiteSpace: "nowrap",
-				overflow: "hidden",
-				textOverflow: "ellipsis",
-			}}
-			onClick={(e) => {
-				if (!hoverRef.current?.contains(e.target as Node)) {
-					onShowDiff?.();
-				}
-			}}
-			onMouseEnter={onEnter}
-			onMouseLeave={onLeave}
-			onFocus={onEnter}
-			onBlur={onLeave}
-		>
-			[{commit.title}]
+		<>
+			<button
+				type="button"
+				style={{
+					position: "relative",
+					background: "none",
+					border: "none",
+					padding: 0,
+					margin: "0 8px",
+					color: "inherit",
+					font: "inherit",
+					display: "inline-block",
+					cursor: "pointer",
+					opacity: 0.7,
+					textDecoration: "underline",
+					whiteSpace: "nowrap",
+					overflow: "hidden",
+					textOverflow: "ellipsis",
+				}}
+				onClick={() => onShowDiff?.()}
+				onMouseEnter={onEnter}
+				onMouseLeave={onLeave}
+				onFocus={onEnter}
+				onBlur={onLeave}
+			>
+				[{commit.title}]
+			</button>
 			{showHover && (
 				<CommitHover
 					commit={commit}
@@ -209,9 +220,11 @@ const CommitInfo: FC<{
 						e.stopPropagation();
 						onCopyHash?.(commit.hash);
 					}}
+					onMouseEnter={onHoverStay}
+					onMouseLeave={onLeave}
 				/>
 			)}
-		</button>
+		</>
 	);
 };
 
