@@ -321,7 +321,7 @@
 		"test": "npx jest",
 		"test:coverage": "npx jest --coverage",
 		"test:mutate": "stryker run",
-		"ratchet": "npx tsx scripts/ratchet.ts",
+		"ratchet": "npx tsx scripts/ratchet_coverage.ts",
 		"pre-checkin": "npm run lint && npm run build && npm run test:coverage && npm run ratchet",
 		"format": "biome format --write .",
 		"lint": "biome lint --error-on-warnings --write .",

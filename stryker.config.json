@@ -1,7 +1,7 @@
 {
 	"$schema": "https://schema.stryker-mutator.io/stryker-config.schema.json",
 	"packageManager": "npm",
-	"reporters": ["html", "clear-text", "progress", "json"],
+	"reporters": ["html", "json", "clear-text", "progress"],
 	"testRunner": "jest",
 	"coverageAnalysis": "perTest",
 	"mutate": [
@@ -19,6 +19,6 @@
 	"thresholds": {
 		"high": 80,
 		"low": 60,
-		"break": 40
+		"break": 65
 	}
 }

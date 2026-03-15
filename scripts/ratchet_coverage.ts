@@ -1,6 +1,20 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+/**
+ * @file ratchet_coverage.ts
+ * @description This script implements a "ratchet" mechanism for test quality.
+ * It reads the latest Jest coverage reports and Stryker mutation reports,
+ * and automatically updates the project configurations (jest.config.js and stryker.config.json)
+ * with the new scores if they are higher than the current thresholds.
+ *
+ * Usage:
+ * 1. Run tests with coverage: `npm run test:coverage`
+ * 2. Run mutation tests: `npm run test:mutate`
+ * 3. Run this script: `npm run ratchet`
+ */
+
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { cwd } from "node:process";
+import { cwd, exit } from "node:process";
+import { calculateMetrics } from "mutation-testing-metrics";
 
 interface CoverageSummary {
 	total: {
@@ -19,25 +33,32 @@ interface StrykerConfig {
 	};
 }
 
-interface StrykerMetrics {
-	mutationScore: number;
-}
+import type { MutationTestResult } from "mutation-testing-report-schema";
 
-interface StrykerReport {
-	metrics?: StrykerMetrics;
-	files?: Record<string, { mutants: Array<{ status: string }> }>;
-}
+interface StrykerReport extends MutationTestResult {}
 
-const BRANCHES_REGEX = /branches: \d+/;
-const FUNCTIONS_REGEX = /functions: \d+/;
-const LINES_REGEX = /lines: \d+/;
-const STATEMENTS_REGEX = /statements: \d+/;
+const REGEXES = {
+	branches: /branches:\s*\d+/,
+	functions: /functions:\s*\d+/,
+	lines: /lines:\s*\d+/,
+	statements: /statements:\s*\d+/,
+};
 
 /**
- * Updates testing thresholds based on the latest coverage and mutation reports.
- * This implements a "ratchet" mechanism to prevent quality regressions.
+ * Writes a file atomically to prevent configuration corruption.
  */
-function ratchet() {
+function writeAtomic(path: string, content: string) {
+	const tmpPath = `${path}.tmp`;
+	writeFileSync(tmpPath, content);
+	renameSync(tmpPath, path);
+}
+
+/**
+ * Orchestrates the ratcheting process for both Jest and Stryker.
+ */
+function ratchetCoverage() {
+	let hasError = false;
+
 	// 1. Ratchet Jest Coverage
 	try {
 		const coverageSummaryPath = join(
@@ -64,29 +85,25 @@ function ratchet() {
 			// biome-ignore lint/suspicious/noConsole: script output
 			console.log("New Jest Thresholds:", newThresholds);
 
-			jestConfig = jestConfig.replace(
-				BRANCHES_REGEX,
-				`branches: ${newThresholds.branches}`,
-			);
-			jestConfig = jestConfig.replace(
-				FUNCTIONS_REGEX,
-				`functions: ${newThresholds.functions}`,
-			);
-			jestConfig = jestConfig.replace(
-				LINES_REGEX,
-				`lines: ${newThresholds.lines}`,
-			);
-			jestConfig = jestConfig.replace(
-				STATEMENTS_REGEX,
-				`statements: ${newThresholds.statements}`,
-			);
+			for (const [key, regex] of Object.entries(REGEXES)) {
+				if (!regex.test(jestConfig)) {
+					throw new Error(
+						`Could not find threshold key "${key}" in jest.config.js using regex ${regex}. Please ensure the config file matches the expected format.`,
+					);
+				}
+				jestConfig = jestConfig.replace(
+					regex,
+					`${key}: ${newThresholds[key as keyof typeof newThresholds]}`,
+				);
+			}
 
-			writeFileSync(jestConfigPath, jestConfig);
+			writeAtomic(jestConfigPath, jestConfig);
 		}
 	} catch (e: unknown) {
 		const message = e instanceof Error ? e.message : String(e);
 		// biome-ignore lint/suspicious/noConsole: script error
 		console.error("Failed to ratchet Jest:", message);
+		hasError = true;
 	}
 
 	// 2. Ratchet Stryker Mutation Score
@@ -98,27 +115,19 @@ function ratchet() {
 			"mutation.json",
 		);
 		if (existsSync(mutationSummaryPath)) {
-			const data: StrykerReport = JSON.parse(
+			const data = JSON.parse(
 				readFileSync(mutationSummaryPath, "utf8"),
-			);
+			) as StrykerReport;
 
 			let score = 0;
-			if (data.metrics) {
-				score = data.metrics.mutationScore;
-			} else if (data.files) {
-				let killed = 0;
-				let total = 0;
-				for (const [_, fileData] of Object.entries(data.files)) {
-					for (const mutant of fileData.mutants) {
-						total++;
-						if (["Killed", "Timeout"].includes(mutant.status)) {
-							killed++;
-						}
-					}
-				}
-				score = total > 0 ? (killed / total) * 100 : 0;
+			if (data.files) {
+				const metricsResult = calculateMetrics(data.files);
+				score = metricsResult.metrics.mutationScore;
+			} else {
+				throw new Error(
+					"Stryker report missing 'files'. Ensure the 'json' reporter is enabled and mutants were generated.",
+				);
 			}
-
 			if (score > 0) {
 				const breakScore = Math.floor(score);
 				// biome-ignore lint/suspicious/noConsole: script output
@@ -131,7 +140,7 @@ function ratchet() {
 
 				if (strykerConfig.thresholds) {
 					strykerConfig.thresholds.break = breakScore;
-					writeFileSync(
+					writeAtomic(
 						strykerConfigPath,
 						`${JSON.stringify(strykerConfig, null, "\t")}\n`,
 					);
@@ -142,7 +151,12 @@ function ratchet() {
 		const message = e instanceof Error ? e.message : String(e);
 		// biome-ignore lint/suspicious/noConsole: script error
 		console.error("Failed to ratchet Stryker:", message);
+		hasError = true;
+	}
+
+	if (hasError) {
+		exit(1);
 	}
 }
 
-ratchet();
+ratchetCoverage();
