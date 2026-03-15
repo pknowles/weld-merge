@@ -19,6 +19,73 @@ import { useSynchronizedScrolling } from "./useSynchronizedScrolling.ts";
 import { useVscodeMessageBus } from "./useVSCodeMessageBus.ts";
 
 const DEFAULT_DEBOUNCE_DELAY = 300;
+
+const GlobalStyles: FC = () => (
+	<style>
+		{`
+        html, body, #root {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+            overflow: hidden;
+        }
+        .diff-path-insert { fill: var(--vscode-meldMerge-diffCurtainInsertFill, rgba(0, 200, 0, 0.2)); }
+        .diff-path-delete { fill: var(--vscode-meldMerge-diffCurtainDeleteFill, rgba(0, 200, 0, 0.2)); }
+        .diff-path-replace { fill: var(--vscode-meldMerge-diffCurtainReplaceFill, rgba(0, 100, 255, 0.2)); }
+        .diff-path-conflict { fill: var(--vscode-meldMerge-diffCurtainConflictFill, rgba(255, 0, 0, 0.2)); }
+        
+        .diff-edge-insert { stroke: var(--vscode-meldMerge-diffCurtainInsertStroke, rgba(0, 200, 0, 0.5)); stroke-width: 1px; }
+        .diff-edge-delete { stroke: var(--vscode-meldMerge-diffCurtainDeleteStroke, rgba(0, 200, 0, 0.5)); stroke-width: 1px; }
+        .diff-edge-replace { stroke: var(--vscode-meldMerge-diffCurtainReplaceStroke, rgba(0, 100, 255, 0.5)); stroke-width: 1px; }
+        .diff-edge-conflict { stroke: var(--vscode-meldMerge-diffCurtainConflictStroke, rgba(255, 0, 0, 0.5)); stroke-width: 1px; }
+
+        .diff-insert { background-color: var(--vscode-meldMerge-diffInsertBackground, rgba(0, 200, 0, 0.15)) !important; }
+        .diff-delete { background-color: var(--vscode-meldMerge-diffDeleteBackground, rgba(0, 200, 0, 0.15)) !important; }
+        .diff-replace { background-color: var(--vscode-meldMerge-diffReplaceBackground, rgba(0, 100, 255, 0.15)) !important; }
+        .diff-conflict { background-color: var(--vscode-meldMerge-diffConflictBackground, rgba(255, 0, 0, 0.2)) !important; }
+        .diff-margin { background-color: transparent !important; }
+
+        .diff-insert-margin { background-color: var(--vscode-meldMerge-diffInsertBackground, rgba(0, 200, 0, 0.15)) !important; }
+        .diff-delete-margin { background-color: var(--vscode-meldMerge-diffDeleteBackground, rgba(0, 200, 0, 0.15)) !important; }
+        .diff-replace-margin { background-color: var(--vscode-meldMerge-diffReplaceBackground, rgba(0, 100, 255, 0.15)) !important; }
+        .diff-conflict-margin { background-color: var(--vscode-meldMerge-diffConflictBackground, rgba(255, 0, 0, 0.2)) !important; }
+
+        .diff-insert-inline { background-color: var(--vscode-meldMerge-diffInsertInlineBackground, rgba(0, 200, 0, 0.35)) !important; }
+        .diff-delete-inline { background-color: var(--vscode-meldMerge-diffDeleteInlineBackground, rgba(255, 0, 0, 0.35)) !important; }
+        .diff-replace-inline { background-color: var(--vscode-meldMerge-diffReplaceInlineBackground, rgba(0, 100, 255, 0.35)) !important; }
+        .diff-conflict-inline { background-color: var(--vscode-meldMerge-diffConflictInlineBackground, rgba(255, 0, 0, 0.35)) !important; }
+
+        .diff-view path { transition: opacity 0.2s; }
+        .diff-container:hover .diff-view path { opacity: 0.8; }
+
+        /* Diff Connector Buttons */
+        .diff-actions { opacity: 0; transition: opacity 0.1s; }
+        .diff-container:hover .diff-actions { opacity: 1; }
+        .action-button { 
+            width: 16px; 
+            height: 16px; 
+            border: 1px solid rgba(255,255,255,0.2); 
+            background: rgba(0,0,0,0.5); 
+            border-radius: 3px; 
+            color: white; 
+            font-size: 13px; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            padding: 0; 
+            cursor: pointer; 
+            box-sizing: border-box; 
+            line-height: 1; 
+        }
+        .action-button:hover { 
+            background: rgba(100,100,100,0.9); 
+            border-color: rgba(255,255,255,0.6); 
+        }
+    `}
+	</style>
+);
+
 const MeldRoot: FC<{ children: React.ReactNode }> = ({ children }) => (
 	<div
 		style={{
@@ -29,6 +96,7 @@ const MeldRoot: FC<{ children: React.ReactNode }> = ({ children }) => (
 			position: "relative",
 		}}
 	>
+		<GlobalStyles />
 		{children}
 	</div>
 );
