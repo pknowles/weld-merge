@@ -234,22 +234,26 @@ async function handleAutoMergeAll(
 			cancellable: false,
 		},
 		async (progress) => {
-			await Promise.all(
-				unmergedFiles.map(async (file) => {
-					try {
-						progress.report({
-							message: `Merging ${file.label}...`,
-						});
-						await commands.executeCommand(
-							"meld-auto-merge.autoMerge",
-							file,
-						);
-						successCount++;
-					} catch {
-						errorCount++;
-					}
-				}),
-			);
+			const processNext = async (index: number): Promise<void> => {
+				const file = unmergedFiles[index];
+				if (!file) {
+					return;
+				}
+				try {
+					progress.report({
+						message: `Merging ${file.label}...`,
+					});
+					await commands.executeCommand(
+						"meld-auto-merge.autoMerge",
+						file,
+					);
+					successCount++;
+				} catch {
+					errorCount++;
+				}
+				return processNext(index + 1);
+			};
+			await processNext(0);
 		},
 	);
 
