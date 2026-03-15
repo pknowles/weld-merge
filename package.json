@@ -321,6 +321,7 @@
 		"test": "npx jest",
 		"test:coverage": "npx jest --coverage",
 		"test:mutate": "stryker run",
+		"test:fuzz": "JAZZER_FUZZ=1 npx jest -c jest.fuzz.config.js",
 		"ratchet": "npx tsx scripts/ratchet_coverage.ts",
 		"pre-checkin": "npm run lint && npm run build && npm run test:coverage && npm run ratchet",
 		"format": "biome format --write .",
@@ -332,6 +333,8 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.4.4",
+		"@jazzer.js/core": "^2.1.0",
+		"@jazzer.js/jest-runner": "^2.1.0",
 		"@monaco-editor/react": "^4.7.0",
 		"@stryker-mutator/core": "^9.6.0",
 		"@stryker-mutator/jest-runner": "^9.6.0",

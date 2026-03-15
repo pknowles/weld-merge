@@ -1,3 +1,9 @@
 {
-	"$schema": "https://unpkg.com/knip@5/schema.json"
+	"$schema": "https://unpkg.com/knip@5/schema.json",
+	"ignoreDependencies": [
+		"@jazzer.js/core",
+		"mutation-testing-metrics",
+		"mutation-testing-report-schema"
+	],
+	"ignoreBinaries": ["jest.fuzz.config.js"]
 }
