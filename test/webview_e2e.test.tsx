@@ -10,6 +10,10 @@ jest.mock("monaco-editor", () => ({
 		// biome-ignore lint/suspicious/noExplicitAny: mock
 		// biome-ignore lint/style/useNamingConvention: Monaco API
 		IStandaloneCodeEditor: {} as any,
+		// biome-ignore lint/style/useNamingConvention: Monaco API
+		EditorOption: {
+			lineHeight: 1,
+		},
 	},
 	// biome-ignore lint/style/useNamingConvention: Monaco API
 	Selection: {
@@ -132,7 +136,6 @@ const createMockEditor = (content: string) => {
 				return { dispose: jest.fn() };
 			}),
 		})),
-		getScrollTop: jest.fn(() => 0),
 		getContainerDomNode: jest.fn(() => ({
 			getBoundingClientRect: jest.fn(() => ({
 				top: 0,
@@ -141,6 +144,10 @@ const createMockEditor = (content: string) => {
 				height: 1000,
 			})),
 		})),
+		getScrollTop: jest.fn(() => 0),
+		getScrollLeft: jest.fn(() => 0),
+		getLayoutInfo: jest.fn(() => ({ height: 1000 })),
+		getContentHeight: jest.fn(() => 2000),
 		onDidScrollChange: jest.fn(() => ({ dispose: jest.fn() })),
 		getTopForLineNumber: jest.fn((l: number) => (l - 1) * 20),
 		getOption: jest.fn(() => 20),
@@ -363,5 +370,123 @@ describe("Webview E2E Regression Tests", () => {
 			// biome-ignore lint/performance/noAwaitInLoops: sequential execution required
 			await runTestCase(tc);
 		}
+	});
+
+	it("toggles compare with base and verifies visibility", async () => {
+		render(<App />);
+
+		// Initial load
+		await act(() => {
+			window.dispatchEvent(
+				new MessageEvent("message", {
+					data: {
+						command: "loadDiff",
+						data: {
+							files: [
+								{ label: "Local", content: "L" },
+								{ label: "Merged", content: "M" },
+								{ label: "Remote", content: "R" },
+							],
+							diffs: [[], []],
+						},
+					},
+					origin: "*",
+				}),
+			);
+		});
+
+		await act(() => {
+			jest.advanceTimersByTime(500);
+		});
+
+		// 1. Initial state: 3 editors
+		const editors = screen.getAllByTestId("monaco-editor");
+		expect(editors).toHaveLength(3);
+
+		// 2. Click "Toggle compare with Base" on Local side
+		const leftToggle = screen.getByTestId("toggle-base-left");
+		expect(leftToggle).toBeDefined();
+
+		await act(() => {
+			fireEvent.click(leftToggle);
+		});
+
+		// Verify request message was sent
+		expect(vscode.postMessage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				command: "requestBaseDiff",
+				side: "left",
+			}),
+		);
+
+		// 3. Simulate extension response
+		await act(() => {
+			window.dispatchEvent(
+				new MessageEvent("message", {
+					data: {
+						command: "loadBaseDiff",
+						data: {
+							side: "left",
+							file: { label: "Base (L)", content: "BL" },
+							diffs: [],
+						},
+					},
+					origin: "*",
+				}),
+			);
+		});
+
+		// 4. Wait for animation
+		await act(() => {
+			jest.advanceTimersByTime(500); // ANIMATION_DURATION is 430
+		});
+
+		// 5. Verify 4 editors and 1 diff curtain (between Base and Local)
+		expect(screen.getAllByTestId("monaco-editor")).toHaveLength(4);
+		expect(screen.getAllByTitle("Diff Connections")).toHaveLength(3); // base-local, local-merged, merged-remote
+
+		// 6. Click "Toggle compare with Base" on Remote side
+		const rightToggle = screen.getByTestId("toggle-base-right");
+		expect(rightToggle).toBeDefined();
+
+		await act(() => {
+			fireEvent.click(rightToggle);
+		});
+
+		// Simulate response for right side
+		await act(() => {
+			window.dispatchEvent(
+				new MessageEvent("message", {
+					data: {
+						command: "loadBaseDiff",
+						data: {
+							side: "right",
+							file: { label: "Base (R)", content: "BR" },
+							diffs: [],
+						},
+					},
+					origin: "*",
+				}),
+			);
+		});
+
+		await act(() => {
+			jest.advanceTimersByTime(500);
+		});
+
+		// 7. Verify 5 editors and 4 diff curtains
+		expect(screen.getAllByTestId("monaco-editor")).toHaveLength(5);
+		expect(screen.getAllByTitle("Diff Connections")).toHaveLength(4); // BL-L, L-M, M-R, R-BR
+
+		// 8. Toggle off
+		await act(() => {
+			fireEvent.click(leftToggle);
+		});
+
+		await act(() => {
+			jest.advanceTimersByTime(500);
+		});
+
+		expect(screen.getAllByTestId("monaco-editor")).toHaveLength(4);
 	});
 });

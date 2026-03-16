@@ -412,6 +412,7 @@ export const CodePane: FC<CodePaneProps> = ({
 				{onToggleBase && baseSide === "left" && (
 					<button
 						type="button"
+						data-testid="toggle-base-left"
 						onClick={onToggleBase}
 						title="Toggle compare with Base"
 						style={{
@@ -704,6 +705,7 @@ export const CodePane: FC<CodePaneProps> = ({
 				{onToggleBase && baseSide === "right" && (
 					<button
 						type="button"
+						data-testid="toggle-base-right"
 						onClick={onToggleBase}
 						title="Toggle compare with Base"
 						style={{
