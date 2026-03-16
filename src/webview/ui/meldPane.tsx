@@ -37,7 +37,7 @@ const getDiffStateInternal = (idx: number, ui: MeldUIState): DiffState => {
 
 	if (idx === 0 && ui.files[1]) {
 		return {
-			dFC: ui.diffs[0] || ui.prevBaseLeftDiffs,
+			dFC: ui.diffs[0],
 			lEIdx: 0,
 			rEIdx: 1,
 			fOL: false,
@@ -52,7 +52,7 @@ const getDiffStateInternal = (idx: number, ui: MeldUIState): DiffState => {
 	}
 	if (idx === 3 && (ui.files[4] || ui.renderBaseRight)) {
 		return {
-			dFC: ui.diffs[3] || ui.prevBaseRightDiffs,
+			dFC: ui.diffs[3],
 			lEIdx: 3,
 			rEIdx: 4,
 			fOL: !isRBC,

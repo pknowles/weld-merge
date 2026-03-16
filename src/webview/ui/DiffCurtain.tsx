@@ -266,6 +266,7 @@ const useFilteredDiffs = (p: {
 	rMax: number;
 	renderTrigger: number;
 }) =>
+	// biome-ignore lint/correctness/useExhaustiveDependencies: p.renderTrigger is required for scroll-reactive filtering
 	useMemo(() => {
 		if (p.curtainHeight === 0) {
 			return p.diffs;
@@ -324,6 +325,7 @@ const useFilteredDiffs = (p: {
 		p.leftOffset,
 		p.rightOffset,
 		p.activeTops,
+		p.renderTrigger,
 	]);
 
 const useCurtainLayout = (

@@ -394,103 +394,14 @@ class Differ {
 	}
 
 	_updateMergeCacheOnSequenceChange(
-		sequence: number,
-		startidx: number,
-		sizechange: number,
+		_sequence: number,
+		_startidx: number,
+		_sizechange: number,
 		texts: string[][],
 	) {
 		this._oldMergeCache.clear();
 		this._changedChunks = [];
-		let chunkChanged = false;
-
-		for (let i = 0; i < this._mergeCache.length; i++) {
-			const pair = this._mergeCache[i];
-			if (!pair) {
-				continue;
-			}
-			const [c1, c2] = this._offsetPair(
-				pair,
-				sequence,
-				startidx,
-				sizechange,
-			);
-
-			if (this._isChunkChanged(pair, sequence, startidx)) {
-				chunkChanged = true;
-			}
-
-			if (chunkChanged) {
-				this._changedChunks = [c1, c2];
-				chunkChanged = false;
-			}
-			this._mergeCache[i] = [c1, c2];
-		}
 		this._updateMergeCache(texts);
-	}
-
-	private _offsetPair(
-		pair: [DiffChunk | null, DiffChunk | null],
-		sequence: number,
-		startidx: number,
-		sizechange: number,
-	): [DiffChunk | null, DiffChunk | null] {
-		let [c1, c2] = pair;
-		if (sequence === PANE_0) {
-			c1 = this._offsetChunkB(c1, startidx, sizechange);
-		} else if (sequence === PANE_2) {
-			c2 = this._offsetChunkB(c2, startidx, sizechange);
-		} else {
-			c1 = this._offsetChunkA(c1, startidx, sizechange);
-			if (this.numSequences === THREE_PANES) {
-				c2 = this._offsetChunkA(c2, startidx, sizechange);
-			}
-		}
-		return [c1, c2];
-	}
-
-	private _isChunkChanged(
-		pair: [DiffChunk | null, DiffChunk | null],
-		sequence: number,
-		startidx: number,
-	): boolean {
-		const [c1, c2] = pair;
-		if (sequence === PANE_0) {
-			return Boolean(c1 && c1.startB <= startidx && startidx < c1.endB);
-		}
-		if (sequence === PANE_2) {
-			return Boolean(c2 && c2.startB <= startidx && startidx < c2.endB);
-		}
-		return Boolean(c1 && c1.startA <= startidx && startidx < c1.endA);
-	}
-
-	private _offsetChunkB(
-		c: DiffChunk | null,
-		start: number,
-		offset: number,
-	): DiffChunk | null {
-		if (!c) {
-			return null;
-		}
-		return {
-			...c,
-			startB: c.startB + (c.startB > start ? offset : 0),
-			endB: c.endB + (c.endB > start ? offset : 0),
-		};
-	}
-
-	private _offsetChunkA(
-		c: DiffChunk | null,
-		start: number,
-		offset: number,
-	): DiffChunk | null {
-		if (!c) {
-			return null;
-		}
-		return {
-			...c,
-			startA: c.startA + (c.startA > start ? offset : 0),
-			endA: c.endA + (c.endA > start ? offset : 0),
-		};
 	}
 
 	_locateChunk(
@@ -643,18 +554,21 @@ class Differ {
 			linesAdded[sequence as 0 | 1 | 2 | 3 | 4] = sizechange;
 		}
 
-		const loidx = this._locateChunk(
+		let loidx = this._locateChunk(
 			which as 0 | 1 | 2 | 3,
 			sequence,
 			startidx,
 		);
-		let hiidx = loidx;
-		if (sizechange < 0) {
-			hiidx = this._locateChunk(
-				which as 0 | 1 | 2 | 3,
-				sequence,
-				startidx - sizechange,
-			);
+		if (loidx > 0) {
+			loidx--;
+		}
+		let hiidx = this._locateChunk(
+			which as 0 | 1 | 2 | 3,
+			sequence,
+			startidx + Math.max(0, -sizechange),
+		);
+		if (hiidx < diffs.length) {
+			hiidx++;
 		}
 
 		const lorange = this._getLoRange(diffs, loidx);
@@ -692,20 +606,15 @@ class Differ {
 		).getDifferenceOpcodes();
 		newdiffs = newdiffs.map((c) => offsetValue(c, range1[0], rangex[0]));
 
-		if (hiidx < diffs.length) {
-			const offsetDiffs = diffs
-				.slice(hiidx)
-				.map((c) => offsetValue(c, linesAdded[1], linesAdded[x]));
-			this.diffs[which as 0 | 1 | 2 | 3].splice(
-				hiidx,
-				diffs.length - hiidx,
-				...offsetDiffs,
-			);
-		}
+		const offsetDiffs = diffs
+			.slice(hiidx)
+			.map((c) => offsetValue(c, linesAdded[1], linesAdded[x]));
+
 		this.diffs[which as 0 | 1 | 2 | 3].splice(
 			loidx,
-			hiidx - loidx,
+			diffs.length - loidx,
 			...newdiffs,
+			...offsetDiffs,
 		);
 	}
 
@@ -713,7 +622,7 @@ class Differ {
 		if (loidx > 0) {
 			const prevChunk = diffs[loidx - 1];
 			if (prevChunk) {
-				return [prevChunk.startB, prevChunk.startA];
+				return [prevChunk.endB, prevChunk.endA];
 			}
 		}
 		return [0, 0];
@@ -727,7 +636,7 @@ class Differ {
 		if (hiidx < diffs.length) {
 			const nextChunk = diffs[hiidx];
 			if (nextChunk) {
-				return [nextChunk.endB, nextChunk.endA];
+				return [nextChunk.startB, nextChunk.startA];
 			}
 		}
 		return [this.seqLength[x], this.seqLength[1]];
