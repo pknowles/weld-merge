@@ -16,19 +16,20 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import Editor from "@monaco-editor/react";
-import { editor, Selection, KeyMod, KeyCode } from "monaco-editor";
+import { editor, KeyCode, KeyMod, Selection } from "monaco-editor";
 import {
+	type CSSProperties,
+	type FC,
+	type FocusEvent,
+	type MouseEvent,
+	useCallback,
 	useEffect,
 	useMemo,
 	useRef,
 	useState,
-	type FC,
-	type CSSProperties,
-	type MouseEvent,
-	type FocusEvent,
 } from "react";
-import type { FileState, Highlight } from "./types.ts";
 import { computeMinimalEdits } from "./editorUtil.ts";
+import type { FileState, Highlight } from "./types.ts";
 
 const NEWLINE_REGEX = /\r?\n/;
 
@@ -176,11 +177,15 @@ export const CodePane: FC<CodePaneProps> = ({
 		);
 	}, [editorInstance, highlights]);
 
-	const handleMount = (monacoEditor: editor.IStandaloneCodeEditor) => {
+	const handleMountLogic = (monacoEditor: editor.IStandaloneCodeEditor) => {
 		setEditorInstance(monacoEditor);
 		onMount(monacoEditor, index);
 
 		if (writeClipboardText) {
+			monacoEditor.onDidBlurEditorText(() => {
+				writeClipboardText(monacoEditor.getValue());
+			});
+
 			monacoEditor.addAction({
 				id: "custom-copy",
 				label: "Copy",
@@ -294,6 +299,18 @@ export const CodePane: FC<CodePaneProps> = ({
 			}
 		}
 	};
+
+	const handleMount = useCallback(handleMountLogic, [
+		index,
+		onMount,
+		writeClipboardText,
+		requestClipboardText,
+		onPrevDiff,
+		onNextDiff,
+		onPrevConflict,
+		onNextConflict,
+		autoFocusConflict,
+	]);
 
 	useEffect(() => {
 		if (

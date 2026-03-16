@@ -1,7 +1,8 @@
 // biome-ignore lint/style/noDefaultExport: config files often require default export
 export default {
 	preset: "ts-jest",
-	testEnvironment: "node",
+	testEnvironment: "jsdom",
+	setupFilesAfterEnv: ["<rootDir>/src/jest.setup.ts"],
 	collectCoverage: true,
 	coverageDirectory: "coverage",
 	coverageReporters: ["text", "lcov", "clover", "json-summary"],
