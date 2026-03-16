@@ -27,7 +27,7 @@ import {
 	useState,
 } from "react";
 import { getBounds } from "./diffCurtainUtils.ts";
-import type { DiffChunk } from "./types.ts";
+import { DIFF_WIDTH, type DiffChunk } from "./types.ts";
 
 interface DiffCurtainProps {
 	diffs: DiffChunk[];
@@ -68,7 +68,7 @@ const ActionButton: FC<{
 		width="16"
 		height="16"
 		{...(side === "right"
-			? { style: { transform: "translateX(calc(100% - 18px))" } }
+			? { style: { transform: `translateX(${DIFF_WIDTH - 18}px)` } }
 			: {})}
 	>
 		<button
@@ -183,7 +183,8 @@ const ChunkRenderer: FC<{
 	const y2B = b.rEmp
 		? y2T
 		: getY(p.rightEditor, b.rE, p.rightOffset, p.activeTops.right);
-	const main = `M 0 ${y1T} C 12 ${y1T}, 18 ${y2T}, 30 ${y2T} L 30 ${y2B} C 18 ${y2B}, 12 ${y1B}, 0 ${y1B} Z`;
+	const w = DIFF_WIDTH;
+	const main = `M 0 ${y1T} C ${w * 0.4} ${y1T}, ${w * 0.6} ${y2T}, ${w} ${y2T} L ${w} ${y2B} C ${w * 0.6} ${y2B}, ${w * 0.4} ${y1B}, 0 ${y1B} Z`;
 	return (
 		<g
 			className={`diff-container tag-${p.chunk.tag}`}
@@ -193,12 +194,12 @@ const ChunkRenderer: FC<{
 			<path className={`diff-path-${p.chunk.tag}`} d={main} />
 			<path
 				className={`diff-edge-${p.chunk.tag}`}
-				d={`M 0 ${y1T} C 12 ${y1T}, 18 ${y2T}, 30 ${y2T}`}
+				d={`M 0 ${y1T} C ${w * 0.4} ${y1T}, ${w * 0.6} ${y2T}, ${w} ${y2T}`}
 				fill="none"
 			/>
 			<path
 				className={`diff-edge-${p.chunk.tag}`}
-				d={`M 0 ${y1B} C 12 ${y1B}, 18 ${y2B}, 30 ${y2B}`}
+				d={`M 0 ${y1B} C ${w * 0.4} ${y1B}, ${w * 0.6} ${y2B}, ${w} ${y2B}`}
 				fill="none"
 			/>
 			{(p.onApp || p.onDel || p.onUp || p.onDwn) && (
@@ -463,7 +464,7 @@ export const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 		<div
 			ref={curtainRef}
 			style={{
-				width: "30px",
+				width: `${DIFF_WIDTH}px`,
 				height: "100%",
 				position: "relative",
 				flexShrink: 0,

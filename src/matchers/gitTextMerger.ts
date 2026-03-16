@@ -13,8 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import type { DiffChunk } from "./myers.ts";
 import { Merger } from "./merge.ts";
+import type { DiffChunk } from "./myers.ts";
 
 const CONFLICT_MARKER_LINES = 4;
 

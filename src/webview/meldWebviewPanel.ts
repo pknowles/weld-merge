@@ -3,22 +3,22 @@
 import { basename, relative } from "node:path";
 import {
 	type CancellationToken,
-	commands,
 	type ConfigurationChangeEvent,
 	type CustomTextEditorProvider,
+	commands,
 	type Disposable,
-	env,
 	EventEmitter,
-	extensions,
 	type ExtensionContext,
+	env,
+	extensions,
 	Range,
 	type TextDocument,
 	Uri,
 	type Webview,
 	type WebviewPanel,
+	WorkspaceEdit,
 	window,
 	workspace,
-	WorkspaceEdit,
 } from "vscode";
 import { getUnresolvedReasons } from "../gitUtils.ts";
 import { buildBaseDiffPayload, buildDiffPayload } from "./diffPayload.ts";

@@ -13,7 +13,7 @@ import {
 import { ErrorBoundary } from "./ErrorBoundary.tsx";
 import { MeldPane } from "./meldPane.tsx";
 import type { Highlight as MeldHighlight } from "./types.ts";
-import { ANIMATION_DURATION } from "./types.ts";
+import { ANIMATION_DURATION, DIFF_WIDTH } from "./types.ts";
 import { useClipboardOverrides } from "./useClipboardOverrides.ts";
 import { useSynchronizedScrolling } from "./useSynchronizedScrolling.ts";
 import { useVscodeMessageBus } from "./useVSCodeMessageBus.ts";
@@ -89,13 +89,17 @@ const GlobalStyles: FC = () => (
 
 const MeldRoot: FC<{ children: React.ReactNode }> = ({ children }) => (
 	<div
-		style={{
-			display: "flex",
-			width: "100vw",
-			height: "100vh",
-			overflow: "hidden",
-			position: "relative",
-		}}
+		style={
+			{
+				display: "flex",
+				width: "100vw",
+				height: "100vh",
+				overflow: "hidden",
+				position: "relative",
+				"--meld-diff-width": `${DIFF_WIDTH}px`,
+			} as React.CSSProperties
+		}
+		data-testid="meld-root"
 	>
 		<GlobalStyles />
 		{children}

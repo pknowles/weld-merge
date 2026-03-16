@@ -2,12 +2,12 @@ import { type FC, Fragment } from "react";
 import { AnimatedColumn } from "./animatedColumn.tsx";
 import { CodePane } from "./CodePane.tsx";
 import { DiffCurtain } from "./DiffCurtain.tsx";
-import {
-	INITIAL_SYNC_DELAY,
-	type MeldPaneProps,
-	type MeldUIActions,
-	type MeldUIState,
+import type {
+	MeldPaneProps,
+	MeldUIActions,
+	MeldUIState,
 } from "./meldPaneTypes.ts";
+import { INITIAL_SYNC_DELAY } from "./meldPaneTypes.ts";
 import type { DiffChunk, FileState } from "./types.ts";
 
 const getCurtainHandlers = (actions: MeldUIActions, idx: number) => {
@@ -24,70 +24,6 @@ const getCurtainHandlers = (actions: MeldUIActions, idx: number) => {
 			actions.handleCopyDownChunk(targetIdx, c),
 	};
 };
-
-const PaneAndCurtain: FC<
-	MeldPaneProps & {
-		active: FileState;
-		dFC: DiffChunk[] | null;
-		lEIdx: number;
-		rEIdx: number;
-		fOL: boolean;
-		fOR: boolean;
-	}
-> = (props) => {
-	const { idx, ui, actions, active, dFC, lEIdx, rEIdx, fOL, fOR } = props;
-	const isBaseActive = Boolean(ui.files[idx === 1 ? 0 : 4]);
-	const baseSide = idx === 1 ? "left" : idx === 3 ? "right" : undefined;
-	const onToggleBase =
-		idx === 1
-			? () => actions.toggleBaseDiff("left")
-			: idx === 3
-				? () => actions.toggleBaseDiff("right")
-				: undefined;
-
-	const lEd = ui.editorRefArray.current[lEIdx];
-	const rEd = ui.editorRefArray.current[rEIdx];
-	const curtain = dFC && lEd && rEd && lEd.getModel() && rEd.getModel() && (
-		<DiffCurtain
-			diffs={dFC}
-			leftEditor={lEd}
-			rightEditor={rEd}
-			renderTrigger={ui.renderTrigger}
-			reversed={idx === 1}
-			fadeOutLeft={fOL}
-			fadeOutRight={fOR}
-			{...getCurtainHandlers(actions, idx)}
-		/>
-	);
-
-	return (
-		<>
-			<CodePane
-				file={active}
-				index={idx}
-				ui={ui}
-				actions={actions}
-				isMiddle={idx === 2}
-				highlights={actions.getHighlights(idx)}
-				onToggleBase={onToggleBase}
-				baseSide={baseSide}
-				isBaseActive={isBaseActive}
-				onMount={(ed, i) => {
-					ui.editorRefArray.current[i] = ed;
-					actions.attachScrollListener(ed, i);
-					const delay = i === 0 || i === 4 ? INITIAL_SYNC_DELAY : 0;
-					if (delay > 0) {
-						setTimeout(() => {
-							actions.forceSyncToPane(i === 0 ? 1 : 3, i);
-						}, delay);
-					}
-				}}
-			/>
-			{curtain}
-		</>
-	);
-};
-
 interface DiffState {
 	dFC: DiffChunk[] | null;
 	lEIdx: number;
@@ -95,14 +31,11 @@ interface DiffState {
 	fOL: boolean;
 	fOR: boolean;
 }
+const getDiffStateInternal = (idx: number, ui: MeldUIState): DiffState => {
+	const isLBC = ui.baseCompareHighlighting && Boolean(ui.files[0]);
+	const isRBC = ui.baseCompareHighlighting && Boolean(ui.files[4]);
 
-const getDiffStateForBase = (
-	idx: number,
-	ui: MeldUIState,
-	isLBC: boolean,
-	isRBC: boolean,
-): DiffState => {
-	if (idx === 0) {
+	if (idx === 0 && ui.files[1]) {
 		return {
 			dFC: ui.diffs[0] || ui.prevBaseLeftDiffs,
 			lEIdx: 0,
@@ -111,26 +44,58 @@ const getDiffStateForBase = (
 			fOR: !isLBC,
 		};
 	}
-	return {
-		dFC: ui.diffs[3] || ui.prevBaseRightDiffs,
-		lEIdx: 3,
-		rEIdx: 4,
-		fOL: !isRBC,
-		fOR: false,
-	};
-};
-
-const getDiffStateInternal = (idx: number, ui: MeldUIState): DiffState => {
-	const isLBC = ui.baseCompareHighlighting && Boolean(ui.files[0]);
-	const isRBC = ui.baseCompareHighlighting && Boolean(ui.files[4]);
-	if (idx === 0 || idx === 3) {
-		return getDiffStateForBase(idx, ui, isLBC, isRBC);
-	}
-	if (idx === 1) {
+	if (idx === 1 && ui.files[2]) {
 		return { dFC: ui.diffs[1], lEIdx: 1, rEIdx: 2, fOL: isLBC, fOR: false };
 	}
-	return { dFC: ui.diffs[2], lEIdx: 2, rEIdx: 3, fOL: false, fOR: isRBC };
+	if (idx === 2 && ui.files[3]) {
+		return { dFC: ui.diffs[2], lEIdx: 2, rEIdx: 3, fOL: false, fOR: isRBC };
+	}
+	if (idx === 3 && (ui.files[4] || ui.renderBaseRight)) {
+		return {
+			dFC: ui.diffs[3] || ui.prevBaseRightDiffs,
+			lEIdx: 3,
+			rEIdx: 4,
+			fOL: !isRBC,
+			fOR: false,
+		};
+	}
+	return { dFC: null, lEIdx: 0, rEIdx: 0, fOL: false, fOR: false };
 };
+
+const renderMeldCodePane = (
+	idx: number,
+	active: FileState,
+	ui: MeldUIState,
+	actions: MeldUIActions,
+) => (
+	<CodePane
+		file={active}
+		index={idx}
+		ui={ui}
+		actions={actions}
+		isMiddle={idx === 2}
+		highlights={actions.getHighlights(idx)}
+		onToggleBase={
+			idx === 1
+				? () => actions.toggleBaseDiff("left")
+				: idx === 3
+					? () => actions.toggleBaseDiff("right")
+					: undefined
+		}
+		baseSide={idx === 1 ? "left" : idx === 3 ? "right" : undefined}
+		isBaseActive={Boolean(ui.files[idx === 1 ? 0 : 4])}
+		onMount={(ed, i) => {
+			ui.editorRefArray.current[i] = ed;
+			actions.attachScrollListener(ed, i);
+			const delay = i === 0 || i === 4 ? INITIAL_SYNC_DELAY : 0;
+			if (delay > 0) {
+				setTimeout(() => {
+					actions.forceSyncToPane(i === 0 ? 1 : 3, i);
+				}, delay);
+			}
+		}}
+	/>
+);
 
 export const MeldPane: FC<MeldPaneProps> = (p) => {
 	const { idx, ui } = p;
@@ -141,28 +106,68 @@ export const MeldPane: FC<MeldPaneProps> = (p) => {
 		return null;
 	}
 
-	const content = (
-		<PaneAndCurtain
-			{...p}
-			active={active}
-			{...getDiffStateInternal(idx, ui)}
+	const diffState = getDiffStateInternal(p.idx, p.ui);
+	const { dFC, lEIdx, rEIdx, fOL, fOR } = diffState;
+
+	const lEd = p.ui.editorRefArray.current[lEIdx];
+	const rEd = p.ui.editorRefArray.current[rEIdx];
+	const curtain = dFC && lEd && rEd && lEd.getModel() && rEd.getModel() && (
+		<DiffCurtain
+			diffs={dFC}
+			leftEditor={lEd}
+			rightEditor={rEd}
+			renderTrigger={p.ui.renderTrigger}
+			reversed={p.idx === 1}
+			fadeOutLeft={fOL}
+			fadeOutRight={fOR}
+			{...getCurtainHandlers(p.actions, p.idx)}
 		/>
 	);
 
-	if (idx === 0 || idx === 4) {
-		const side = idx === 0 ? "left" : "right";
+	const peerCount = [0, 1, 2, 3, 4]
+		.filter((i) => i !== idx)
+		.filter((i) => {
+			if (i === 1 || i === 2 || i === 3) {
+				return Boolean(ui.files[i]);
+			}
+			if (i === 0) {
+				return ui.renderBaseLeft;
+			}
+			if (i === 4) {
+				return ui.renderBaseRight;
+			}
+			return false;
+		}).length;
+
+	const totalPanes = peerCount + 1;
+
+	const codePane = renderMeldCodePane(p.idx, active, p.ui, p.actions);
+
+	if (p.idx === 0 || p.idx === 4) {
+		const side = p.idx === 0 ? "left" : "right";
+		const isOpen = Boolean(p.ui.files[p.idx]);
 		return (
-			<AnimatedColumn
-				key={idx}
-				isOpen={Boolean(ui.files[idx])}
-				side={side}
-				textColumns={3}
-				textColumnsAfterAnimation={3}
-				id={`col-base-${side}`}
-			>
-				{content}
-			</AnimatedColumn>
+			<Fragment key={p.idx}>
+				<AnimatedColumn
+					isOpen={isOpen}
+					side={side}
+					textColumns={totalPanes}
+					textColumnsAfterAnimation={totalPanes}
+					id={`col-base-${side}`}
+				>
+					{codePane}
+				</AnimatedColumn>
+				{p.idx === 0
+					? (p.ui.files[0] || p.ui.renderBaseLeft) && curtain
+					: curtain}
+			</Fragment>
 		);
 	}
-	return <Fragment key={idx}>{content}</Fragment>;
+
+	return (
+		<Fragment key={p.idx}>
+			{codePane}
+			{curtain}
+		</Fragment>
+	);
 };

@@ -21,6 +21,8 @@ Shortcuts and higher-level application components are encouraged, but they must 
 
 ## Simple, Singular Implementation
 
+Do not add fallbacks, defensive checks or paths to handle unexpected issues. These make it difficult to find bugs and imply we ship code with them. Fail fast with good error messages. It is up to the caller to provide valid data, we should enforce strong input guarantees and at most we can re-validate it.
+
 Don't over-engineer to support hypothetical future edge cases. Pick one standard way to do something and do it well, without limiting core features.
 
 Rely on standard, native JavaScript/React APIs whenever possible. Don't build massive abstraction layers over standard browser APIs (like `fetch` or `localStorage`) unless there is a tangible, immediate benefit. One simple, clear implementation is better than a flexible but complex one.

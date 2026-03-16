@@ -53,6 +53,6 @@ export interface BaseDiffPayload {
 	diffs: DiffChunk[];
 }
 
-export const ANIMATION_DURATION = 300;
-export const ANIMATION_TRANSITION =
-	"margin-left 0.3s ease-in-out, margin-right 0.3s ease-in-out";
+export const DIFF_WIDTH = 40;
+export const ANIMATION_DURATION = 430;
+export const ANIMATION_TRANSITION = "margin 0.4s cubic-bezier(0.4, 0, 0.2, 1)";

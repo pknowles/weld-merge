@@ -228,39 +228,112 @@ export function useCommitModelUpdate(deps: CommitDeps) {
 }
 
 export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
+	const {
+		setFiles,
+		setDiffs,
+		setExternalSyncId,
+		setDebounceDelay,
+		setSyntaxHighlighting,
+		setBaseCompareHighlighting,
+		setSmoothScrolling,
+		setRenderTrigger,
+		commitModelUpdate,
+		resolveClipboardRead,
+		vscodeApi,
+		differRef,
+		filesRef,
+		diffsRef,
+	} = p;
 	useEffect(() => {
 		const handleMessage = (event: MessageEvent) => {
 			const m = event.data;
 			switch (m.command) {
 				case "loadDiff":
-					handleLoadDiff(m.data, p);
+					handleLoadDiff(m.data, {
+						setFiles,
+						setDiffs,
+						setExternalSyncId,
+						setDebounceDelay,
+						setSyntaxHighlighting,
+						setBaseCompareHighlighting,
+						setSmoothScrolling,
+						setRenderTrigger,
+						commitModelUpdate,
+						resolveClipboardRead,
+						vscodeApi,
+						differRef,
+						filesRef,
+						diffsRef,
+					});
 					break;
 				case "loadBaseDiff":
-					handleLoadBaseDiff(m.data, p);
+					handleLoadBaseDiff(m.data, {
+						setFiles,
+						setDiffs,
+						setExternalSyncId,
+						setDebounceDelay,
+						setSyntaxHighlighting,
+						setBaseCompareHighlighting,
+						setSmoothScrolling,
+						setRenderTrigger,
+						commitModelUpdate,
+						resolveClipboardRead,
+						vscodeApi,
+						differRef,
+						filesRef,
+						diffsRef,
+					});
 					break;
 				case "updateContent":
-					p.setExternalSyncId((id) => id + 1);
-					p.commitModelUpdate(m.text);
+					setExternalSyncId((id) => id + 1);
+					commitModelUpdate(m.text);
 					break;
 				case "updateConfig":
-					handleConfig(m.config, p);
+					handleConfig(m.config, {
+						setFiles,
+						setDiffs,
+						setExternalSyncId,
+						setDebounceDelay,
+						setSyntaxHighlighting,
+						setBaseCompareHighlighting,
+						setSmoothScrolling,
+						setRenderTrigger,
+						commitModelUpdate,
+						resolveClipboardRead,
+						vscodeApi,
+						differRef,
+						filesRef,
+						diffsRef,
+					});
 					break;
 				case "clipboardText":
-					p.resolveClipboardRead(
-						Number(m.requestId),
-						m.text as string,
-					);
+					resolveClipboardRead(Number(m.requestId), m.text as string);
 					break;
 				default:
 					break;
 			}
 		};
 		window.addEventListener("message", handleMessage);
-		if (p.vscodeApi) {
-			p.vscodeApi.postMessage({ command: "ready" });
+		if (vscodeApi) {
+			vscodeApi.postMessage({ command: "ready" });
 		}
 		return () => window.removeEventListener("message", handleMessage);
-	}, [p]);
+	}, [
+		setFiles,
+		setDiffs,
+		setExternalSyncId,
+		setDebounceDelay,
+		setSyntaxHighlighting,
+		setBaseCompareHighlighting,
+		setSmoothScrolling,
+		setRenderTrigger,
+		commitModelUpdate,
+		resolveClipboardRead,
+		vscodeApi,
+		differRef,
+		filesRef,
+		diffsRef,
+	]);
 };
 
 export const useAppHighlights = (
