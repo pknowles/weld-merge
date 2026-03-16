@@ -29,6 +29,8 @@ import {
 import { getBounds } from "./diffCurtainUtils.ts";
 import { DIFF_WIDTH, type DiffChunk } from "./types.ts";
 
+const CURVE_OFFSET = 15;
+
 interface DiffCurtainProps {
 	diffs: DiffChunk[];
 	leftEditor: editor.IStandaloneCodeEditor;
@@ -184,7 +186,10 @@ const ChunkRenderer: FC<{
 		? y2T
 		: getY(p.rightEditor, b.rE, p.rightOffset, p.activeTops.right);
 	const w = DIFF_WIDTH;
-	const main = `M 0 ${y1T} C ${w * 0.4} ${y1T}, ${w * 0.6} ${y2T}, ${w} ${y2T} L ${w} ${y2B} C ${w * 0.6} ${y2B}, ${w * 0.4} ${y1B}, 0 ${y1B} Z`;
+	const c = CURVE_OFFSET;
+	const main = `M 0,${y1T} C ${c},${y1T} ${w - c},${y2T} ${w},${y2T} L ${w},${y2B} C ${w - c},${y2B} ${c},${y1B} 0,${y1B} Z`;
+	const top = `M 0,${y1T} C ${c},${y1T} ${w - c},${y2T} ${w},${y2T}`;
+	const bot = `M 0,${y1B} C ${c},${y1B} ${w - c},${y2B} ${w},${y2B}`;
 	return (
 		<g
 			className={`diff-container tag-${p.chunk.tag}`}
@@ -192,16 +197,8 @@ const ChunkRenderer: FC<{
 			style={{ pointerEvents: "auto" }}
 		>
 			<path className={`diff-path-${p.chunk.tag}`} d={main} />
-			<path
-				className={`diff-edge-${p.chunk.tag}`}
-				d={`M 0 ${y1T} C ${w * 0.4} ${y1T}, ${w * 0.6} ${y2T}, ${w} ${y2T}`}
-				fill="none"
-			/>
-			<path
-				className={`diff-edge-${p.chunk.tag}`}
-				d={`M 0 ${y1B} C ${w * 0.4} ${y1B}, ${w * 0.6} ${y2B}, ${w} ${y2B}`}
-				fill="none"
-			/>
+			<path className={`diff-edge-${p.chunk.tag}`} d={top} fill="none" />
+			<path className={`diff-edge-${p.chunk.tag}`} d={bot} fill="none" />
 			{(p.onApp || p.onDel || p.onUp || p.onDwn) && (
 				<ChunkActions
 					chunk={p.chunk}
@@ -228,18 +225,20 @@ const SVGMasks: FC<{
 	return (
 		<defs>
 			<linearGradient id={gl} x1="0" y1="0" x2="1" y2="0">
-				<stop offset="0" stopColor="black" stopOpacity="0" />
-				<stop offset="0.4" stopColor="black" stopOpacity="1" />
+				<stop offset="0%" stopColor="black" />
+				<stop offset="80%" stopColor="white" />
+				<stop offset="100%" stopColor="white" />
 			</linearGradient>
 			<linearGradient id={gr} x1="0" y1="0" x2="1" y2="0">
-				<stop offset="0.6" stopColor="black" stopOpacity="1" />
-				<stop offset="1" stopColor="black" stopOpacity="0" />
+				<stop offset="0%" stopColor="white" />
+				<stop offset="20%" stopColor="white" />
+				<stop offset="100%" stopColor="black" />
 			</linearGradient>
 			<linearGradient id={gb} x1="0" y1="0" x2="1" y2="0">
-				<stop offset="0" stopColor="black" stopOpacity="0" />
-				<stop offset="0.2" stopColor="black" stopOpacity="1" />
-				<stop offset="0.8" stopColor="black" stopOpacity="1" />
-				<stop offset="1" stopColor="black" stopOpacity="0" />
+				<stop offset="0%" stopColor="black" />
+				<stop offset="20%" stopColor="white" />
+				<stop offset="80%" stopColor="white" />
+				<stop offset="100%" stopColor="black" />
 			</linearGradient>
 			<mask id={`${prefix}-left`}>
 				<rect width="100%" height="100%" fill={`url(#${gl})`} />
