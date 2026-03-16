@@ -43,9 +43,7 @@ const mockEditor = (lineCount: number, scrollTop: number) =>
 		getContentHeight: jest.fn(() => lineCount * 20),
 		getDomNode: jest.fn(() => null),
 	}) as unknown as editor.IStandaloneCodeEditor;
-
 const OUT_OF_BOUNDS_ERROR = /DiffCurtain connection out of bounds/;
-
 describe("Connection Directions and Bounds Checking", () => {
 	const diffs: (DiffChunk[] | null)[] = [
 		null,

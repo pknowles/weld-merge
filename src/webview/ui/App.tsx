@@ -77,6 +77,7 @@ const GlobalStyles: FC = () => (
             cursor: pointer; 
             box-sizing: border-box; 
             line-height: 1; 
+            pointer-events: auto;
         }
         .action-button:hover { 
             background: rgba(100,100,100,0.9); 

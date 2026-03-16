@@ -16,23 +16,23 @@ export function getBounds(p: {
 
 	if (
 		rawLs < 1 ||
-		rawLs > p.lMax ||
+		rawLs > p.lMax + 1 ||
 		rawLe < 1 ||
-		rawLe > p.lMax ||
+		rawLe > p.lMax + 1 ||
 		rawRs < 1 ||
-		rawRs > p.rMax ||
+		rawRs > p.rMax + 1 ||
 		rawRe < 1 ||
-		rawRe > p.rMax
+		rawRe > p.rMax + 1
 	) {
 		throw new Error(
 			`DiffCurtain connection out of bounds: L[${rawLs}-${rawLe}]/max=${p.lMax}, R[${rawRs}-${rawRe}]/max=${p.rMax} (reversed: ${p.reversed})`,
 		);
 	}
 
-	const lS = Math.min(p.lMax, Math.max(1, rawLs));
-	const lE = Math.min(p.lMax, Math.max(1, rawLe));
-	const rS = Math.min(p.rMax, Math.max(1, rawRs));
-	const rE = Math.min(p.rMax, Math.max(1, rawRe));
+	const lS = Math.min(p.lMax + 1, Math.max(1, rawLs));
+	const lE = Math.min(p.lMax + 1, Math.max(1, rawLe));
+	const rS = Math.min(p.rMax + 1, Math.max(1, rawRs));
+	const rE = Math.min(p.rMax + 1, Math.max(1, rawRe));
 	const lEmp = p.reversed ? p.startB === p.endB : p.startA === p.endA;
 	const rEmp = p.reversed ? p.startA === p.endA : p.startB === p.endB;
 	return { lS, lE, rS, rE, lEmp, rEmp };
