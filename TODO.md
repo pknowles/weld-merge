@@ -85,4 +85,3 @@ save individual panels. Low !/$.
 - **Maintainability**: Replace magic indices (0-4) with an `enum`/`const` mapping or just use arrays.
 - **Fix Returns**: Handle failures properly, e.g. from `getGitState`, without silently passing empty strings.
 - **UX**: Rethink `Ctrl+K` to avoid interfering with global VS Code chord prefixes.
-- **Differ Incremental Update Consistency**: Investigate why `Differ.ts` sometimes produces different diff chunks (e.g. `endLine` mismatches) during incremental updates vs. fresh calculations. This was discovered via `test/webview_fuzz.test.tsx` (see skipped test).

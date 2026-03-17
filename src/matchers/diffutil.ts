@@ -618,6 +618,7 @@ class Differ {
 			return;
 		}
 		const diffs = this.diffs[which as 0 | 1 | 2 | 3];
+		const x = (which === 0 ? 0 : 2) as 0 | 2;
 		const linesAdded: [number, number, number, number, number] = [
 			0, 0, 0, 0, 0,
 		];
@@ -625,6 +626,7 @@ class Differ {
 			linesAdded[sequence as 0 | 1 | 2 | 3 | 4] = sizechange;
 		}
 
+		// 1. Identify chunks that are affected by or adjacent to the change
 		const loidx = this._locateChunk(
 			which as 0 | 1 | 2 | 3,
 			sequence,
@@ -639,21 +641,27 @@ class Differ {
 			);
 		}
 
-		const lorange = this._getLoRange(diffs, loidx);
-		const x = (which === 0 ? 0 : 2) as 0 | 2;
-		const hirange = this._getHiRange(diffs, hiidx, x);
+		// 2. Define the replacement window (inclusive of one neighbor on each side for context/merging)
+		const replaceStart = Math.max(0, loidx - 1);
+		const replaceEnd = Math.min(diffs.length, hiidx + 1);
 
-		const rangex: [number, number] = [
-			lorange[0],
-			hirange[0] + linesAdded[x],
-		];
+		// 3. Determine the actual line ranges for re-diffing
 		const range1: [number, number] = [
-			lorange[1],
-			hirange[1] + linesAdded[1],
+			replaceStart > 0 ? (diffs[replaceStart - 1]?.endA ?? 0) : 0,
+			replaceEnd < diffs.length
+				? (diffs[replaceEnd]?.startA ?? 0)
+				: this.seqLength[1] + linesAdded[1],
+		];
+		const rangex: [number, number] = [
+			replaceStart > 0 ? (diffs[replaceStart - 1]?.endB ?? 0) : 0,
+			replaceEnd < diffs.length
+				? (diffs[replaceEnd]?.startB ?? 0)
+				: this.seqLength[x] + linesAdded[x],
 		];
 
-		const linesx = texts[x]?.slice(rangex[0], rangex[1]);
-		const lines1 = texts[1]?.slice(range1[0], range1[1]);
+		// 4. Perform the re-diff on the identified window
+		const lines1 = texts[1]?.slice(range1[0], range1[1]) ?? [];
+		const linesx = texts[x]?.slice(rangex[0], rangex[1]) ?? [];
 
 		const offsetValue = (
 			c: DiffChunk,
@@ -674,45 +682,24 @@ class Differ {
 		).getDifferenceOpcodes();
 		newdiffs = newdiffs.map((c) => offsetValue(c, range1[0], rangex[0]));
 
-		if (hiidx < diffs.length) {
+		// 5. Offset any subsequent chunks that were not included in the re-diff
+		if (replaceEnd < diffs.length) {
 			const offsetDiffs = diffs
-				.slice(hiidx)
+				.slice(replaceEnd)
 				.map((c) => offsetValue(c, linesAdded[1], linesAdded[x]));
 			this.diffs[which as 0 | 1 | 2 | 3].splice(
-				hiidx,
-				diffs.length - hiidx,
+				replaceEnd,
+				diffs.length - replaceEnd,
 				...offsetDiffs,
 			);
 		}
+
+		// 6. Splice the new chunks into the diff array, removing the entire replaced window
 		this.diffs[which as 0 | 1 | 2 | 3].splice(
-			loidx,
-			hiidx - loidx,
+			replaceStart,
+			replaceEnd - replaceStart,
 			...newdiffs,
 		);
-	}
-
-	private _getLoRange(diffs: DiffChunk[], loidx: number): [number, number] {
-		if (loidx > 0) {
-			const prevChunk = diffs[loidx - 1];
-			if (prevChunk) {
-				return [prevChunk.startB, prevChunk.startA];
-			}
-		}
-		return [0, 0];
-	}
-
-	private _getHiRange(
-		diffs: DiffChunk[],
-		hiidx: number,
-		x: 0 | 2,
-	): [number, number] {
-		if (hiidx < diffs.length) {
-			const nextChunk = diffs[hiidx];
-			if (nextChunk) {
-				return [nextChunk.endB, nextChunk.endA];
-			}
-		}
-		return [this.seqLength[x], this.seqLength[1]];
 	}
 
 	_mergeBlocks(

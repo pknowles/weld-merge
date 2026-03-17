@@ -684,11 +684,10 @@ describe("Webview UI Stress Test", () => {
 		verifyBaseline();
 	});
 
-	// SKIP: This test currently fails due to an issue in Differ.ts where incremental updates
-	// don't always converge back to the same baseline state as a fresh diff calculation.
-	// Tracked in TODO.md.
-	// biome-ignore lint/suspicious/noSkippedTests: intentional per task
-	it.skip("verifies reversion to baseline after randomized interactions", () => {
+	// This test verifies that after a series of randomized interactions,
+	// reverting to the baseline text restores the exact original diff state.
+	// This ensures Differ.ts incremental updates are consistent with fresh calculations.
+	it("verifies reversion to baseline after randomized interactions", () => {
 		render(<App />);
 		loadTestData();
 
