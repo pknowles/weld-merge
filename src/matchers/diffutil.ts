@@ -626,8 +626,8 @@ class Differ {
 			linesAdded[sequence as 0 | 1 | 2 | 3 | 4] = sizechange;
 		}
 
-		// 1. Identify chunks that are affected by or adjacent to the change
-		const loidx = this._locateChunk(
+		// 1. Identify chunks affected by the change (plus one neighbor on each side for stability)
+		let loidx = this._locateChunk(
 			which as 0 | 1 | 2 | 3,
 			sequence,
 			startidx,
@@ -641,25 +641,42 @@ class Differ {
 			);
 		}
 
-		// 2. Define the replacement window (inclusive of one neighbor on each side for context/merging)
-		const replaceStart = Math.max(0, loidx - 1);
-		const replaceEnd = Math.min(diffs.length, hiidx + 1);
+		let lorange: [number, number];
+		if (loidx > 0) {
+			loidx -= 1;
+			const chunk = diffs[loidx];
+			if (chunk) {
+				lorange = [chunk.startB, chunk.startA];
+			} else {
+				lorange = [0, 0];
+			}
+		} else {
+			lorange = [0, 0];
+		}
 
-		// 3. Determine the actual line ranges for re-diffing
-		const range1: [number, number] = [
-			replaceStart > 0 ? (diffs[replaceStart - 1]?.endA ?? 0) : 0,
-			replaceEnd < diffs.length
-				? (diffs[replaceEnd]?.startA ?? 0)
-				: this.seqLength[1] + linesAdded[1],
-		];
+		let hirange: [number, number];
+		if (hiidx < diffs.length) {
+			hiidx += 1;
+			const chunk = diffs[hiidx - 1]; // Use original coordinate from before expansion
+			if (chunk) {
+				hirange = [chunk.endB, chunk.endA];
+			} else {
+				hirange = [this.seqLength[x], this.seqLength[1]];
+			}
+		} else {
+			hirange = [this.seqLength[x], this.seqLength[1]];
+		}
+
+		// 2. Determine actual line ranges for re-diffing (applying offsets for shifts in the new text)
 		const rangex: [number, number] = [
-			replaceStart > 0 ? (diffs[replaceStart - 1]?.endB ?? 0) : 0,
-			replaceEnd < diffs.length
-				? (diffs[replaceEnd]?.startB ?? 0)
-				: this.seqLength[x] + linesAdded[x],
+			lorange[0],
+			hirange[0] + linesAdded[x],
+		];
+		const range1: [number, number] = [
+			lorange[1],
+			hirange[1] + linesAdded[1],
 		];
 
-		// 4. Perform the re-diff on the identified window
 		const lines1 = texts[1]?.slice(range1[0], range1[1]) ?? [];
 		const linesx = texts[x]?.slice(rangex[0], rangex[1]) ?? [];
 
@@ -675,6 +692,7 @@ class Differ {
 			endB: c.endB + o2,
 		});
 
+		// 3. Perform re-diff and offset back to global coordinates
 		let newdiffs = new this._matcher(
 			null,
 			lines1,
@@ -682,22 +700,21 @@ class Differ {
 		).getDifferenceOpcodes();
 		newdiffs = newdiffs.map((c) => offsetValue(c, range1[0], rangex[0]));
 
-		// 5. Offset any subsequent chunks that were not included in the re-diff
-		if (replaceEnd < diffs.length) {
+		// 4. Offset subsequent chunks and splice in the results
+		if (hiidx < diffs.length) {
 			const offsetDiffs = diffs
-				.slice(replaceEnd)
+				.slice(hiidx)
 				.map((c) => offsetValue(c, linesAdded[1], linesAdded[x]));
 			this.diffs[which as 0 | 1 | 2 | 3].splice(
-				replaceEnd,
-				diffs.length - replaceEnd,
+				hiidx,
+				diffs.length - hiidx,
 				...offsetDiffs,
 			);
 		}
 
-		// 6. Splice the new chunks into the diff array, removing the entire replaced window
 		this.diffs[which as 0 | 1 | 2 | 3].splice(
-			replaceStart,
-			replaceEnd - replaceStart,
+			loidx,
+			hiidx - loidx,
 			...newdiffs,
 		);
 	}
