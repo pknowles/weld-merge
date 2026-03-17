@@ -529,66 +529,159 @@ describe("Webview UI Stress Test", () => {
 		}
 	});
 
-	it("verifies deterministic transformations", () => {
-		const local = "Same\nAdded in Local\nModified in Local (A)\nEnd";
-		const base = "Same\nModified in Local (B)\nDeleted in Remote\nEnd";
-		const remote = "Same\nRemote Same\nEnd";
+	it("verifies deterministic transformations across EVERY diff chunk", () => {
+		// Complex 3-way layout to ensure we have all tags and 3-way interactions
+		const local = [
+			"Same 1",
+			"Added L 1", // Insert
+			"Same 2",
+			"Modified Local", // Replace
+			"Same 3",
+			"To be restored", // Delete target
+			"Same 4",
+		].join("\n");
+		const base = [
+			"Same 1",
+			"Base line", // Insert point for L
+			"Same 2",
+			"Modified Base", // Replace point for L
+			"Same 3",
+			// missing "To be restored" (Delete)
+			"Same 4",
+		].join("\n");
+		const remote = [
+			"Same 1",
+			"Base line",
+			"Same 2",
+			"Modified Base",
+			"Same 3",
+			"Same 4",
+		].join("\n");
 
 		render(<App />);
 		loadTestData(local, base, remote);
 
 		const entry = capturedEditors.find((e) => e.mock === mergedEditorMock);
 		if (!entry || mergedEditorMock === null) {
-			throw new Error("No editor");
+			throw new Error("No editor found");
 		}
 
-		// Baseline:
-		// L0-M0: same, L1-M1: insert, L2-M1: replace, L3-M3: same
-		// M0-R0: same, M1-R1: delete, M3-R2: same
-
-		// 1. Replace inserted section (M line 1 - "Modified in Local (B)")
-		act(() => {
-			if (!mergedEditorMock) {
-				return;
-			}
-			const lines = mergedEditorMock.getValue().split("\n");
-			lines[1] = "Changed Insert";
-			entry.props.onChange?.(lines.join("\n"));
-		});
-		waitForDebounce();
-		// Tag should still exist for that region
-		expect(
-			capturedDiffsMap["0-1"]?.some((c) => c.startB <= 1 && c.endB >= 2),
-		).toBe(true);
-
-		// 2. Restore deleted section (Remote deleted M[2] "Deleted in Remote")
-		act(() => {
-			if (!mergedEditorMock) {
-				return;
-			}
-			const lines = mergedEditorMock.getValue().split("\n");
-			lines[2] = "Deleted in Remote"; // RESTORED
-			entry.props.onChange?.(lines.join("\n"));
-		});
-		waitForDebounce();
-		// M-R diff should NOT have a delete at line 2 anymore
-		const mrDiffs = capturedDiffsMap["1-2"];
-		expect(mrDiffs?.some((c) => c.tag === "delete" && c.startA === 2)).toBe(
-			false,
+		// Snapshots of the baseline state for reversion verification
+		const baselineText = mergedEditorMock.getValue();
+		const originalLr = JSON.parse(
+			JSON.stringify(capturedDiffsMap["0-1"] || []),
+		);
+		const originalRm = JSON.parse(
+			JSON.stringify(capturedDiffsMap["1-2"] || []),
 		);
 
-		// 3. Clear everything
+		const verifyBaseline = () => {
+			act(() => {
+				entry.props.onChange?.(baselineText);
+			});
+			waitForDebounce();
+			expect(capturedDiffsMap["0-1"]).toEqual(originalLr);
+			expect(capturedDiffsMap["1-2"]).toEqual(originalRm);
+		};
+
+		// --- Case 1: Replace EVERY inserted section ---
+		// Verification: should simply update the diff to still say that line is an insertion
+		const inserts = originalLr.filter((c: DiffChunk) => c.tag === "insert");
+		for (const chunk of inserts) {
+			act(() => {
+				if (!mergedEditorMock) {
+					return;
+				}
+				const lines = mergedEditorMock.getValue().split("\n");
+				// Edit the insertion 'point' (line startB)
+				if (lines[chunk.startB]) {
+					lines[chunk.startB] =
+						`Fuzzed Insert: ${lines[chunk.startB]}`;
+					entry.props.onChange?.(lines.join("\n"));
+				}
+			});
+			waitForDebounce();
+			// Check if we still have an 'insert' (or at least a diff) at this region
+			expect(
+				capturedDiffsMap["0-1"]?.some(
+					(c: DiffChunk) =>
+						c.startB <= chunk.startB && c.endB >= chunk.startB,
+				),
+			).toBe(true);
+			verifyBaseline();
+		}
+
+		// --- Case 2: Replace EVERY modified section ---
+		// Verification: should turn it into a merge conflict if 3-way
+		const replaces = originalLr.filter(
+			(c: DiffChunk) => c.tag === "replace",
+		);
+		for (const chunk of replaces) {
+			act(() => {
+				if (!mergedEditorMock) {
+					return;
+				}
+				const lines = mergedEditorMock.getValue().split("\n");
+				for (let i = chunk.startB; i < chunk.endB; i++) {
+					lines[i] = "Induced Conflict Content";
+				}
+				entry.props.onChange?.(lines.join("\n"));
+			});
+			waitForDebounce();
+			// Since we modified the Merged column which differed from Local, it's definitely still a diff.
+			// And since it was identical to Remote (in our setup) but now differs from both, it should become a conflict.
+			const chunkNow = capturedDiffsMap["0-1"]?.find(
+				(c: DiffChunk) => c.startB === chunk.startB,
+			);
+			expect(chunkNow).toBeDefined();
+			// Note: Differ.ts might categorize it as 'replace' or 'conflict' depending on internal state,
+			// but it must NOT be 'equal'.
+			expect(chunkNow?.tag).not.toBe("equal");
+			verifyBaseline();
+		}
+
+		// --- Case 3: Restore EVERY deleted section ---
+		// Verification: should result in the diff removed
+		const deletes = originalLr.filter((c: DiffChunk) => c.tag === "delete");
+		for (const chunk of deletes) {
+			act(() => {
+				if (!mergedEditorMock) {
+					return;
+				}
+				const lines = mergedEditorMock.getValue().split("\n");
+				const restoredLines = local
+					.split("\n")
+					.slice(chunk.startA, chunk.endA);
+				lines.splice(chunk.startB, 0, ...restoredLines);
+				entry.props.onChange?.(lines.join("\n"));
+			});
+			waitForDebounce();
+			// The specific deleted chunk should be gone
+			expect(
+				capturedDiffsMap["0-1"]?.some(
+					(c: DiffChunk) =>
+						c.tag === "delete" &&
+						c.startA === chunk.startA &&
+						c.endA === chunk.endA,
+				),
+			).toBe(false);
+			verifyBaseline();
+		}
+
+		// --- Case 4: Delete entire contents of Merged column ---
+		// Verification: both sides should show Merged was created with one big deletion
 		act(() => {
 			entry.props.onChange?.("");
 		});
 		waitForDebounce();
-		// Diffs should exist (not equal)
+		// Should have a deletion or conflict covering the whole range
 		expect(capturedDiffsMap["0-1"]?.some((c) => c.tag !== "equal")).toBe(
 			true,
 		);
 		expect(capturedDiffsMap["1-2"]?.some((c) => c.tag !== "equal")).toBe(
 			true,
 		);
+		verifyBaseline();
 	});
 
 	// SKIP: This test currently fails due to an issue in Differ.ts where incremental updates
@@ -611,7 +704,7 @@ describe("Webview UI Stress Test", () => {
 		);
 		const baselineText = mergedEditorMock.getValue();
 
-		for (let i = 0; i < 15; i++) {
+		for (let i = 0; i < 50; i++) {
 			const entry = capturedEditors.find(
 				(e) => e.mock === mergedEditorMock,
 			);
