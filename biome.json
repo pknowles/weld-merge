@@ -109,6 +109,19 @@
 					}
 				}
 			}
+		},
+		{
+			"includes": ["**/*.html"],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noImportantStyles": "off"
+					},
+					"correctness": {
+						"noUnknownProperty": "off"
+					}
+				}
+			}
 		}
 	]
 }

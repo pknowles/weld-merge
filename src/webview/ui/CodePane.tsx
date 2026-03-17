@@ -387,7 +387,7 @@ export const CodePane: FC<CodePaneProps> = ({
 						color: inherit;
 						cursor: pointer;
 						display: flex;
-						alignItems: center;
+						align-items: center;
 						padding: 4px;
 						opacity: 0.6;
 						transition: opacity 0.2s, background-color 0.2s;

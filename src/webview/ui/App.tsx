@@ -269,12 +269,28 @@ export const App: FC = () => {
 				rightLines,
 			]);
 
-			const leftDiffs = differ._mergeCache
-				.map((pair) => pair[0])
-				.filter((c): c is DiffChunk => c !== null);
-			const rightDiffs = differ._mergeCache
-				.map((pair) => pair[1])
-				.filter((c): c is DiffChunk => c !== null);
+			const dedupe = (chunks: DiffChunk[]) => {
+				const seen = new Set<string>();
+				return chunks.filter((c) => {
+					const key = `${c.startA}-${c.endA}-${c.startB}-${c.endB}`;
+					if (seen.has(key)) {
+						return false;
+					}
+					seen.add(key);
+					return true;
+				});
+			};
+
+			const leftDiffs = dedupe(
+				differ._mergeCache
+					.map((pair) => pair[0])
+					.filter((c): c is DiffChunk => c !== null),
+			);
+			const rightDiffs = dedupe(
+				differ._mergeCache
+					.map((pair) => pair[1])
+					.filter((c): c is DiffChunk => c !== null),
+			);
 			// Replace the inner diffs [1] and [2] while keeping [0] and [3]
 			nextDiffs = [...diffsRef.current];
 			nextDiffs[DiffIndex.localToMerged] = leftDiffs;
@@ -282,9 +298,9 @@ export const App: FC = () => {
 			diffsRef.current = nextDiffs;
 		}
 
-		const newFiles = [...currentFiles] as PaneFiles;
-		newFiles[PaneIndex.merged] = { ...midFile, content: value };
-		filesRef.current = newFiles;
+		filesRef.current = [...currentFiles] as PaneFiles;
+		filesRef.current[PaneIndex.merged] = { ...midFile, content: value };
+		const newFiles = filesRef.current;
 		setFiles(newFiles);
 		if (nextDiffs !== null) {
 			setDiffs(nextDiffs);
