@@ -1,5 +1,10 @@
-import { type PropsWithChildren, useLayoutEffect, useState } from "react";
-import { ANIMATION_DURATION, ANIMATION_TRANSITION } from "./types.ts";
+import {
+	type PropsWithChildren,
+	useLayoutEffect,
+	useMemo,
+	useState,
+} from "react";
+import { ANIMATION_TRANSITION } from "./types.ts";
 
 export const AnimatedColumn = ({
 	isOpen,
@@ -15,33 +20,44 @@ export const AnimatedColumn = ({
 	textColumnsAfterAnimation: number;
 	id?: string;
 }>) => {
-	const [shouldRender, setShouldRender] = useState(isOpen);
 	const [active, setActive] = useState(false);
 
 	useLayoutEffect(() => {
+		let cleanup: (() => void) | undefined;
 		if (isOpen) {
-			setShouldRender(true);
-			const raf = requestAnimationFrame(() => {
-				setActive(true);
+			// Double RAF to ensure the "off-screen" layout is painted
+			// before the transition to active=true starts.
+			const raf1 = requestAnimationFrame(() => {
+				const raf2 = requestAnimationFrame(() => {
+					setActive(true);
+				});
+				cleanup = () => {
+					cancelAnimationFrame(raf2);
+				};
 			});
 			return () => {
-				cancelAnimationFrame(raf);
+				cancelAnimationFrame(raf1);
+				if (cleanup) {
+					cleanup();
+				}
 			};
 		}
 		setActive(false);
-		const t = setTimeout(() => {
-			setShouldRender(false);
-		}, ANIMATION_DURATION);
-		return () => {
-			clearTimeout(t);
-		};
+		return;
 	}, [isOpen]);
 
-	const div = isOpen ? textColumns : textColumnsAfterAnimation;
+	// Lock the column counts to ensure stability during animation
+	// biome-ignore lint/correctness/useExhaustiveDependencies: We want to lock the counts for the duration of one animation cycle.
+	const lockedDiv = useMemo(() => {
+		const div = isOpen ? textColumns : textColumnsAfterAnimation;
+		return div || 1; // Fallback to 1 to avoid division by zero
+	}, [isOpen]);
+
 	const marginValue = active
 		? "0"
-		: `calc(-1 * ((100% + var(--meld-diff-width)) / ${div}))`;
-	return shouldRender || isOpen ? (
+		: `calc(-1 * ((100% + var(--meld-diff-width)) / ${lockedDiv}))`;
+
+	return (
 		<div
 			id={id}
 			style={{
@@ -55,5 +71,5 @@ export const AnimatedColumn = ({
 		>
 			{children}
 		</div>
-	) : null;
+	);
 };

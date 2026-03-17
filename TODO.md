@@ -95,3 +95,4 @@ save individual panels. Low !/$.
 - **Maintainability**: Replace magic indices (0-4) with an `enum`/`const` mapping or just use arrays.
 - **Fix Returns**: Handle failures properly, e.g. from `getGitState`, without silently passing empty strings.
 - **UX**: Rethink `Ctrl+K` to avoid interfering with global VS Code chord prefixes.
+- **Refactor `DiffCurtain`**: Split into `CurtainContainer` + `CurtainSVG`. The container should always render to maintain 40px flexbox stability, while the SVG/drawing logic only activates when editors are ready. This will allow removing the `undefined` editor types from the core drawing functions.

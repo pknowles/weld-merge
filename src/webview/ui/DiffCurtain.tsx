@@ -32,9 +32,9 @@ import { DIFF_WIDTH, type DiffChunk } from "./types.ts";
 const CURVE_OFFSET = 15;
 
 interface DiffCurtainProps {
-	diffs: DiffChunk[];
-	leftEditor: editor.IStandaloneCodeEditor;
-	rightEditor: editor.IStandaloneCodeEditor;
+	diffs: DiffChunk[] | null;
+	leftEditor: editor.IStandaloneCodeEditor | undefined;
+	rightEditor: editor.IStandaloneCodeEditor | undefined;
 	renderTrigger: number;
 	reversed?: boolean | undefined;
 	fadeOutLeft?: boolean | undefined;
@@ -254,9 +254,9 @@ const SVGMasks: FC<{
 };
 
 const useFilteredDiffs = (p: {
-	diffs: DiffChunk[];
-	leftEditor: editor.IStandaloneCodeEditor;
-	rightEditor: editor.IStandaloneCodeEditor;
+	diffs: DiffChunk[] | null;
+	leftEditor: editor.IStandaloneCodeEditor | undefined;
+	rightEditor: editor.IStandaloneCodeEditor | undefined;
 	reversed: boolean;
 	curtainHeight: number;
 	leftOffset: number;
@@ -268,11 +268,15 @@ const useFilteredDiffs = (p: {
 }) =>
 	// biome-ignore lint/correctness/useExhaustiveDependencies: p.renderTrigger is required for scroll-reactive filtering
 	useMemo(() => {
-		if (p.curtainHeight === 0) {
-			return p.diffs;
+		const { diffs, leftEditor, rightEditor } = p;
+		if (!diffs) {
+			return [];
+		}
+		if (p.curtainHeight === 0 || !leftEditor || !rightEditor) {
+			return diffs.slice(0, 100);
 		}
 		const m = 200;
-		return p.diffs.filter((c) => {
+		return diffs.filter((c) => {
 			if (c.tag === "equal") {
 				return false;
 			}
@@ -285,14 +289,9 @@ const useFilteredDiffs = (p: {
 				rMax: p.rMax,
 				reversed: p.reversed,
 			});
-			const y1 = getY(
-				p.leftEditor,
-				b.lS,
-				p.leftOffset,
-				p.activeTops.left,
-			);
+			const y1 = getY(leftEditor, b.lS, p.leftOffset, p.activeTops.left);
 			const y2 = getY(
-				p.rightEditor,
+				rightEditor,
 				b.rS,
 				p.rightOffset,
 				p.activeTops.right,
@@ -301,13 +300,13 @@ const useFilteredDiffs = (p: {
 				return false;
 			}
 			const y1B = getY(
-				p.leftEditor,
+				leftEditor,
 				b.lEmp ? b.lS : b.lE,
 				p.leftOffset,
 				p.activeTops.left,
 			);
 			const y2B = getY(
-				p.rightEditor,
+				rightEditor,
 				b.rEmp ? b.rS : b.rE,
 				p.rightOffset,
 				p.activeTops.right,
@@ -330,8 +329,8 @@ const useFilteredDiffs = (p: {
 
 const useCurtainLayout = (
 	ref: React.RefObject<HTMLDivElement | null>,
-	leftEditor: editor.IStandaloneCodeEditor,
-	rightEditor: editor.IStandaloneCodeEditor,
+	leftEditor: editor.IStandaloneCodeEditor | undefined,
+	rightEditor: editor.IStandaloneCodeEditor | undefined,
 ) => {
 	const [height, setHeight] = useState(0);
 	const [top, setTop] = useState(0);
@@ -339,7 +338,7 @@ const useCurtainLayout = (
 	const [rightOffset, setRightOffset] = useState(0);
 
 	useLayoutEffect(() => {
-		if (!ref.current) {
+		if (!(ref.current && leftEditor && rightEditor)) {
 			return;
 		}
 		const updateLayout = () => {
@@ -388,21 +387,34 @@ const useCurtainLayout = (
 };
 
 const useCurtainScroll = (
-	leftEditor: editor.IStandaloneCodeEditor,
-	rightEditor: editor.IStandaloneCodeEditor,
+	leftEditor: editor.IStandaloneCodeEditor | undefined,
+	rightEditor: editor.IStandaloneCodeEditor | undefined,
 ) => {
-	const [activeTops, setActiveTops] = useState({ left: 0, right: 0 });
-	const [liveTops, setLiveTops] = useState({ left: 0, right: 0 });
+	const [activeTops, setActiveTops] = useState({
+		left: leftEditor?.getScrollTop() || 0,
+		right: rightEditor?.getScrollTop() || 0,
+	});
+	const [liveTops, setLiveTops] = useState({
+		left: leftEditor?.getScrollTop() || 0,
+		right: rightEditor?.getScrollTop() || 0,
+	});
 
 	const debouncedUpdate = useMemo(
 		() =>
-			debounce((left: number, right: number) => {
-				setActiveTops({ left, right });
-			}, 60),
+			debounce(
+				(left: number, right: number) => {
+					setActiveTops({ left, right });
+				},
+				60,
+				{ leading: true },
+			),
 		[],
 	);
 
 	useEffect(() => {
+		if (!(leftEditor && rightEditor)) {
+			return;
+		}
 		const handleScroll = () => {
 			const l = leftEditor.getScrollTop();
 			const r = rightEditor.getScrollTop();
@@ -435,8 +447,8 @@ export const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 	);
 	const id = useId();
 
-	const lMax = p.leftEditor.getModel()?.getLineCount() || 0;
-	const rMax = p.rightEditor.getModel()?.getLineCount() || 0;
+	const lMax = p.leftEditor?.getModel()?.getLineCount() || 0;
+	const rMax = p.rightEditor?.getModel()?.getLineCount() || 0;
 
 	const filtered = useFilteredDiffs({
 		diffs: p.diffs,
@@ -491,35 +503,41 @@ export const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 			>
 				<title>Diff connectors</title>
 				<SVGMasks prefix={id} />
-				<g
-					className="diff-view"
-					style={{
-						transform: `translateY(${activeTops.left - liveTops.left}px)`,
-					}}
-				>
-					{/* biome-ignore lint/performance/useSolidForComponent: React project false positive */}
-					{filtered.map((c) => (
-						<ChunkRenderer
-							key={`${c.startA}-${c.startB}-${c.endA}-${c.endB}`}
-							chunk={c}
-							leftEditor={p.leftEditor}
-							rightEditor={p.rightEditor}
-							reversed={Boolean(p.reversed)}
-							fadeL={Boolean(p.fadeOutLeft)}
-							fadeR={Boolean(p.fadeOutRight)}
-							onApp={p.onApplyChunk}
-							onDel={p.onDeleteChunk}
-							onUp={p.onCopyUpChunk}
-							onDwn={p.onCopyDownChunk}
-							leftOffset={leftOffset}
-							rightOffset={rightOffset}
-							activeTops={activeTops}
-							maskId={maskId}
-							lMax={lMax}
-							rMax={rMax}
-						/>
-					))}
-				</g>
+				{p.leftEditor && p.rightEditor && (
+					<g
+						className="diff-view"
+						style={{
+							transform: `translateY(${activeTops.left - liveTops.left}px)`,
+						}}
+					>
+						{/* biome-ignore lint/performance/useSolidForComponent: React project false positive */}
+						{filtered.map((c) => (
+							<ChunkRenderer
+								key={`${c.startA}-${c.startB}-${c.endA}-${c.endB}`}
+								chunk={c}
+								leftEditor={
+									p.leftEditor as editor.IStandaloneCodeEditor
+								}
+								rightEditor={
+									p.rightEditor as editor.IStandaloneCodeEditor
+								}
+								reversed={Boolean(p.reversed)}
+								fadeL={Boolean(p.fadeOutLeft)}
+								fadeR={Boolean(p.fadeOutRight)}
+								onApp={p.onApplyChunk}
+								onDel={p.onDeleteChunk}
+								onUp={p.onCopyUpChunk}
+								onDwn={p.onCopyDownChunk}
+								leftOffset={leftOffset}
+								rightOffset={rightOffset}
+								activeTops={activeTops}
+								maskId={maskId}
+								lMax={lMax}
+								rMax={rMax}
+							/>
+						))}
+					</g>
+				)}
 			</svg>
 		</div>
 	);
