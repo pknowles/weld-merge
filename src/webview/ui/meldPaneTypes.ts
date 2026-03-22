@@ -36,6 +36,7 @@ export interface MeldUIActions {
 	requestClipboardText: () => Promise<string>;
 	writeClipboardText: (text: string) => Promise<void>;
 	onEdit: (v: string | undefined, i: number) => void;
+	setRenderTrigger: (p: (prev: number) => number) => void;
 }
 
 export interface MeldPaneProps {

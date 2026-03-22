@@ -111,6 +111,9 @@ const renderMeldCodePane = (
 		onMount={(ed, i) => {
 			ui.editorRefArray.current[i] = ed;
 			actions.attachScrollListener(ed, i);
+			setTimeout(() => {
+				actions.setRenderTrigger((p) => p + 1);
+			}, 0);
 			const delay = i === 0 || i === 4 ? INITIAL_SYNC_DELAY : 0;
 			if (delay > 0) {
 				setTimeout(() => {
@@ -146,18 +149,27 @@ const renderCurtain = (
 	const { dFC, lEIdx, rEIdx, fOL, fOR } = diffState;
 	const lEd = ui.editorRefArray.current[lEIdx];
 	const rEd = ui.editorRefArray.current[rEIdx];
-	return (
-		<DiffCurtain
-			diffs={dFC}
-			leftEditor={lEd}
-			rightEditor={rEd}
-			renderTrigger={ui.renderTrigger}
-			reversed={idx === 1}
-			fadeOutLeft={fOL}
-			fadeOutRight={fOR}
-			{...getCurtainHandlers(actions, idx)}
-		/>
-	);
+	const lM = lEd?.getModel();
+	const rM = rEd?.getModel();
+
+	if (lEd && rEd && lM && rM) {
+		return (
+			<DiffCurtain
+				diffs={dFC}
+				leftEditor={lEd}
+				rightEditor={rEd}
+				leftModel={lM}
+				rightModel={rM}
+				renderTrigger={ui.renderTrigger}
+				reversed={idx === 1}
+				fadeOutLeft={fOL}
+				fadeOutRight={fOR}
+				{...getCurtainHandlers(actions, idx)}
+			/>
+		);
+	}
+
+	return <div style={{ width: 30, flexShrink: 0 }} />;
 };
 
 const renderBasePane = (args: {

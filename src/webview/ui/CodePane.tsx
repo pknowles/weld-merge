@@ -516,6 +516,15 @@ const useCodePaneLogic = (p: CodePaneProps) => {
 export const CodePane: FC<CodePaneProps> = (p) => {
 	const { setEd, isApplyingSync, isFlashing, onSubmit } = useCodePaneLogic(p);
 
+	useEffect(
+		() => () => {
+			p.ui.editorRefArray.current[p.index] =
+				undefined as unknown as editor.IStandaloneCodeEditor;
+			p.actions.setRenderTrigger((p) => p + 1);
+		},
+		[p.index, p.actions.setRenderTrigger, p.ui.editorRefArray],
+	);
+
 	return (
 		<div
 			style={{

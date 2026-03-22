@@ -33,8 +33,10 @@ const CURVE_OFFSET = 15;
 
 interface DiffCurtainProps {
 	diffs: DiffChunk[] | null;
-	leftEditor: editor.IStandaloneCodeEditor | undefined;
-	rightEditor: editor.IStandaloneCodeEditor | undefined;
+	leftEditor: editor.IStandaloneCodeEditor;
+	rightEditor: editor.IStandaloneCodeEditor;
+	leftModel: editor.ITextModel;
+	rightModel: editor.ITextModel;
 	renderTrigger: number;
 	reversed?: boolean | undefined;
 	fadeOutLeft?: boolean | undefined;
@@ -255,8 +257,10 @@ const SVGMasks: FC<{
 
 const useFilteredDiffs = (p: {
 	diffs: DiffChunk[] | null;
-	leftEditor: editor.IStandaloneCodeEditor | undefined;
-	rightEditor: editor.IStandaloneCodeEditor | undefined;
+	leftEditor: editor.IStandaloneCodeEditor;
+	rightEditor: editor.IStandaloneCodeEditor;
+	leftModel: editor.ITextModel;
+	rightModel: editor.ITextModel;
 	reversed: boolean;
 	curtainHeight: number;
 	leftOffset: number;
@@ -272,7 +276,7 @@ const useFilteredDiffs = (p: {
 		if (!diffs) {
 			return [];
 		}
-		if (p.curtainHeight === 0 || !leftEditor || !rightEditor) {
+		if (p.curtainHeight === 0) {
 			return diffs.slice(0, 100);
 		}
 		const m = 200;
@@ -329,8 +333,8 @@ const useFilteredDiffs = (p: {
 
 const useCurtainLayout = (
 	ref: React.RefObject<HTMLDivElement | null>,
-	leftEditor: editor.IStandaloneCodeEditor | undefined,
-	rightEditor: editor.IStandaloneCodeEditor | undefined,
+	leftEditor: editor.IStandaloneCodeEditor,
+	rightEditor: editor.IStandaloneCodeEditor,
 ) => {
 	const [height, setHeight] = useState(0);
 	const [top, setTop] = useState(0);
@@ -338,7 +342,7 @@ const useCurtainLayout = (
 	const [rightOffset, setRightOffset] = useState(0);
 
 	useLayoutEffect(() => {
-		if (!(ref.current && leftEditor && rightEditor)) {
+		if (!ref.current) {
 			return;
 		}
 		const updateLayout = () => {
@@ -387,8 +391,8 @@ const useCurtainLayout = (
 };
 
 const useCurtainScroll = (
-	leftEditor: editor.IStandaloneCodeEditor | undefined,
-	rightEditor: editor.IStandaloneCodeEditor | undefined,
+	leftEditor: editor.IStandaloneCodeEditor,
+	rightEditor: editor.IStandaloneCodeEditor,
 ) => {
 	const [activeTops, setActiveTops] = useState({
 		left: leftEditor?.getScrollTop() || 0,
@@ -412,9 +416,6 @@ const useCurtainScroll = (
 	);
 
 	useEffect(() => {
-		if (!(leftEditor && rightEditor)) {
-			return;
-		}
 		const handleScroll = () => {
 			const l = leftEditor.getScrollTop();
 			const r = rightEditor.getScrollTop();
@@ -447,13 +448,15 @@ export const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 	);
 	const id = useId();
 
-	const lMax = p.leftEditor?.getModel()?.getLineCount() || 0;
-	const rMax = p.rightEditor?.getModel()?.getLineCount() || 0;
+	const lMax = p.leftModel.getLineCount();
+	const rMax = p.rightModel.getLineCount();
 
 	const filtered = useFilteredDiffs({
 		diffs: p.diffs,
 		leftEditor: p.leftEditor,
 		rightEditor: p.rightEditor,
+		leftModel: p.leftModel,
+		rightModel: p.rightModel,
 		reversed: Boolean(p.reversed),
 		curtainHeight: curtainH,
 		leftOffset,
@@ -503,41 +506,39 @@ export const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 			>
 				<title>Diff connectors</title>
 				<SVGMasks prefix={id} />
-				{p.leftEditor && p.rightEditor && (
-					<g
-						className="diff-view"
-						style={{
-							transform: `translateY(${activeTops.left - liveTops.left}px)`,
-						}}
-					>
-						{/* biome-ignore lint/performance/useSolidForComponent: React project false positive */}
-						{filtered.map((c) => (
-							<ChunkRenderer
-								key={`${c.startA}-${c.startB}-${c.endA}-${c.endB}`}
-								chunk={c}
-								leftEditor={
-									p.leftEditor as editor.IStandaloneCodeEditor
-								}
-								rightEditor={
-									p.rightEditor as editor.IStandaloneCodeEditor
-								}
-								reversed={Boolean(p.reversed)}
-								fadeL={Boolean(p.fadeOutLeft)}
-								fadeR={Boolean(p.fadeOutRight)}
-								onApp={p.onApplyChunk}
-								onDel={p.onDeleteChunk}
-								onUp={p.onCopyUpChunk}
-								onDwn={p.onCopyDownChunk}
-								leftOffset={leftOffset}
-								rightOffset={rightOffset}
-								activeTops={activeTops}
-								maskId={maskId}
-								lMax={lMax}
-								rMax={rMax}
-							/>
-						))}
-					</g>
-				)}
+				<g
+					className="diff-view"
+					style={{
+						transform: `translateY(${activeTops.left - liveTops.left}px)`,
+					}}
+				>
+					{/* biome-ignore lint/performance/useSolidForComponent: React project false positive */}
+					{filtered.map((c) => (
+						<ChunkRenderer
+							key={`${c.startA}-${c.startB}-${c.endA}-${c.endB}`}
+							chunk={c}
+							leftEditor={
+								p.leftEditor as editor.IStandaloneCodeEditor
+							}
+							rightEditor={
+								p.rightEditor as editor.IStandaloneCodeEditor
+							}
+							reversed={Boolean(p.reversed)}
+							fadeL={Boolean(p.fadeOutLeft)}
+							fadeR={Boolean(p.fadeOutRight)}
+							onApp={p.onApplyChunk}
+							onDel={p.onDeleteChunk}
+							onUp={p.onCopyUpChunk}
+							onDwn={p.onCopyDownChunk}
+							leftOffset={leftOffset}
+							rightOffset={rightOffset}
+							activeTops={activeTops}
+							maskId={maskId}
+							lMax={lMax}
+							rMax={rMax}
+						/>
+					))}
+				</g>
 			</svg>
 		</div>
 	);

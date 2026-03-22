@@ -127,6 +127,8 @@ describe("Connection Directions and Bounds Checking", () => {
 		it("should NOT throw during rendering when reversed=false for the 4th curtain", () => {
 			const leftEditor = mockEditor(191, 0);
 			const rightEditor = mockEditor(388, 0);
+			const leftModel = leftEditor.getModel() as editor.ITextModel;
+			const rightModel = rightEditor.getModel() as editor.ITextModel;
 
 			expect(() => {
 				render(
@@ -134,8 +136,10 @@ describe("Connection Directions and Bounds Checking", () => {
 						diffs={diffs[3] ?? []}
 						leftEditor={leftEditor}
 						rightEditor={rightEditor}
+						leftModel={leftModel}
+						rightModel={rightModel}
 						renderTrigger={0}
-						reversed={false} // THIS IS THE FIX WE ARE PREPARING
+						reversed={false}
 					/>,
 				);
 			}).not.toThrow();

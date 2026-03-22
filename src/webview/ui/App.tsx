@@ -12,7 +12,11 @@ import {
 } from "./appHooks.ts";
 import { ErrorBoundary } from "./ErrorBoundary.tsx";
 import { MeldPane } from "./meldPane.tsx";
-import type { Highlight as MeldHighlight } from "./types.ts";
+import type {
+	DiffChunk,
+	FileState,
+	Highlight as MeldHighlight,
+} from "./types.ts";
 import { ANIMATION_DURATION, DIFF_WIDTH } from "./types.ts";
 import { useClipboardOverrides } from "./useClipboardOverrides.ts";
 import { useSynchronizedScrolling } from "./useSynchronizedScrolling.ts";
@@ -152,6 +156,7 @@ interface MeldUIActionsProps {
 	requestClipboardText: () => Promise<string>;
 	writeClipboardText: (t: string) => Promise<void>;
 	commitModelUpdate: (v: string) => void;
+	setRenderTrigger: (p: (p: number) => number) => void;
 	debounceDelay: number;
 }
 
@@ -188,6 +193,7 @@ const useMeldUIActions = (p: MeldUIActionsProps) =>
 					});
 				}
 			},
+			setRenderTrigger: p.setRenderTrigger,
 			handleNavigate: p.handleNavigate,
 			getHighlights: p.highlights,
 			requestClipboardText: p.requestClipboardText,
@@ -219,6 +225,7 @@ const useMeldUIActions = (p: MeldUIActionsProps) =>
 			p.writeClipboardText,
 			p.commitModelUpdate,
 			p.debounceDelay,
+			p.setRenderTrigger,
 		],
 	);
 
@@ -276,34 +283,11 @@ const useAppServices = (
 	return { vscodeApi, ...cb };
 };
 
-const useAppState = () => {
-	const d = useAppCoreData();
-	const s = useAppServices(d.editorRefArray);
-	const { attachScrollListener, forceSyncToPane } = useSynchronizedScrolling(
-		d.editorRefArray,
-		d.diffsRef,
-		d.diffsAreReversedRef,
-		d.setRenderTrigger,
-		d.smoothScrolling,
-	);
-
-	const prevB = [
-		usePreviousNonNull(d.files[0]),
-		usePreviousNonNull(d.files[4]),
-	] as const;
-	const prevD = [
-		usePreviousNonNull(d.diffs[0]),
-		usePreviousNonNull(d.diffs[3]),
-	] as const;
-	const commitModelUpdate = useCommitModelUpdate({
-		filesRef: d.filesRef,
-		diffsRef: d.diffsRef,
-		setFiles: d.setFiles,
-		setDiffs: d.setDiffs,
-		setRenderTrigger: d.setRenderTrigger,
-		differRef: d.differRef,
-	});
-
+const useAppStateMessageHandlers = (
+	d: ReturnType<typeof useAppCoreData>,
+	s: ReturnType<typeof useAppServices>,
+	commitModelUpdate: (v: string) => void,
+) => {
 	useAppMessageHandlers({
 		filesRef: d.filesRef,
 		diffsRef: d.diffsRef,
@@ -320,38 +304,86 @@ const useAppState = () => {
 		vscodeApi: s.vscodeApi,
 		differRef: d.differRef,
 	});
+};
 
-	const { renderBL, renderBR } = useBaseAnimation(d.files);
-	const uiState = useMemo(
+const useUIState = (p: {
+	d: ReturnType<typeof useAppCoreData>;
+	prevBL: FileState | null;
+	prevBR: FileState | null;
+	prevDL: DiffChunk[] | null;
+	prevDR: DiffChunk[] | null;
+	renderBL: boolean;
+	renderBR: boolean;
+}) =>
+	useMemo(
 		() => ({
-			files: d.files,
-			diffs: d.diffs,
-			prevBaseLeft: prevB[0],
-			prevBaseRight: prevB[1],
-			prevBaseLeftDiffs: prevD[0],
-			prevBaseRightDiffs: prevD[1],
-			renderBaseLeft: renderBL,
-			renderBaseRight: renderBR,
-			baseCompareHighlighting: d.baseCompareHighlighting,
-			renderTrigger: d.renderTrigger,
-			syntaxHighlighting: d.syntaxHighlighting,
-			externalSyncId: d.externalSyncId,
-			editorRefArray: d.editorRefArray,
+			files: p.d.files,
+			diffs: p.d.diffs,
+			prevBaseLeft: p.prevBL,
+			prevBaseRight: p.prevBR,
+			prevBaseLeftDiffs: p.prevDL,
+			prevBaseRightDiffs: p.prevDR,
+			renderBaseLeft: p.renderBL,
+			renderBaseRight: p.renderBR,
+			baseCompareHighlighting: p.d.baseCompareHighlighting,
+			renderTrigger: p.d.renderTrigger,
+			syntaxHighlighting: p.d.syntaxHighlighting,
+			externalSyncId: p.d.externalSyncId,
+			editorRefArray: p.d.editorRefArray,
 		}),
 		[
-			d.files,
-			d.diffs,
-			prevB,
-			prevD,
-			renderBL,
-			renderBR,
-			d.baseCompareHighlighting,
-			d.renderTrigger,
-			d.syntaxHighlighting,
-			d.externalSyncId,
-			d.editorRefArray,
+			p.d.files,
+			p.d.diffs,
+			p.prevBL,
+			p.prevBR,
+			p.prevDL,
+			p.prevDR,
+			p.renderBL,
+			p.renderBR,
+			p.d.baseCompareHighlighting,
+			p.d.renderTrigger,
+			p.d.syntaxHighlighting,
+			p.d.externalSyncId,
+			p.d.editorRefArray,
 		],
 	);
+
+const useAppState = () => {
+	const d = useAppCoreData();
+	const s = useAppServices(d.editorRefArray);
+	const sync = useSynchronizedScrolling(
+		d.editorRefArray,
+		d.diffsRef,
+		d.diffsAreReversedRef,
+		d.setRenderTrigger,
+		d.smoothScrolling,
+	);
+
+	const prevBL = usePreviousNonNull(d.files[0]);
+	const prevBR = usePreviousNonNull(d.files[4]);
+	const prevDL = usePreviousNonNull(d.diffs[0]);
+	const prevDR = usePreviousNonNull(d.diffs[3]);
+	const commitModelUpdate = useCommitModelUpdate({
+		filesRef: d.filesRef,
+		diffsRef: d.diffsRef,
+		setFiles: d.setFiles,
+		setDiffs: d.setDiffs,
+		setRenderTrigger: d.setRenderTrigger,
+		differRef: d.differRef,
+	});
+
+	useAppStateMessageHandlers(d, s, commitModelUpdate);
+
+	const { renderBL, renderBR } = useBaseAnimation(d.files);
+	const uiState = useUIState({
+		d,
+		prevBL,
+		prevBR,
+		prevDL,
+		prevDR,
+		renderBL,
+		renderBR,
+	});
 
 	const highlights = useAppHighlights(
 		d.files,
@@ -369,14 +401,15 @@ const useAppState = () => {
 		setDiffs: d.setDiffs,
 		diffsRef: d.diffsRef,
 		vscodeApi: s.vscodeApi,
-		attachScrollListener,
-		forceSyncToPane,
+		attachScrollListener: sync.attachScrollListener,
+		forceSyncToPane: sync.forceSyncToPane,
 		chunkActions,
 		handleNavigate,
 		highlights,
 		requestClipboardText: s.requestClipboardText,
 		writeClipboardText: s.writeClipboardText,
 		commitModelUpdate,
+		setRenderTrigger: d.setRenderTrigger,
 		debounceDelay: d.debounceDelay,
 	});
 
