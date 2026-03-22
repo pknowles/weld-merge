@@ -336,6 +336,7 @@ const ToggleBaseBtn: FC<{
 			type="button"
 			onClick={onToggleBase}
 			title="Compare with Base"
+			data-testid={`toggle-base-${side}`}
 			style={{
 				background: "none",
 				border: "none",
@@ -428,6 +429,9 @@ const setupActions = (ed: editor.IStandaloneCodeEditor, p: CodePaneProps) => {
 				.requestClipboardText?.()
 				.then((t) => e.trigger("keyboard", "paste", { text: t })),
 	});
+	ed.onDidBlurEditorText(() => {
+		p.actions.writeClipboardText?.(ed.getValue());
+	});
 };
 
 const getHighlightOptions = (h: Highlight) => ({
@@ -463,29 +467,37 @@ const useCodePaneLogic = (p: CodePaneProps) => {
 	}, [ed, p.highlights]);
 
 	useEffect(() => {
-		if (!ed || p.file.content == null) {
+		if (
+			!ed ||
+			p.file.content == null ||
+			p.ui.externalSyncId === lastSyncId
+		) {
 			return;
 		}
-		const isOutOfSync = p.ui.externalSyncId !== lastSyncId;
-		const hashChanged = p.file.content !== ed.getValue();
-		if (isOutOfSync && hashChanged) {
-			setLastSyncId(p.ui.externalSyncId);
-			const m = ed.getModel();
-			if (m) {
-				isApplyingSync.current = true;
-				try {
-					const e = computeMinimalEdits(m, p.file.content);
-					if (e.length > 0) {
-						m.pushEditOperations(
-							ed.getSelections() || [],
-							e,
-							() => ed.getSelections() || [],
-						);
-					}
-				} finally {
-					isApplyingSync.current = false;
-				}
+
+		setLastSyncId(p.ui.externalSyncId);
+
+		if (p.file.content === ed.getValue()) {
+			return;
+		}
+
+		const m = ed.getModel();
+		if (!m) {
+			return;
+		}
+
+		isApplyingSync.current = true;
+		try {
+			const e = computeMinimalEdits(m, p.file.content);
+			if (e.length > 0) {
+				m.pushEditOperations(
+					ed.getSelections() || [],
+					e,
+					() => ed.getSelections() || [],
+				);
 			}
+		} finally {
+			isApplyingSync.current = false;
 		}
 	}, [ed, p.file.content, p.ui.externalSyncId, lastSyncId]);
 

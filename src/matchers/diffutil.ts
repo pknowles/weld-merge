@@ -547,6 +547,7 @@ class Differ {
 			return;
 		}
 		const diffs = this.diffs[which as 0 | 1 | 2 | 3];
+		const x = (which === 0 ? 0 : 2) as 0 | 2;
 		const linesAdded: [number, number, number, number, number] = [
 			0, 0, 0, 0, 0,
 		];
@@ -554,61 +555,42 @@ class Differ {
 			linesAdded[sequence as 0 | 1 | 2 | 3 | 4] = sizechange;
 		}
 
-		let loidx = this._locateChunk(
+		const { loidx, hiidx } = this._getAffectedChunkIndices(
 			which as 0 | 1 | 2 | 3,
 			sequence,
 			startidx,
+			sizechange,
 		);
-		if (loidx > 0) {
-			loidx--;
-		}
-		let hiidx = this._locateChunk(
+
+		const { lorange, hirange } = this._getAffectedDiffRanges(
 			which as 0 | 1 | 2 | 3,
-			sequence,
-			startidx + Math.max(0, -sizechange),
+			loidx,
+			hiidx,
+			x,
 		);
-		if (hiidx < diffs.length) {
-			hiidx++;
-		}
 
-		const lorange = this._getLoRange(diffs, loidx);
-		const x = (which === 0 ? 0 : 2) as 0 | 2;
-		const hirange = this._getHiRange(diffs, hiidx, x);
+		const { rangex, range1 } = this._calculateReDiffBoundaries(
+			lorange,
+			hirange,
+			linesAdded,
+			x,
+		);
 
-		const rangex: [number, number] = [
-			lorange[0],
-			hirange[0] + linesAdded[x],
-		];
-		const range1: [number, number] = [
-			lorange[1],
-			hirange[1] + linesAdded[1],
-		];
-
-		const linesx = texts[x]?.slice(rangex[0], rangex[1]);
-		const lines1 = texts[1]?.slice(range1[0], range1[1]);
-
-		const offsetValue = (
-			c: DiffChunk,
-			o1: number,
-			o2: number,
-		): DiffChunk => ({
-			tag: c.tag,
-			startA: c.startA + o1,
-			endA: c.endA + o1,
-			startB: c.startB + o2,
-			endB: c.endB + o2,
-		});
+		const lines1 = texts[1]?.slice(range1[0], range1[1]) ?? [];
+		const linesx = texts[x]?.slice(rangex[0], rangex[1]) ?? [];
 
 		let newdiffs = new this._matcher(
 			null,
 			lines1,
 			linesx,
 		).getDifferenceOpcodes();
-		newdiffs = newdiffs.map((c) => offsetValue(c, range1[0], rangex[0]));
+		newdiffs = newdiffs.map((c) =>
+			this._offsetChunk(c, range1[0], rangex[0]),
+		);
 
 		const offsetDiffs = diffs
 			.slice(hiidx)
-			.map((c) => offsetValue(c, linesAdded[1], linesAdded[x]));
+			.map((c) => this._offsetChunk(c, linesAdded[1], linesAdded[x]));
 
 		this.diffs[which as 0 | 1 | 2 | 3].splice(
 			loidx,
@@ -618,28 +600,75 @@ class Differ {
 		);
 	}
 
-	private _getLoRange(diffs: DiffChunk[], loidx: number): [number, number] {
+	private _getAffectedChunkIndices(
+		which: 0 | 1 | 2 | 3,
+		sequence: number,
+		startidx: number,
+		sizechange: number,
+	) {
+		const diffs = this.diffs[which];
+		let loidx = this._locateChunk(which, sequence, startidx);
 		if (loidx > 0) {
-			const prevChunk = diffs[loidx - 1];
-			if (prevChunk) {
-				return [prevChunk.endB, prevChunk.endA];
-			}
+			loidx--;
 		}
-		return [0, 0];
+		let hiidx = this._locateChunk(
+			which,
+			sequence,
+			startidx + Math.max(0, -sizechange),
+		);
+		if (hiidx < diffs.length) {
+			hiidx++;
+		}
+		return { loidx, hiidx };
 	}
 
-	private _getHiRange(
-		diffs: DiffChunk[],
+	private _getAffectedDiffRanges(
+		which: 0 | 1 | 2 | 3,
+		loidx: number,
 		hiidx: number,
 		x: 0 | 2,
-	): [number, number] {
-		if (hiidx < diffs.length) {
-			const nextChunk = diffs[hiidx];
-			if (nextChunk) {
-				return [nextChunk.startB, nextChunk.startA];
+	) {
+		const diffs = this.diffs[which];
+		let lorange: [number, number] = [0, 0];
+		if (loidx > 0) {
+			const chunk = diffs[loidx - 1];
+			if (chunk) {
+				lorange = [chunk.startB, chunk.startA];
 			}
 		}
-		return [this.seqLength[x], this.seqLength[1]];
+
+		let hirange: [number, number] = [this.seqLength[x], this.seqLength[1]];
+		if (hiidx < diffs.length) {
+			const chunk = diffs[hiidx];
+			if (chunk) {
+				hirange = [chunk.endB, chunk.endA];
+			}
+		}
+		return { lorange, hirange };
+	}
+
+	private _calculateReDiffBoundaries(
+		lorange: [number, number],
+		hirange: [number, number],
+		linesAdded: [number, number, number, number, number],
+		x: number,
+	) {
+		const lx = linesAdded[x] ?? 0;
+		const l1 = linesAdded[1] ?? 0;
+		return {
+			rangex: [lorange[0], hirange[0] + lx] as [number, number],
+			range1: [lorange[1], hirange[1] + l1] as [number, number],
+		};
+	}
+
+	private _offsetChunk(c: DiffChunk, o1: number, o2: number): DiffChunk {
+		return {
+			tag: c.tag,
+			startA: c.startA + o1,
+			endA: c.endA + o1,
+			startB: c.startB + o2,
+			endB: c.endB + o2,
+		};
 	}
 
 	_mergeBlocks(

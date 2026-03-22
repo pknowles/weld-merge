@@ -140,6 +140,25 @@
 					}
 				}
 			}
+		},
+		{
+			"includes": ["**/*.html"],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noImportantStyles": "off"
+					},
+					"correctness": {
+						"noUnknownProperty": "off"
+					}
+				}
+			}
+		},
+		{
+			"includes": ["test/parity_trace.json"],
+			"formatter": {
+				"lineWidth": 320
+			}
 		}
 	]
 }

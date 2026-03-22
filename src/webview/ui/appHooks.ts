@@ -205,13 +205,29 @@ export function useCommitModelUpdate(deps: CommitDeps) {
 					newM,
 					splitLines(cF[3].content),
 				]);
+				const dedupe = (chunks: DiffChunk[]) => {
+					const seen = new Set<string>();
+					return chunks.filter((c) => {
+						const key = `${c.startA}-${c.endA}-${c.startB}-${c.endB}`;
+						if (seen.has(key)) {
+							return false;
+						}
+						seen.add(key);
+						return true;
+					});
+				};
+
 				nD = [...diffsRef.current];
-				nD[1] = d._mergeCache
-					.map((p) => p[0])
-					.filter((c): c is DiffChunk => c !== null);
-				nD[2] = d._mergeCache
-					.map((p) => p[1])
-					.filter((c): c is DiffChunk => c !== null);
+				nD[1] = dedupe(
+					d._mergeCache
+						.map((p) => p[0])
+						.filter((c): c is DiffChunk => c !== null),
+				);
+				nD[2] = dedupe(
+					d._mergeCache
+						.map((p) => p[1])
+						.filter((c): c is DiffChunk => c !== null),
+				);
 				diffsRef.current = nD;
 			}
 			const nF = [...cF] as PaneFiles;
