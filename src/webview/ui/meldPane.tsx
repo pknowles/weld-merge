@@ -8,7 +8,7 @@ import type {
 	MeldUIState,
 } from "./meldPaneTypes.ts";
 import { INITIAL_SYNC_DELAY } from "./meldPaneTypes.ts";
-import type { DiffChunk, FileState } from "./types.ts";
+import { DIFF_WIDTH, type DiffChunk, type FileState } from "./types.ts";
 
 const getCurtainHandlers = (actions: MeldUIActions, idx: number) => {
 	if (idx !== 1 && idx !== 2) {
@@ -124,21 +124,19 @@ const renderMeldCodePane = (
 	/>
 );
 
+const isPaneVisible = (idx: number, ui: MeldUIState) => {
+	if (idx === 0) {
+		return Boolean(ui.files[0] || ui.renderBaseLeft);
+	}
+	if (idx === 4) {
+		return Boolean(ui.files[4] || ui.renderBaseRight);
+	}
+	return Boolean(ui.files[idx]);
+};
+
 const getPeerCount = (idx: number, ui: MeldUIState) =>
-	[0, 1, 2, 3, 4]
-		.filter((i) => i !== idx)
-		.filter((i) => {
-			if (i === 1 || i === 2 || i === 3) {
-				return Boolean(ui.files[i]);
-			}
-			if (i === 0) {
-				return Boolean(ui.files[0] || ui.renderBaseLeft);
-			}
-			if (i === 4) {
-				return Boolean(ui.files[4] || ui.renderBaseRight);
-			}
-			return false;
-		}).length;
+	[0, 1, 2, 3, 4].filter((i) => i !== idx).filter((i) => isPaneVisible(i, ui))
+		.length;
 
 const renderCurtain = (
 	idx: number,
@@ -169,7 +167,7 @@ const renderCurtain = (
 		);
 	}
 
-	return <div style={{ width: 30, flexShrink: 0 }} />;
+	return <div style={{ width: DIFF_WIDTH, flexShrink: 0 }} />;
 };
 
 const renderBasePane = (args: {
@@ -193,7 +191,7 @@ const renderBasePane = (args: {
 			>
 				{codePane}
 			</AnimatedColumn>
-			{idx === 0 && (ui.files[0] || ui.renderBaseLeft) && curtain}
+			{idx === 0 && isPaneVisible(0, ui) && curtain}
 		</Fragment>
 	);
 };
@@ -216,12 +214,7 @@ export const MeldPane: FC<MeldPaneProps> = (p) => {
 	const codePane = renderMeldCodePane(p.idx, active, p.ui, p.actions);
 
 	if (p.idx === 0 || p.idx === 4) {
-		const isVisible =
-			p.idx === 0
-				? p.ui.files[0] || p.ui.renderBaseLeft
-				: p.ui.files[4] || p.ui.renderBaseRight;
-
-		if (!isVisible) {
+		if (!isPaneVisible(p.idx, p.ui)) {
 			return null;
 		}
 
@@ -237,7 +230,7 @@ export const MeldPane: FC<MeldPaneProps> = (p) => {
 	return (
 		<Fragment key={p.idx}>
 			{codePane}
-			{(p.idx !== 3 || ui.files[4] || ui.renderBaseRight) && curtain}
+			{(p.idx !== 3 || isPaneVisible(4, ui)) && curtain}
 		</Fragment>
 	);
 };

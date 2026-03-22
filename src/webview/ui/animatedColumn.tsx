@@ -1,9 +1,4 @@
-import {
-	type PropsWithChildren,
-	useLayoutEffect,
-	useMemo,
-	useState,
-} from "react";
+import { type PropsWithChildren, useLayoutEffect, useState } from "react";
 import { ANIMATION_TRANSITION } from "./types.ts";
 
 export const AnimatedColumn = ({
@@ -46,16 +41,10 @@ export const AnimatedColumn = ({
 		return;
 	}, [isOpen]);
 
-	// Lock the column counts to ensure stability during animation
-	// biome-ignore lint/correctness/useExhaustiveDependencies: We want to lock the counts for the duration of one animation cycle.
-	const lockedDiv = useMemo(() => {
-		const div = isOpen ? textColumns : textColumnsAfterAnimation;
-		return div || 1; // Fallback to 1 to avoid division by zero
-	}, [isOpen]);
-
+	const div = isOpen ? textColumns : textColumnsAfterAnimation;
 	const marginValue = active
 		? "0"
-		: `calc(-1 * ((100% + var(--meld-diff-width)) / ${lockedDiv}))`;
+		: `calc(-1 * ((100% + var(--meld-diff-width)) / ${div || 1}))`;
 
 	return (
 		<div
