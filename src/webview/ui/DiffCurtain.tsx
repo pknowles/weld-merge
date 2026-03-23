@@ -255,6 +255,38 @@ const SVGMasks: FC<{
 	);
 };
 
+const isChunkInView = (
+	b: ReturnType<typeof getBounds>,
+	leftEditor: editor.IStandaloneCodeEditor,
+	rightEditor: editor.IStandaloneCodeEditor,
+	p: {
+		leftOffset: number;
+		rightOffset: number;
+		activeTops: { left: number; right: number };
+		curtainHeight: number;
+	},
+): boolean => {
+	const m = 200;
+	const y1 = getY(leftEditor, b.lS, p.leftOffset, p.activeTops.left);
+	const y2 = getY(rightEditor, b.rS, p.rightOffset, p.activeTops.right);
+	if (Math.min(y1, y2) > p.curtainHeight + m) {
+		return false;
+	}
+	const y1B = getY(
+		leftEditor,
+		b.lEmp ? b.lS : b.lE,
+		p.leftOffset,
+		p.activeTops.left,
+	);
+	const y2B = getY(
+		rightEditor,
+		b.rEmp ? b.rS : b.rE,
+		p.rightOffset,
+		p.activeTops.right,
+	);
+	return Math.max(y1B, y2B) >= -m;
+};
+
 const useFilteredDiffs = (p: {
 	diffs: DiffChunk[] | null;
 	leftEditor: editor.IStandaloneCodeEditor;
@@ -276,12 +308,20 @@ const useFilteredDiffs = (p: {
 		if (!diffs) {
 			return [];
 		}
+		// Predicate: is this chunk referencing lines beyond current model bounds?
+		// This happens transiently between a content update and the next diff recompute.
+		const isStale = (c: DiffChunk) => {
+			const lEnd = p.reversed ? c.endB : c.endA;
+			const rEnd = p.reversed ? c.endA : c.endB;
+			return lEnd > p.lMax || rEnd > p.rMax;
+		};
 		if (p.curtainHeight === 0) {
-			return diffs.slice(0, 100);
+			return diffs
+				.filter((c) => c.tag !== "equal" && !isStale(c))
+				.slice(0, 100);
 		}
-		const m = 200;
 		return diffs.filter((c) => {
-			if (c.tag === "equal") {
+			if (c.tag === "equal" || isStale(c)) {
 				return false;
 			}
 			const b = getBounds({
@@ -293,29 +333,7 @@ const useFilteredDiffs = (p: {
 				rMax: p.rMax,
 				reversed: p.reversed,
 			});
-			const y1 = getY(leftEditor, b.lS, p.leftOffset, p.activeTops.left);
-			const y2 = getY(
-				rightEditor,
-				b.rS,
-				p.rightOffset,
-				p.activeTops.right,
-			);
-			if (Math.min(y1, y2) > p.curtainHeight + m) {
-				return false;
-			}
-			const y1B = getY(
-				leftEditor,
-				b.lEmp ? b.lS : b.lE,
-				p.leftOffset,
-				p.activeTops.left,
-			);
-			const y2B = getY(
-				rightEditor,
-				b.rEmp ? b.rS : b.rE,
-				p.rightOffset,
-				p.activeTops.right,
-			);
-			return Math.max(y1B, y2B) >= -m;
+			return isChunkInView(b, leftEditor, rightEditor, p);
 		});
 	}, [
 		p.diffs,
@@ -504,7 +522,7 @@ export const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 				}}
 				role="img"
 			>
-				<title>Diff connectors</title>
+				<title>Diff Connections</title>
 				<SVGMasks prefix={id} />
 				<g
 					className="diff-view"

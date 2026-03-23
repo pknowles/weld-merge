@@ -208,10 +208,9 @@ export const MeldPane: FC<MeldPaneProps> = (p) => {
 	}
 
 	const diffState = getDiffStateInternal(p.idx, p.ui);
-	const curtain = renderCurtain(idx, ui, p.actions, diffState);
-
 	const peerCount = getPeerCount(idx, ui);
 	const codePane = renderMeldCodePane(p.idx, active, p.ui, p.actions);
+	const curtain = renderCurtain(idx, ui, p.actions, diffState);
 
 	if (p.idx === 0 || p.idx === 4) {
 		if (!isPaneVisible(p.idx, p.ui)) {

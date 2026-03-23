@@ -524,6 +524,20 @@ const useCodePaneLogic = (p: CodePaneProps) => {
 
 	return { ed, setEd, isApplyingSync, isFlashing, onSubmit };
 };
+const HEADER_STYLE: CSSProperties = {
+	display: "flex",
+	alignItems: "center",
+	justifyContent: "center",
+	backgroundColor: "#2d2d2d",
+	color: "#cccccc",
+	padding: "0 8px",
+	height: "35px",
+	boxSizing: "border-box",
+	fontFamily: "sans-serif",
+	fontSize: "12px",
+	borderBottom: "1px solid #444",
+	minWidth: 0,
+};
 
 export const CodePane: FC<CodePaneProps> = (p) => {
 	const { setEd, isApplyingSync, isFlashing, onSubmit } = useCodePaneLogic(p);
@@ -548,22 +562,7 @@ export const CodePane: FC<CodePaneProps> = (p) => {
 				...p.style,
 			}}
 		>
-			<div
-				style={{
-					display: "flex",
-					alignItems: "center",
-					justifyContent: "center",
-					backgroundColor: "#2d2d2d",
-					color: "#cccccc",
-					padding: "0 8px",
-					height: "35px",
-					boxSizing: "border-box",
-					fontFamily: "sans-serif",
-					fontSize: "12px",
-					borderBottom: "1px solid #444",
-					minWidth: 0,
-				}}
-			>
+			<div style={HEADER_STYLE}>
 				<HeaderStyles />
 				<ToggleBaseBtn
 					side="left"
@@ -619,6 +618,9 @@ export const CodePane: FC<CodePaneProps> = (p) => {
 					}}
 					onChange={(v) => {
 						if (!isApplyingSync.current) {
+							if (v !== p.file.content) {
+								p.actions.onEditImmediate(p.index);
+							}
 							p.actions.onEdit(v, p.index);
 						}
 					}}

@@ -159,6 +159,12 @@
 			"formatter": {
 				"lineWidth": 320
 			}
+		},
+		{
+			"includes": ["test/snapshots/webview_root.html"],
+			"linter": {
+				"enabled": false
+			}
 		}
 	]
 }

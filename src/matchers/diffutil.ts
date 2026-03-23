@@ -151,15 +151,8 @@ class Differ {
 		}
 	}
 
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: restoring functional code
 	_updateMergeCache(texts: string[][]) {
-		this._computeRawMergeCache(texts);
-		this._applyIgnoreBlanks(texts);
-		this._calculateMergeableState();
-		this._updateLineCache();
-		this.emit("diffs-changed", null);
-	}
-
-	private _computeRawMergeCache(texts: string[][]) {
 		if (this.numSequences === THREE_PANES) {
 			this._mergeCache = Array.from(
 				this._mergeDiffs(this.diffs[0], this.diffs[1], texts),
@@ -172,9 +165,7 @@ class Differ {
 				(c) => [c, null] as [DiffChunk | null, DiffChunk | null],
 			);
 		}
-	}
 
-	private _applyIgnoreBlanks(texts: string[][]) {
 		if (this.ignoreBlanks) {
 			this._mergeCache = this._mergeCache
 				.map(
@@ -186,9 +177,7 @@ class Differ {
 				)
 				.filter((x) => x[0] !== null || x[1] !== null);
 		}
-	}
 
-	private _calculateMergeableState() {
 		let mergeable0 = false;
 		let mergeable1 = false;
 		for (const [c0, c1] of this._mergeCache) {
@@ -210,6 +199,9 @@ class Differ {
 				this.conflicts.push(i);
 			}
 		}
+
+		this._updateLineCache();
+		this.emit("diffs-changed", null);
 	}
 
 	_updateLineCache() {
@@ -394,14 +386,103 @@ class Differ {
 	}
 
 	_updateMergeCacheOnSequenceChange(
-		_sequence: number,
-		_startidx: number,
-		_sizechange: number,
+		sequence: number,
+		startidx: number,
+		sizechange: number,
 		texts: string[][],
 	) {
 		this._oldMergeCache.clear();
 		this._changedChunks = [];
+		let chunkChanged = false;
+
+		for (let i = 0; i < this._mergeCache.length; i++) {
+			const pair = this._mergeCache[i];
+			if (!pair) {
+				continue;
+			}
+			const [c1, c2] = this._offsetPair(
+				pair,
+				sequence,
+				startidx,
+				sizechange,
+			);
+
+			if (this._isChunkChanged(pair, sequence, startidx)) {
+				chunkChanged = true;
+			}
+
+			if (chunkChanged) {
+				this._changedChunks = [c1, c2];
+				chunkChanged = false;
+			}
+			this._mergeCache[i] = [c1, c2];
+		}
 		this._updateMergeCache(texts);
+	}
+
+	private _offsetPair(
+		pair: [DiffChunk | null, DiffChunk | null],
+		sequence: number,
+		startidx: number,
+		sizechange: number,
+	): [DiffChunk | null, DiffChunk | null] {
+		let [c1, c2] = pair;
+		if (sequence === PANE_0) {
+			c1 = this._offsetChunkB(c1, startidx, sizechange);
+		} else if (sequence === PANE_2) {
+			c2 = this._offsetChunkB(c2, startidx, sizechange);
+		} else {
+			c1 = this._offsetChunkA(c1, startidx, sizechange);
+			if (this.numSequences === THREE_PANES) {
+				c2 = this._offsetChunkA(c2, startidx, sizechange);
+			}
+		}
+		return [c1, c2];
+	}
+
+	private _isChunkChanged(
+		pair: [DiffChunk | null, DiffChunk | null],
+		sequence: number,
+		startidx: number,
+	): boolean {
+		const [c1, c2] = pair;
+		if (sequence === PANE_0) {
+			return Boolean(c1 && c1.startB <= startidx && startidx < c1.endB);
+		}
+		if (sequence === PANE_2) {
+			return Boolean(c2 && c2.startB <= startidx && startidx < c2.endB);
+		}
+		return Boolean(c1 && c1.startA <= startidx && startidx < c1.endA);
+	}
+
+	private _offsetChunkB(
+		c: DiffChunk | null,
+		start: number,
+		offset: number,
+	): DiffChunk | null {
+		if (!c) {
+			return null;
+		}
+		return {
+			...c,
+			startB: c.startB + (c.startB > start ? offset : 0),
+			endB: c.endB + (c.endB > start ? offset : 0),
+		};
+	}
+
+	private _offsetChunkA(
+		c: DiffChunk | null,
+		start: number,
+		offset: number,
+	): DiffChunk | null {
+		if (!c) {
+			return null;
+		}
+		return {
+			...c,
+			startA: c.startA + (c.startA > start ? offset : 0),
+			endA: c.endA + (c.endA > start ? offset : 0),
+		};
 	}
 
 	_locateChunk(
@@ -455,14 +536,35 @@ class Differ {
 		return this._mergeCache.slice();
 	}
 
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: restoring functional code
 	*pairChanges(
 		fromindex: number,
 		toindex: number,
 		lines: (number | null)[] = [null, null, null, null],
 	) {
-		const mergeCache = this._getMergeCacheSubset(fromindex, toindex, lines);
-		if (mergeCache.length === 0) {
-			return;
+		let mergeCache = this._mergeCache;
+		if (!lines.includes(null)) {
+			const [start1, end1] = this._rangeFromLines(fromindex, [
+				lines[0] as number,
+				lines[1] as number,
+			]);
+			const [start2, end2] = this._rangeFromLines(toindex, [
+				lines[2] as number,
+				lines[3] as number,
+			]);
+			if (
+				(start1 === null || end1 === null) &&
+				(start2 === null || end2 === null)
+			) {
+				return;
+			}
+			const starts = [start1, start2].filter(
+				(x): x is number => x !== null,
+			);
+			const ends = [end1, end2].filter((x): x is number => x !== null);
+			const start = Math.min(...starts);
+			const end = Math.max(...ends);
+			mergeCache = this._mergeCache.slice(start, end + 1);
 		}
 
 		if (fromindex === 1) {
@@ -482,35 +584,6 @@ class Differ {
 				}
 			}
 		}
-	}
-
-	private _getMergeCacheSubset(
-		fromindex: number,
-		toindex: number,
-		lines: (number | null)[],
-	): [DiffChunk | null, DiffChunk | null][] {
-		if (lines.includes(null)) {
-			return this._mergeCache;
-		}
-		const [start1, end1] = this._rangeFromLines(fromindex, [
-			lines[0] as number,
-			lines[1] as number,
-		]);
-		const [start2, end2] = this._rangeFromLines(toindex, [
-			lines[2] as number,
-			lines[3] as number,
-		]);
-		if (
-			(start1 === null || end1 === null) &&
-			(start2 === null || end2 === null)
-		) {
-			return [];
-		}
-		const starts = [start1, start2].filter((x): x is number => x !== null);
-		const ends = [end1, end2].filter((x): x is number => x !== null);
-		const start = Math.min(...starts);
-		const end = Math.max(...ends);
-		return this._mergeCache.slice(start, end + 1);
 	}
 
 	_rangeFromLines(
@@ -535,6 +608,7 @@ class Differ {
 		return [start, end];
 	}
 
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: restoring functional code
 	private _changeSequence(params: {
 		which: number;
 		sequence: number;
@@ -555,120 +629,97 @@ class Differ {
 			linesAdded[sequence as 0 | 1 | 2 | 3 | 4] = sizechange;
 		}
 
-		const { loidx, hiidx } = this._getAffectedChunkIndices(
+		// 1. Identify chunks affected by the change (plus one neighbor on each side for stability)
+		let loidx = this._locateChunk(
 			which as 0 | 1 | 2 | 3,
 			sequence,
 			startidx,
-			sizechange,
 		);
+		let hiidx = loidx;
+		if (sizechange < 0) {
+			hiidx = this._locateChunk(
+				which as 0 | 1 | 2 | 3,
+				sequence,
+				startidx - sizechange,
+			);
+		}
 
-		const { lorange, hirange } = this._getAffectedDiffRanges(
-			which as 0 | 1 | 2 | 3,
-			loidx,
-			hiidx,
-			x,
-		);
+		let lorange: [number, number];
+		if (loidx > 0) {
+			loidx -= 1;
+			const chunk = diffs[loidx];
+			if (chunk) {
+				lorange = [chunk.startB, chunk.startA];
+			} else {
+				lorange = [0, 0];
+			}
+		} else {
+			lorange = [0, 0];
+		}
 
-		const { rangex, range1 } = this._calculateReDiffBoundaries(
-			lorange,
-			hirange,
-			linesAdded,
-			x,
-		);
+		let hirange: [number, number];
+		if (hiidx < diffs.length) {
+			hiidx += 1;
+			const chunk = diffs[hiidx - 1]; // Use original coordinate from before expansion
+			if (chunk) {
+				hirange = [chunk.endB, chunk.endA];
+			} else {
+				hirange = [this.seqLength[x], this.seqLength[1]];
+			}
+		} else {
+			hirange = [this.seqLength[x], this.seqLength[1]];
+		}
+
+		// 2. Determine actual line ranges for re-diffing (applying offsets for shifts in the new text)
+		const rangex: [number, number] = [
+			lorange[0],
+			hirange[0] + linesAdded[x],
+		];
+		const range1: [number, number] = [
+			lorange[1],
+			hirange[1] + linesAdded[1],
+		];
 
 		const lines1 = texts[1]?.slice(range1[0], range1[1]) ?? [];
 		const linesx = texts[x]?.slice(rangex[0], rangex[1]) ?? [];
 
-		let newdiffs = new this._matcher(
-			null,
-			lines1,
-			linesx,
-		).getDifferenceOpcodes();
-		newdiffs = newdiffs.map((c) =>
-			this._offsetChunk(c, range1[0], rangex[0]),
-		);
-
-		const offsetDiffs = diffs
-			.slice(hiidx)
-			.map((c) => this._offsetChunk(c, linesAdded[1], linesAdded[x]));
-
-		this.diffs[which as 0 | 1 | 2 | 3].splice(
-			loidx,
-			diffs.length - loidx,
-			...newdiffs,
-			...offsetDiffs,
-		);
-	}
-
-	private _getAffectedChunkIndices(
-		which: 0 | 1 | 2 | 3,
-		sequence: number,
-		startidx: number,
-		sizechange: number,
-	) {
-		const diffs = this.diffs[which];
-		let loidx = this._locateChunk(which, sequence, startidx);
-		if (loidx > 0) {
-			loidx--;
-		}
-		let hiidx = this._locateChunk(
-			which,
-			sequence,
-			startidx + Math.max(0, -sizechange),
-		);
-		if (hiidx < diffs.length) {
-			hiidx++;
-		}
-		return { loidx, hiidx };
-	}
-
-	private _getAffectedDiffRanges(
-		which: 0 | 1 | 2 | 3,
-		loidx: number,
-		hiidx: number,
-		x: 0 | 2,
-	) {
-		const diffs = this.diffs[which];
-		let lorange: [number, number] = [0, 0];
-		if (loidx > 0) {
-			const chunk = diffs[loidx - 1];
-			if (chunk) {
-				lorange = [chunk.startB, chunk.startA];
-			}
-		}
-
-		let hirange: [number, number] = [this.seqLength[x], this.seqLength[1]];
-		if (hiidx < diffs.length) {
-			const chunk = diffs[hiidx];
-			if (chunk) {
-				hirange = [chunk.endB, chunk.endA];
-			}
-		}
-		return { lorange, hirange };
-	}
-
-	private _calculateReDiffBoundaries(
-		lorange: [number, number],
-		hirange: [number, number],
-		linesAdded: [number, number, number, number, number],
-		x: number,
-	) {
-		const lx = linesAdded[x] ?? 0;
-		const l1 = linesAdded[1] ?? 0;
-		return {
-			rangex: [lorange[0], hirange[0] + lx] as [number, number],
-			range1: [lorange[1], hirange[1] + l1] as [number, number],
-		};
-	}
-
-	private _offsetChunk(c: DiffChunk, o1: number, o2: number): DiffChunk {
-		return {
+		const offsetValue = (
+			c: DiffChunk,
+			o1: number,
+			o2: number,
+		): DiffChunk => ({
 			tag: c.tag,
 			startA: c.startA + o1,
 			endA: c.endA + o1,
 			startB: c.startB + o2,
 			endB: c.endB + o2,
-		};
+		});
+
+		// 3. Perform re-diff and offset back to global coordinates
+		let newdiffs = new this._matcher(
+			null,
+			lines1,
+			linesx,
+		).getDifferenceOpcodes();
+		newdiffs = newdiffs.map((c) => offsetValue(c, range1[0], rangex[0]));
+
+		// 4. Offset subsequent chunks and splice in the results
+		if (hiidx < diffs.length) {
+			const offsetDiffs = diffs
+				.slice(hiidx)
+				.map((c) => offsetValue(c, linesAdded[1], linesAdded[x]));
+			this.diffs[which as 0 | 1 | 2 | 3].splice(
+				hiidx,
+				diffs.length - hiidx,
+				...offsetDiffs,
+			);
+		}
+
+		this.diffs[which as 0 | 1 | 2 | 3].splice(
+			loidx,
+			hiidx - loidx,
+			...newdiffs,
+		);
 	}
 
 	_mergeBlocks(

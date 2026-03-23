@@ -6,7 +6,8 @@ import { getBounds } from "./diffCurtainUtils.ts";
 import { mapLineAcrossPanes } from "./scrollMapping.ts";
 import type { DiffChunk } from "./types.ts";
 
-// Mock ResizeObserver which is not present in jsdom
+const OUT_OF_BOUNDS_REGEX = /DiffCurtain connection out of bounds/;
+
 global.ResizeObserver = class ResizeObserver {
 	observe() {
 		/* mock */
@@ -43,7 +44,6 @@ const mockEditor = (lineCount: number, scrollTop: number) =>
 		getContentHeight: jest.fn(() => lineCount * 20),
 		getDomNode: jest.fn(() => null),
 	}) as unknown as editor.IStandaloneCodeEditor;
-const OUT_OF_BOUNDS_ERROR = /DiffCurtain connection out of bounds/;
 describe("Connection Directions and Bounds Checking", () => {
 	const diffs: (DiffChunk[] | null)[] = [
 		null,
@@ -90,7 +90,7 @@ describe("Connection Directions and Bounds Checking", () => {
 			}).not.toThrow();
 		});
 
-		it("should still throw when mapping lines with INCORRECT reversal (true) to verify guards", () => {
+		it("should throw instead of clamping when typing causes document to shrink below stale diff bounds", () => {
 			const curtain3Diffs = diffs[3];
 			if (!curtain3Diffs) {
 				throw new Error("TestData missing");
@@ -99,21 +99,22 @@ describe("Connection Directions and Bounds Checking", () => {
 			if (!chunk) {
 				throw new Error("TestData missing");
 			}
-			expect(() => {
+			// chunk 10 has endA: 190, endB: 387
+			expect(() =>
 				getBounds({
 					startA: chunk.startA,
 					endA: chunk.endA,
 					startB: chunk.startB,
 					endB: chunk.endB,
-					lMax: 191,
-					rMax: 388,
-					reversed: true, // INCORRECT
-				});
-			}).toThrow(OUT_OF_BOUNDS_ERROR);
+					lMax: 50, // User deleted most of the file!
+					rMax: 50,
+					reversed: false,
+				}),
+			).toThrowError(OUT_OF_BOUNDS_REGEX);
 		});
 	});
 
-	describe("DiffCurtain E2E React Test", () => {
+	describe("DiffCurtain Connection Directions", () => {
 		// Mock console.error to avoid React error logging noise during expected throws
 		beforeAll(() => {
 			jest.spyOn(console, "error").mockImplementation(() => {

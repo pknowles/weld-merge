@@ -1,8 +1,8 @@
 {
 	"name": "meld-auto-merge",
-	"displayName": "Meld Merge",
-	"description": "3-way git merge conflict editor, a GNOME Meld Merge port",
-	"version": "0.0.6",
+	"displayName": "Weld Merge",
+	"description": "3-Way Git Merge Conflict Editor for VS Code, ported from GNOME Meld",
+	"version": "0.0.7",
 	"icon": "images/icon.png",
 	"publisher": "pknowles",
 	"author": "Pyarelal Knowles",
@@ -10,6 +10,21 @@
 		"type": "git",
 		"url": "https://github.com/pknowles/meld.git"
 	},
+	"keywords": [
+		"meld",
+		"meld-style",
+		"merge",
+		"mergetool",
+		"merge tool",
+		"diff",
+		"3-way merge",
+		"three-way merge",
+		"conflict",
+		"conflict resolution",
+		"git",
+		"git merge",
+		"git conflict"
+	],
 	"engines": {
 		"vscode": "^1.80.0"
 	},
@@ -22,7 +37,7 @@
 		"customEditors": [
 			{
 				"viewType": "meld.mergeEditor",
-				"displayName": "Meld 3-Way Merge",
+				"displayName": "Weld 3-Way Merge",
 				"selector": [
 					{
 						"filenamePattern": "*"
@@ -35,7 +50,7 @@
 			"activitybar": [
 				{
 					"id": "meld-auto-merge",
-					"title": "Meld Merge",
+					"title": "Weld Merge",
 					"icon": "images/icon.png"
 				}
 			]
@@ -44,7 +59,7 @@
 			"scm": [
 				{
 					"id": "meldConflictedFiles",
-					"name": "Meld Merge : Conflicted Files",
+					"name": "Weld Merge : Conflicted Files",
 					"icon": "$(warning)"
 				}
 			]
@@ -113,27 +128,27 @@
 		"commands": [
 			{
 				"command": "meld-auto-merge.autoMerge",
-				"title": "Meld: Auto-Merge Current File",
+				"title": "Weld: Auto-Merge Current File",
 				"icon": "$(merge)"
 			},
 			{
 				"command": "meld-auto-merge.autoMergeAll",
-				"title": "Meld: Auto-Merge All Conflicted Files",
+				"title": "Weld: Auto-Merge All Conflicted Files",
 				"icon": "$(check-all)"
 			},
 			{
 				"command": "meld-auto-merge.checkoutConflicted",
-				"title": "Meld: Checkout Conflicted (-m)",
+				"title": "Weld: Checkout Conflicted (-m)",
 				"icon": "$(history)"
 			},
 			{
 				"command": "meld-auto-merge.rerereForget",
-				"title": "Meld: Rerere Forget File",
+				"title": "Weld: Rerere Forget File",
 				"icon": "$(trash)"
 			},
 			{
 				"command": "meld-auto-merge.smartAdd",
-				"title": "Meld: Git Add Resolved",
+				"title": "Weld: Git Add Resolved",
 				"icon": "$(add)"
 			},
 			{
@@ -148,17 +163,17 @@
 			},
 			{
 				"command": "meld-auto-merge.openMeldDiff",
-				"title": "Meld: 3-Way Merge Conflict Editor",
+				"title": "Weld: 3-Way Merge Conflict Editor",
 				"icon": "$(split-horizontal)"
 			},
 			{
 				"command": "meld-auto-merge.refreshConflicted",
-				"title": "Meld: Refresh Conflicted Files",
+				"title": "Weld: Refresh Conflicted Files",
 				"icon": "$(refresh)"
 			}
 		],
 		"configuration": {
-			"title": "Meld Merge",
+			"title": "Weld Merge",
 			"properties": {
 				"meld.mergeEditor.debounceDelay": {
 					"type": "integer",
@@ -335,12 +350,13 @@
 		"@biomejs/biome": "2.4.4",
 		"@jazzer.js/core": "^2.1.0",
 		"@jazzer.js/jest-runner": "^2.1.0",
+		"@jest/globals": "^30.3.0",
 		"@monaco-editor/react": "^4.7.0",
-		"@testing-library/jest-dom": "^6.9.1",
-		"@testing-library/react": "^16.3.2",
 		"@stryker-mutator/core": "^9.6.0",
 		"@stryker-mutator/jest-runner": "^9.6.0",
 		"@stryker-mutator/typescript-checker": "^9.6.0",
+		"@testing-library/jest-dom": "^6.9.1",
+		"@testing-library/react": "^16.3.2",
 		"@types/jest": "^29.5.12",
 		"@types/lodash.debounce": "^4.0.9",
 		"@types/node": "18.x",

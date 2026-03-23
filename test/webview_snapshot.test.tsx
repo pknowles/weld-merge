@@ -66,7 +66,7 @@ jest.mock("@monaco-editor/react", () => {
 				const mock = createMockEditor(props.defaultValue || "");
 				props.onMount(mock);
 			}
-		}, [props.onMount, props.defaultValue]);
+		}, []);
 		return <div data-testid="monaco-editor" />;
 	};
 });

@@ -1,5 +1,13 @@
 # Future Improvements & Known Issues
 
+## Funcional breakages
+
+Undo history is broken after making changes with the action buttons
+
+Connections sides with no content should not have action buttons
+
+Should conflict blocks have an "x" action button? Does it match meld?
+
 ## Perf improvements
 
 Update SVG connection attributes rather than re-render the entire SVG. This involves keeping track of which we've displayed/culled, only updating the svg if those changed, and otherwise just updating the path coordinates.

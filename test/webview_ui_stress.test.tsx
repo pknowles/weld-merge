@@ -318,7 +318,7 @@ jest.mock("@monaco-editor/react", () => {
 				props.onMount(mock);
 				initialized.current = true;
 			}
-		}, [props.onMount, props.defaultValue, props.options?.readOnly]);
+		}, []);
 
 		if (currentEntry.current) {
 			currentEntry.current.props = props;

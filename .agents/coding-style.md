@@ -5,7 +5,9 @@ These design decisions reflect an effective approach to building maintainable, s
 ## Strict Initialization & Type Safety
 
 **Dependencies are implied by the type system.**
-Avoid delayed initialization. Do not create empty objects (`{}`) or `Partial<T>` objects only to mutate and fill them in later. If a component or function requires data, it should be passed at initialization/render time. This makes code unambiguous and less error-prone. By forcing complete initialization, TypeScript will immediately remind the developer (or agent) to supply the necessary dependencies. Let the TS compiler help us design better.
+Avoid delayed initialization. Do not create empty objects (`{}`) or `Partial<T>` objects only to mutate and fill them in later. If a component or function requires data, it should be passed at initialization time. This makes code unambiguous and less error-prone. By forcing complete initialization, TypeScript will immediately remind the developer (or agent) to supply the necessary dependencies. Let the TS compiler help us design better.
+
+Do not check for null/undefined inside leaf functions or constructed objects. Instead, guarantee all objects are valid when constructed or throw. Doing so will prevent you from passing an invalid object to a function so you don't need to waste lines checking and handling invalid objects. Again, if it's null, then the API contract is violated anyway, so do not check.
 
 **Strictly avoid "optional" dependencies.**
 If optionality is truly needed, you must have a very strong justification. Otherwise, safety comes first: force dependencies to be present, and require explicit types instead of `?` or `Partial<T>`. This firmly aligns with RAII and strict initialization—if you have an object, you know it is fully initialized and valid.
@@ -22,6 +24,10 @@ Shortcuts and higher-level application components are encouraged, but they must 
 ## Simple, Singular Implementation
 
 Do not add fallbacks, defensive checks or paths to handle unexpected issues. These make it difficult to find bugs and imply we ship code with them. Fail fast with good error messages. It is up to the caller to provide valid data, we should enforce strong input guarantees and at most we can re-validate it.
+
+This is so critically important I'll repeat it. "Defensive coding", "graceful handling" of unexpected values, "clamping" out of bounds access, these are hallmarks of bad programming and strictly forbidden. Any band-aid fixes are forbidden. Fail fast and crash if there is a bug. Then FIX THE BUG. DO NOT suppress it!
+
+Do not console.log() instead of throw exceptions. Do not catch exceptions to silently ignore bugs. Knowing about failures is infinitely more important than not crashing. I'd prefer a crashing app than an app that only half works.
 
 Don't over-engineer to support hypothetical future edge cases. Pick one standard way to do something and do it well, without limiting core features.
 

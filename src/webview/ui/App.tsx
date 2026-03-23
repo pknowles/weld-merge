@@ -198,6 +198,16 @@ const useMeldUIActions = (p: MeldUIActionsProps) =>
 			getHighlights: p.highlights,
 			requestClipboardText: p.requestClipboardText,
 			writeClipboardText: p.writeClipboardText,
+			onEditImmediate: (i: number) => {
+				if (i === 2) {
+					const nd = [...p.diffs] as PaneDiffs;
+					nd[1] = null;
+					nd[2] = null;
+					p.diffsRef.current = nd;
+					p.setDiffs(nd);
+					p.setRenderTrigger((prev) => prev + 1);
+				}
+			},
 			onEdit: debounce((v: string | undefined, i: number) => {
 				if (v !== undefined && i === 2) {
 					p.commitModelUpdate(v);

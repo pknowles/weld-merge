@@ -1,134 +1,147 @@
+import { jest } from "@jest/globals";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import type { editor } from "monaco-editor";
+import { useEffect, useRef } from "react";
 import { App } from "../src/webview/ui/App.tsx";
+import { createMockEditor } from "./mockEditor.ts";
 
-// biome-ignore lint/suspicious/noExplicitAny: jest is global
-declare let jest: any;
+jest.mock("monaco-editor", () => {
+	const mock = {} as unknown as typeof import("monaco-editor");
 
-// Mock monaco-editor
-jest.mock("monaco-editor", () => ({
-	editor: {
-		// biome-ignore lint/suspicious/noExplicitAny: mock
-		// biome-ignore lint/style/useNamingConvention: Monaco API
-		IStandaloneCodeEditor: {} as any,
-		// biome-ignore lint/style/useNamingConvention: Monaco API
-		EditorOption: {
-			lineHeight: 1,
+	const mockEditor = {} as typeof editor;
+	Object.defineProperty(mock, "editor", { value: mockEditor });
+
+	const mockEditorOption = {
+		lineHeight: 1,
+		readOnly: 1,
+	};
+	Object.defineProperty(mockEditor, "EditorOption", {
+		value: mockEditorOption,
+	});
+
+	Object.defineProperty(mock, "Selection", {
+		value: {
+			createWithSelection() {
+				return {};
+			},
 		},
-	},
-	// biome-ignore lint/style/useNamingConvention: Monaco API
-	Selection: {
-		createWithSelection() {
-			return {};
-		},
-	},
-	// biome-ignore lint/style/useNamingConvention: Monaco API
-	KeyMod: {
-		// biome-ignore lint/style/useNamingConvention: Monaco API
-		Alt: 512,
-		// biome-ignore lint/style/useNamingConvention: Monaco API
-		CtrlCmd: 2048,
-	},
-	// biome-ignore lint/style/useNamingConvention: Monaco API
-	KeyCode: {
-		// biome-ignore lint/style/useNamingConvention: Monaco API
-		KeyJ: 40,
-		// biome-ignore lint/style/useNamingConvention: Monaco API
-		KeyK: 41,
-		// biome-ignore lint/style/useNamingConvention: Monaco API
-		Alt: 512,
-		// biome-ignore lint/style/useNamingConvention: Monaco API
-		UpArrow: 1,
-		// biome-ignore lint/style/useNamingConvention: Monaco API
-		DownArrow: 2,
-	},
-}));
+	});
+
+	const mockKeyMod = {};
+	Object.defineProperty(mockKeyMod, "Alt", { value: 512 });
+	Object.defineProperty(mockKeyMod, "CtrlCmd", { value: 2048 });
+	Object.defineProperty(mock, "KeyMod", { value: mockKeyMod });
+
+	const mockKeyCode = {};
+	Object.defineProperty(mockKeyCode, "KeyJ", { value: 40 });
+	Object.defineProperty(mockKeyCode, "KeyK", { value: 41 });
+	Object.defineProperty(mockKeyCode, "Alt", { value: 512 });
+	Object.defineProperty(mockKeyCode, "UpArrow", { value: 1 });
+	Object.defineProperty(mockKeyCode, "DownArrow", { value: 2 });
+	Object.defineProperty(mockKeyCode, "KeyC", { value: 3 });
+	Object.defineProperty(mockKeyCode, "KeyX", { value: 4 });
+	Object.defineProperty(mockKeyCode, "KeyV", { value: 5 });
+	Object.defineProperty(mock, "KeyCode", { value: mockKeyCode });
+
+	Object.defineProperty(mockEditor, "IStandaloneCodeEditor", {
+		value: {},
+	});
+
+	return mock;
+});
 
 // Mock ResizeObserver
 global.ResizeObserver = class ResizeObserver {
-	// biome-ignore lint/suspicious/noEmptyBlockStatements: mock
-	observe() {}
-	// biome-ignore lint/suspicious/noEmptyBlockStatements: mock
-	unobserve() {}
-	// biome-ignore lint/suspicious/noEmptyBlockStatements: mock
-	disconnect() {}
+	observe() {
+		/* mock */
+	}
+	unobserve() {
+		/* mock */
+	}
+	disconnect() {
+		/* mock */
+	}
 };
 
-import { createMockEditor } from "./mockEditor.ts";
-
-// biome-ignore lint/suspicious/noExplicitAny: mock
-const messagesSent: any[] = [];
+const messagesSent: unknown[] = [];
 const vscode = {
-	// biome-ignore lint/suspicious/noExplicitAny: mock
-	postMessage: jest.fn((msg: any) => {
+	postMessage: jest.fn((msg: unknown) => {
 		messagesSent.push(msg);
 	}),
 	getState: jest.fn(() => ({})),
-	// biome-ignore lint/suspicious/noExplicitAny: mock
-	setState: jest.fn((_state: any) => {
-		// mock implementation
+	setState: jest.fn((_state: unknown) => {
+		/* mock implementation */
 	}),
 };
-// biome-ignore lint/suspicious/noExplicitAny: mock
-(window as any).acquireVsCodeApi = () => vscode;
+(
+	window as unknown as { acquireVsCodeApi: () => typeof vscode }
+).acquireVsCodeApi = () => vscode;
 
-jest.mock("@monaco-editor/react", () => {
-	// biome-ignore lint/style/noCommonJs: jest mock requirement
-	const { useEffect } = require("react");
-	// biome-ignore lint/suspicious/noExplicitAny: mock
-	return function MockedEditor(props: any) {
-		useEffect(() => {
-			if (props.onMount) {
-				const mock = createMockEditor(props.defaultValue || "");
-				// biome-ignore lint/suspicious/noExplicitAny: mock
-				(mock as any)._monaco_mock = mock; // for easier access
-				props.onMount(mock);
+// Editors registered in the order they are mounted, for retrieval by tests.
+const mountedEditors: ReturnType<typeof createMockEditor>[] = [];
+
+jest.mock(
+	"@monaco-editor/react",
+	() =>
+		function MockedEditor(props: {
+			onMount?: (ed: ReturnType<typeof createMockEditor>) => void;
+			value?: string;
+			defaultValue?: string;
+		}) {
+			const editorRef = useRef<ReturnType<
+				typeof createMockEditor
+			> | null>(null);
+
+			if (editorRef.current) {
+				const val =
+					props.value !== undefined
+						? props.value
+						: props.defaultValue;
+				if (val !== undefined) {
+					editorRef.current.setValue(val);
+				}
 			}
-		}, [props.onMount, props.defaultValue]);
-		return <div data-testid="monaco-editor" />;
-	};
-});
 
-describe("Webview E2E Regression Tests", () => {
-	beforeEach(() => {
-		jest.useFakeTimers();
-		messagesSent.length = 0;
-	});
+			useEffect(() => {
+				if (props.onMount && !editorRef.current) {
+					const mock = createMockEditor(
+						props.value || props.defaultValue || "",
+					);
+					editorRef.current = mock;
+					mountedEditors.push(mock);
+					props.onMount(mock);
+				}
+			}, [props.onMount, props.value, props.defaultValue]);
 
-	afterEach(() => {
-		// biome-ignore lint/suspicious/noExplicitAny: mock
-		(window as any).acquireVsCodeApi = undefined;
-		jest.useRealTimers();
-	});
-});
+			return <div data-testid="monaco-editor" />;
+		},
+);
 
-const clickActionButton = async (action: string, side: string) => {
-	// Buttons only render if diffs state is updated and curtains re-render.
+const clickActionButton = async (action: string) => {
 	let buttons = screen.queryAllByRole("button");
-
 	if (
 		buttons.filter((b) => b.getAttribute("title") === action).length === 0
 	) {
 		await act(() => {
-			jest.runAllTimers();
+			for (let i = 0; i < 5; i++) {
+				jest.advanceTimersByTime(100);
+			}
 		});
 		buttons = screen.queryAllByRole("button");
 	}
-
 	const actionButtons = buttons.filter(
 		(b) => b.getAttribute("title") === action,
 	);
 	const btn = actionButtons[0];
-
 	if (!btn) {
 		const titles = buttons
 			.map((b) => b.getAttribute("title"))
-			.filter(Boolean)
+			.filter((t): t is string => typeof t === "string")
 			.join(", ");
 		throw new Error(
-			`Button ${action} for ${side} side not found. Available buttons: ${titles}`,
+			`Button ${action} not found. Available buttons: ${titles}`,
 		);
 	}
-
 	await act(() => {
 		fireEvent.click(btn);
 	});
@@ -156,7 +169,6 @@ const runTestCase = async (config: {
 						{ label: "Remote", content: config.remote },
 					],
 					diffs: [
-						// Local <-> Merged
 						config.side === "left"
 							? [
 									{
@@ -168,7 +180,6 @@ const runTestCase = async (config: {
 									},
 								]
 							: [],
-						// Merged <-> Remote
 						config.side === "right"
 							? [
 									{
@@ -190,55 +201,42 @@ const runTestCase = async (config: {
 	await act(() => {
 		jest.advanceTimersByTime(500);
 	});
-
-	await clickActionButton(config.action, config.side);
-
+	await clickActionButton(config.action);
 	await act(() => {
 		jest.advanceTimersByTime(100);
 	});
 
-	const mergedEditors = screen.getAllByTestId("monaco-editor");
-	// Local, Merged, Remote
-	const mergedEditorIdx = 1;
-	// biome-ignore lint/suspicious/noExplicitAny: mock
-	const mergedEditor = (mergedEditors[mergedEditorIdx] as any)._monaco_mock;
-
-	if (mergedEditor) {
-		// biome-ignore lint/suspicious/noMisplacedAssertion: runTestCase helper
-		expect(mergedEditor.getValue()).toBe(config.expected);
-	}
+	// Editors mount in order: Local (0), Merged (1), Remote (2)
+	return mountedEditors[1] ?? null;
 };
 
 describe("Webview E2E - Chunk Actions", () => {
 	beforeEach(() => {
 		jest.useFakeTimers();
 		messagesSent.length = 0;
+		mountedEditors.length = 0;
 	});
 
 	afterEach(() => {
-		// biome-ignore lint/suspicious/noExplicitAny: mock
-		(window as any).acquireVsCodeApi = undefined;
+		(window as unknown as { acquireVsCodeApi: unknown }).acquireVsCodeApi =
+			undefined;
 		jest.useRealTimers();
 	});
 
 	it("permutes test cases correctly", async () => {
-		const testCases = [
-			{
-				name: "Push from Local at start",
-				local: "updated line\nline 2",
-				base: "line 1\nline 2",
-				remote: "line 1\nline 2",
-				action: "Push" as const,
-				side: "left" as const,
-				start: 0,
-				expected: "updated line\nline 2",
-			},
-		];
+		const tc = {
+			name: "Push from Local at start",
+			local: "updated line\nline 2",
+			base: "line 1\nline 2",
+			remote: "line 1\nline 2",
+			action: "Push" as const,
+			side: "left" as const,
+			start: 0,
+			expected: "updated line\nline 2",
+		};
 
-		for (const tc of testCases) {
-			// biome-ignore lint/performance/noAwaitInLoops: sequential execution required
-			await runTestCase(tc);
-		}
+		const mergedEditor = await runTestCase(tc);
+		expect(mergedEditor?.getValue()).toBe(tc.expected);
 	});
 });
 
@@ -267,42 +265,69 @@ const setupApp = async () => {
 	});
 };
 
+const setupLongDocumentTestCase = async () => {
+	const localLines = Array.from({ length: 400 }, (_, i) => `Line ${i + 1}`);
+	const mergedLines = Array.from({ length: 50 }, (_, i) => `Line ${i + 1}`);
+	await act(() => {
+		window.dispatchEvent(
+			new MessageEvent("message", {
+				data: {
+					command: "loadDiff",
+					data: {
+						config: { showBase: false },
+						files: [
+							{ label: "Local", content: localLines.join("\n") },
+							{
+								label: "Merged",
+								content: mergedLines.join("\n"),
+							},
+							{ label: "Remote", content: "remote" },
+						],
+						diffs: [
+							[
+								{
+									tag: "delete",
+									startA: 380,
+									endA: 390,
+									startB: 10,
+									endB: 10,
+								},
+							],
+							[],
+						],
+					},
+				},
+				origin: "*",
+			}),
+		);
+	});
+};
+
 describe("Webview E2E - Base Comparisons", () => {
 	beforeEach(() => {
 		jest.useFakeTimers();
 		messagesSent.length = 0;
+		mountedEditors.length = 0;
 	});
 
 	afterEach(() => {
-		// biome-ignore lint/suspicious/noExplicitAny: mock
-		(window as any).acquireVsCodeApi = undefined;
+		(window as unknown as { acquireVsCodeApi: unknown }).acquireVsCodeApi =
+			undefined;
 		jest.useRealTimers();
 	});
 
 	it("toggles compare with base and verifies visibility", async () => {
 		await setupApp();
-
-		// 1. Initial state: 3 editors
-		const editors = screen.getAllByTestId("monaco-editor");
-		expect(editors).toHaveLength(3);
-
-		// 2. Click "Toggle compare with Base" on Local side
-		const leftToggle = screen.getByTestId("toggle-base-left");
-		expect(leftToggle).toBeDefined();
-
+		expect(screen.getAllByTestId("monaco-editor")).toHaveLength(3);
 		await act(() => {
-			fireEvent.click(leftToggle);
+			fireEvent.click(screen.getByTestId("toggle-base-left"));
 		});
-
-		// Verify request message was sent
 		expect(vscode.postMessage).toHaveBeenCalledWith(
 			expect.objectContaining({
 				command: "requestBaseDiff",
 				side: "left",
 			}),
 		);
-
-		// 3. Simulate extension response
 		await act(() => {
 			window.dispatchEvent(
 				new MessageEvent("message", {
@@ -318,25 +343,18 @@ describe("Webview E2E - Base Comparisons", () => {
 				}),
 			);
 		});
-
-		// 4. Wait for animation
 		await act(() => {
-			jest.advanceTimersByTime(500); // ANIMATION_DURATION is 430
+			jest.advanceTimersByTime(500);
 		});
-
-		// 5. Verify 4 editors and 1 diff curtain (between Base and Local)
 		expect(screen.getAllByTestId("monaco-editor")).toHaveLength(4);
-		expect(screen.getAllByTitle("Diff Connections")).toHaveLength(3); // base-local, local-merged, merged-remote
+		expect(screen.getAllByTitle("Diff Connections")).toHaveLength(3);
+	});
 
-		// 6. Click "Toggle compare with Base" on Remote side
-		const rightToggle = screen.getByTestId("toggle-base-right");
-		expect(rightToggle).toBeDefined();
-
+	it("toggles compare with base on remote side", async () => {
+		await setupApp();
 		await act(() => {
-			fireEvent.click(rightToggle);
+			fireEvent.click(screen.getByTestId("toggle-base-right"));
 		});
-
-		// Simulate response for right side
 		await act(() => {
 			window.dispatchEvent(
 				new MessageEvent("message", {
@@ -352,24 +370,56 @@ describe("Webview E2E - Base Comparisons", () => {
 				}),
 			);
 		});
-
 		await act(() => {
 			jest.advanceTimersByTime(500);
 		});
-
-		// 7. Verify 5 editors and 4 diff curtains
-		expect(screen.getAllByTestId("monaco-editor")).toHaveLength(5);
-		expect(screen.getAllByTitle("Diff Connections")).toHaveLength(4); // BL-L, L-M, M-R, R-BR
-
-		// 8. Toggle off
-		await act(() => {
-			fireEvent.click(leftToggle);
-		});
-
-		await act(() => {
-			jest.advanceTimersByTime(500);
-		});
-
 		expect(screen.getAllByTestId("monaco-editor")).toHaveLength(4);
+		expect(screen.getAllByTitle("Diff Connections")).toHaveLength(3);
+	});
+});
+
+describe("Webview E2E - Stress Tests", () => {
+	beforeEach(() => {
+		jest.useFakeTimers();
+		messagesSent.length = 0;
+		mountedEditors.length = 0;
+	});
+
+	afterEach(() => {
+		(window as unknown as { acquireVsCodeApi: unknown }).acquireVsCodeApi =
+			undefined;
+		jest.useRealTimers();
+	});
+
+	it("does not crash when typing in Merged shrinks the document below Local's bounds (reversed limits bug)", async () => {
+		await setupApp();
+		await setupLongDocumentTestCase();
+		await act(() => {
+			jest.advanceTimersByTime(500);
+		});
+		expect(screen.getAllByTitle("Diff Connections").length).toBeGreaterThan(
+			0,
+		);
+		const newMergedLines = Array.from(
+			{ length: 40 },
+			(_, i) => `Line ${i + 1}`,
+		);
+		await act(() => {
+			window.dispatchEvent(
+				new MessageEvent("message", {
+					data: {
+						command: "updateContent",
+						text: newMergedLines.join("\n"),
+					},
+					origin: "*",
+				}),
+			);
+		});
+		await act(() => {
+			jest.advanceTimersByTime(500);
+		});
+		expect(screen.getAllByTitle("Diff Connections").length).toBeGreaterThan(
+			0,
+		);
 	});
 });

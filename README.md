@@ -1,4 +1,4 @@
-# Meld 3-Way Merge for VS Code
+# Weld Merge — A Meld-Style 3-Way Git Merge Tool for VS Code
 
 [![Install](https://img.shields.io/badge/VS%20Code-Install%20Extension-blue?logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=pknowles.meld-auto-merge)
 ![Installs](https://img.shields.io/visual-studio-marketplace/i/pknowles.meld-auto-merge?style=flat-square)
@@ -6,6 +6,10 @@
 ![Build](https://github.com/pknowles/meld/actions/workflows/ci.yml/badge.svg)
 ![Verified](https://img.shields.io/badge/publisher-verified-brightgreen)
 ![License](https://img.shields.io/github/license/pknowles/meld)
+
+Weld Merge is a VS Code extension that replicates the fantastic 3-way merge
+algorithm and interface from the classic [Meld](https://meldmerge.org/)
+diff/merge tool.
 
 ![Meld Extension Three-Way View](./images/screenshot_meld_conflicteg.png)
 *Boost developer productivity with an intuitive layout, clear connections, and automated resolutions that standard git tools miss.*
