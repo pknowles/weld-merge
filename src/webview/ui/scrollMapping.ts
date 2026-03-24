@@ -7,13 +7,11 @@ interface MappingOptions {
 	sourceMaxLines: number;
 	targetMaxLines: number;
 	sourceIsA: boolean;
-	smooth: boolean;
 }
 
 interface PaneMappingContext {
 	diffs: (DiffChunk[] | null)[];
 	paneLineCounts: [number, number, number, number, number];
-	smooth: boolean;
 	diffIsReversed: boolean[];
 }
 
@@ -194,63 +192,6 @@ function _getGeneralInterpolationRanges(
 	];
 }
 
-function _findDiscreteChunkIndex(
-	chunks: DiffChunk[],
-	line: number,
-	sourceIsA: boolean,
-): number {
-	let low = 0;
-	let high = chunks.length;
-	while (low < high) {
-		const mid = (low + high) >>> 1;
-		const chunk = chunks[mid];
-		if (chunk && _sOf(chunk, sourceIsA)[0] <= line) {
-			low = mid + 1;
-		} else {
-			high = mid;
-		}
-	}
-	return low;
-}
-
-function _mapLineDiscrete(line: number, opts: MappingOptions): number {
-	const { chunks, sourceIsA } = opts;
-	if (!chunks || chunks.length === 0) {
-		return line;
-	}
-	const idx = _findDiscreteChunkIndex(chunks, line, sourceIsA);
-
-	if (idx > 0) {
-		const prev = chunks[idx - 1];
-		if (prev) {
-			const [, s2] = _sOf(prev, sourceIsA);
-			if (line < s2) {
-				const [s1] = _sOf(prev, sourceIsA);
-				const [t1, t2] = _tOf(prev, sourceIsA);
-				return _interpolate(line, s1, s2, t1, t2);
-			}
-		}
-	}
-
-	if (idx < chunks.length) {
-		const chunk = chunks[idx];
-		if (chunk) {
-			const [sCurStart] = _sOf(chunk, sourceIsA);
-			const [tCurStart] = _tOf(chunk, sourceIsA);
-			return line + (tCurStart - sCurStart);
-		}
-	}
-
-	const last = chunks.at(-1);
-	if (last) {
-		const [, sEnd] = _sOf(last, sourceIsA);
-		const [, tEnd] = _tOf(last, sourceIsA);
-		return line + (tEnd - sEnd);
-	}
-
-	return line;
-}
-
 function _mapLineSmooth(line: number, opts: MappingOptions): number {
 	const { chunks, sourceMaxLines, targetMaxLines, sourceIsA } = opts;
 	if (!chunks) {
@@ -304,11 +245,8 @@ function _mapLineSmooth(line: number, opts: MappingOptions): number {
 /**
  * Maps a continuous line number from one side of a chunk array to the other.
  */
-/**
- * Maps a continuous line number from one side of a chunk array to the other.
- */
 function mapLineAcrossChunks(line: number, opts: MappingOptions): number {
-	const { chunks, sourceMaxLines, targetMaxLines, smooth } = opts;
+	const { chunks, sourceMaxLines, targetMaxLines } = opts;
 	const clampedLine = Math.max(0, Math.min(line, sourceMaxLines - 1e-10));
 	const targetClamp = (val: number) =>
 		Math.max(0, Math.min(val, targetMaxLines));
@@ -325,10 +263,7 @@ function mapLineAcrossChunks(line: number, opts: MappingOptions): number {
 		}
 	}
 
-	if (smooth) {
-		return targetClamp(_mapLineSmooth(clampedLine, opts));
-	}
-	return targetClamp(_mapLineDiscrete(clampedLine, opts));
+	return targetClamp(_mapLineSmooth(clampedLine, opts));
 }
 
 /**
@@ -340,7 +275,7 @@ function mapLineAcrossPanes(
 	targetIdx: number,
 	ctx: PaneMappingContext,
 ): number {
-	const { diffs, paneLineCounts, smooth, diffIsReversed } = ctx;
+	const { diffs, paneLineCounts, diffIsReversed } = ctx;
 	if (sourceIdx === targetIdx) {
 		return sourceLine;
 	}
@@ -364,7 +299,6 @@ function mapLineAcrossPanes(
 		sourceMaxLines: paneLineCounts[sourceIdx as 0 | 1 | 2 | 3 | 4],
 		targetMaxLines: paneLineCounts[nextIdx as 0 | 1 | 2 | 3 | 4],
 		sourceIsA,
-		smooth,
 	});
 
 	return mapLineAcrossPanes(targetLine, nextIdx, targetIdx, ctx);

@@ -256,7 +256,6 @@ const useAppCoreData = () => {
 	const [syntaxHighlighting, setSyntaxHighlighting] = useState(true);
 	const [baseCompareHighlighting, setBaseCompareHighlighting] =
 		useState(false);
-	const [smoothScrolling, setSmoothScrolling] = useState(true);
 	const [renderTrigger, setRenderTrigger] = useState(0);
 	const editorRefArray = useRef<editor.IStandaloneCodeEditor[]>([]);
 	const diffsAreReversedRef = useRef<boolean[]>([false, true, false, false]);
@@ -276,8 +275,6 @@ const useAppCoreData = () => {
 		setSyntaxHighlighting,
 		baseCompareHighlighting,
 		setBaseCompareHighlighting,
-		smoothScrolling,
-		setSmoothScrolling,
 		renderTrigger,
 		setRenderTrigger,
 		editorRefArray,
@@ -307,7 +304,6 @@ const useAppStateMessageHandlers = (
 		setDebounceDelay: d.setDebounceDelay,
 		setSyntaxHighlighting: d.setSyntaxHighlighting,
 		setBaseCompareHighlighting: d.setBaseCompareHighlighting,
-		setSmoothScrolling: d.setSmoothScrolling,
 		setRenderTrigger: d.setRenderTrigger,
 		commitModelUpdate,
 		resolveClipboardRead: s.resolveClipboardRead,
@@ -366,7 +362,6 @@ const useAppState = () => {
 		d.diffsRef,
 		d.diffsAreReversedRef,
 		d.setRenderTrigger,
-		d.smoothScrolling,
 	);
 
 	const prevBL = usePreviousNonNull(d.files[0]);

@@ -13,7 +13,6 @@ interface SyncOptions {
 	targetIndices?: number[] | undefined;
 	diffs: (DiffChunk[] | null)[];
 	diffsAreReversed: boolean[];
-	smoothScrolling: boolean;
 }
 
 function getSyncPointY(
@@ -94,7 +93,6 @@ function syncScrollToTarget(opts: SyncOptions) {
 		targetIndices,
 		diffs,
 		diffsAreReversed,
-		smoothScrolling,
 	} = opts;
 	if (targetIdx === sourceIndex || targetIdx >= 5) {
 		return;
@@ -110,7 +108,6 @@ function syncScrollToTarget(opts: SyncOptions) {
 		{
 			diffs,
 			paneLineCounts: paneCounts,
-			smooth: smoothScrolling,
 			diffIsReversed: diffsAreReversed,
 		},
 	);
@@ -166,7 +163,6 @@ interface VerticalSyncContext {
 	editorRefs: React.MutableRefObject<editor.IStandaloneCodeEditor[]>;
 	diffsRef: React.MutableRefObject<(DiffChunk[] | null)[]>;
 	diffsAreReversedRef: React.MutableRefObject<boolean[]>;
-	smoothScrolling: boolean;
 	targetIndices?: number[] | undefined;
 }
 
@@ -179,7 +175,6 @@ function syncVerticalScroll(ctx: VerticalSyncContext) {
 		editorRefs,
 		diffsRef,
 		diffsAreReversedRef,
-		smoothScrolling,
 		targetIndices,
 	} = ctx;
 	const { height } = sourceEd.getLayoutInfo();
@@ -203,7 +198,6 @@ function syncVerticalScroll(ctx: VerticalSyncContext) {
 				targetIndices,
 				diffs: diffsRef.current,
 				diffsAreReversed: diffsAreReversedRef.current,
-				smoothScrolling,
 			});
 		}
 	}
@@ -214,7 +208,6 @@ const useSynchronizedScrolling = (
 	diffsRef: React.MutableRefObject<(DiffChunk[] | null)[]>,
 	diffsAreReversedRef: React.MutableRefObject<boolean[]>,
 	setRenderTrigger: React.Dispatch<React.SetStateAction<number>>,
-	smoothScrolling: boolean,
 ) => {
 	const scrollLockRef = React.useRef<boolean>(false);
 	const requestFrameRef = React.useRef<number | null>(null);
@@ -243,7 +236,6 @@ const useSynchronizedScrolling = (
 							editorRefs,
 							diffsRef,
 							diffsAreReversedRef,
-							smoothScrolling,
 							targetIndices,
 						});
 					}
@@ -266,7 +258,7 @@ const useSynchronizedScrolling = (
 				});
 			}
 		},
-		[editorRefs, diffsRef, diffsAreReversedRef, smoothScrolling],
+		[editorRefs, diffsRef, diffsAreReversedRef],
 	);
 
 	const attachScrollListener = React.useCallback(

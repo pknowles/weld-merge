@@ -38,7 +38,6 @@ describe("5-Pane Scroll Mapping Basic Tests", () => {
 			mapLineAcrossPanes(SOURCE_LINE_MIDDLE, PANE_LOCAL, PANE_MERGED, {
 				diffs: STANDARD_DIFFS,
 				paneLineCounts: PANE_COUNTS,
-				smooth: true,
 				diffIsReversed: [false, true, false, false],
 			});
 		}).not.toThrow();
@@ -49,7 +48,6 @@ describe("5-Pane Scroll Mapping Basic Tests", () => {
 			mapLineAcrossPanes(SOURCE_LINE_MIDDLE, PANE_LOCAL, PANE_MERGED, {
 				diffs: STANDARD_DIFFS,
 				paneLineCounts: PANE_COUNTS,
-				smooth: true,
 				diffIsReversed: [false, false, false, false],
 			});
 		}).toThrow("last chunk outside _sourceMaxLines");
@@ -76,7 +74,6 @@ describe("5-Pane Scroll Mapping Basic Tests", () => {
 			{
 				diffs: emptyDiffs,
 				paneLineCounts: counts,
-				smooth: true,
 				diffIsReversed: [false, true, false, false],
 			},
 		);
@@ -94,7 +91,6 @@ describe("5-Pane Scroll Mapping Advanced Tests", () => {
 			{
 				diffs: STANDARD_DIFFS,
 				paneLineCounts: PANE_COUNTS,
-				smooth: true,
 				diffIsReversed: [false, true, false, true],
 			},
 		);
@@ -126,7 +122,6 @@ describe("5-Pane Scroll Mapping Advanced Tests", () => {
 			{
 				diffs: complexDiffs,
 				paneLineCounts: counts,
-				smooth: true,
 				diffIsReversed: [false, true, false, false],
 			},
 		);

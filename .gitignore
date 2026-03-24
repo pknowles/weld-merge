@@ -6,3 +6,8 @@ coverage/
 .stryker-tmp/
 reports/
 .cifuzz-corpus/
+test/fuzz/**/corpus/
+test/fuzz/**/crash-*
+test/fuzz/**/timeout-*
+test/fuzz/**/slow-unit-*
+test/fuzz/**/oom-*

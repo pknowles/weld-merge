@@ -153,7 +153,6 @@ describe("Connection Directions and Bounds Checking", () => {
 			const result = mapLineAcrossPanes(190, 3, 4, {
 				diffs,
 				paneLineCounts,
-				smooth: true,
 				diffIsReversed,
 			});
 			expect(result).toBeLessThanOrEqual(388);

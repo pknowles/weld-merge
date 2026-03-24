@@ -31,7 +31,6 @@ interface MessageHandlersDeps {
 	setDebounceDelay: (d: number) => void;
 	setSyntaxHighlighting: (s: boolean) => void;
 	setBaseCompareHighlighting: (b: boolean) => void;
-	setSmoothScrolling: (s: boolean) => void;
 	setRenderTrigger: (p: (p: number) => number) => void;
 	commitModelUpdate: (v: string) => void;
 	resolveClipboardRead: (id: number, text: string) => void;
@@ -46,7 +45,6 @@ interface LoadDiffData {
 		debounceDelay?: number;
 		syntaxHighlighting?: boolean;
 		baseCompareHighlighting?: boolean;
-		smoothScrolling?: boolean;
 	};
 }
 
@@ -62,9 +60,6 @@ function handleConfig(config: LoadDiffData["config"], p: MessageHandlersDeps) {
 	}
 	if (config.baseCompareHighlighting !== undefined) {
 		p.setBaseCompareHighlighting(config.baseCompareHighlighting);
-	}
-	if (config.smoothScrolling !== undefined) {
-		p.setSmoothScrolling(config.smoothScrolling);
 	}
 }
 
@@ -251,7 +246,6 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 		setDebounceDelay,
 		setSyntaxHighlighting,
 		setBaseCompareHighlighting,
-		setSmoothScrolling,
 		setRenderTrigger,
 		commitModelUpdate,
 		resolveClipboardRead,
@@ -272,7 +266,6 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 						setDebounceDelay,
 						setSyntaxHighlighting,
 						setBaseCompareHighlighting,
-						setSmoothScrolling,
 						setRenderTrigger,
 						commitModelUpdate,
 						resolveClipboardRead,
@@ -290,7 +283,6 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 						setDebounceDelay,
 						setSyntaxHighlighting,
 						setBaseCompareHighlighting,
-						setSmoothScrolling,
 						setRenderTrigger,
 						commitModelUpdate,
 						resolveClipboardRead,
@@ -312,7 +304,6 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 						setDebounceDelay,
 						setSyntaxHighlighting,
 						setBaseCompareHighlighting,
-						setSmoothScrolling,
 						setRenderTrigger,
 						commitModelUpdate,
 						resolveClipboardRead,
@@ -341,7 +332,6 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 		setDebounceDelay,
 		setSyntaxHighlighting,
 		setBaseCompareHighlighting,
-		setSmoothScrolling,
 		setRenderTrigger,
 		commitModelUpdate,
 		resolveClipboardRead,

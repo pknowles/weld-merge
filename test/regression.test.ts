@@ -26,11 +26,6 @@ describe("Regression Tests: merge.ts", () => {
 		// 1. Delete before markers
 		// changeSequence(sequence, startidx, sizechange, texts)
 		// sequence 1 is the merged/middle pane in Merger's context usually?
-		// In Merger.initialize, sequences are [LOCAL, BASE, REMOTE].
-		// AutoMergeDiffer is a Differ. Differ.setSequences(sequences)
-		// Merger.initialize calls this.differ.setSequencesIter(sequences)
-
-		// If we change sequence 1 (BASE/Merged) at index 5, sizechange -2
 		differ.changeSequence(1, 5, -2, [[], [], []]);
 		expect(differ.unresolved).toEqual([8, 18, 28]);
 
@@ -45,9 +40,7 @@ describe("Regression Tests: merge.ts", () => {
 		expect(differ.unresolved).toEqual([18, 33]);
 
 		// 4. Insert exactly at a marker
-		// Current: [18, 33]. Insert 0 lines at index 18 (sizechange 0 is used for some reason in the code?)
-		// Code says: else if (sizechange === 0 && startidx === this.unresolved[lo]) { hi++; }
-		// This seems to delete a marker if an empty change happens exactly at it.
+		// Current: [18, 33]. Insert 0 lines at index 18
 		differ.changeSequence(1, 18, 0, [[], [], []]);
 		expect(differ.unresolved).toEqual([33]);
 	});
@@ -89,71 +82,51 @@ describe("Regression Tests: merge.ts", () => {
 	});
 });
 
-describe("Regression Tests: scrollMapping.ts", () => {
+describe("Regression Tests: scrollMapping.ts (now exclusively smooth)", () => {
 	const chunks: DiffChunk[] = [
 		{ tag: "equal", startA: 10, endA: 20, startB: 10, endB: 30 }, // 10 lines A -> 20 lines B
 	];
 
-	it("mapLineAcrossChunks kills boundary mutants (smooth=false)", () => {
-		// Exact start boundary
+	it("mapLineAcrossChunks implements smooth interpolation", () => {
+		// Line 10: midpoint between gap [0,10,0,10]->(5,5) and chunk mid (15,20).
+		// midpoint of gap is 5 in A, 5 in B.
+		// midpoint of chunk is 15 in A, 20 in B.
+		// mapping 10 in [5, 15] -> [5, 20] results in 12.5.
 		expect(
 			mapLineAcrossChunks(10, {
 				chunks,
 				sourceIsA: true,
 				sourceMaxLines: 100,
 				targetMaxLines: 100,
-				smooth: false,
 			}),
-		).toBe(10);
-		// Just inside start
-		expect(
-			mapLineAcrossChunks(10.1, {
-				chunks,
-				sourceIsA: true,
-				sourceMaxLines: 100,
-				targetMaxLines: 110,
-				smooth: false,
-			}),
-		).toBe(10.2);
+		).toBe(12.5);
 
-		// Exact end boundary
-		// sEnd is 20. B end is 30.
-		// If line < sEnd (20), it's in the chunk.
-		expect(
-			mapLineAcrossChunks(19.9, {
-				chunks,
-				sourceIsA: true,
-				sourceMaxLines: 100,
-				targetMaxLines: 110,
-				smooth: false,
-			}),
-		).toBeCloseTo(29.8);
-
-		// At sEnd (20), it should be in the gap AFTER the chunk
-		// Gap starts at sEnd=20, tEnd=30. Offset is tEnd - sEnd = 10.
-		// result = line + offset = 20 + 10 = 30.
+		// At sEnd (20): midpoint between chunk mid (15,20) and gap [20,100,30,100]->(60,65).
+		// midpoint of chunk is 15 in A, 20 in B.
+		// midpoint of gap is 60 in A, 65 in B.
+		// mapping 20 in [15, 60] -> [20, 65] results in 20 + (5/45)*45 = 25.
 		expect(
 			mapLineAcrossChunks(20, {
 				chunks,
 				sourceIsA: true,
 				sourceMaxLines: 100,
-				targetMaxLines: 110,
-				smooth: false,
+				targetMaxLines: 100,
 			}),
-		).toBe(30);
+		).toBe(25);
 	});
 
-	it("mapLineAcrossChunks handles empty chunks and large offsets", () => {
-		// Empty chunks should be 1:1 but clamped
+	it("mapLineAcrossChunks handles empty chunks", () => {
 		expect(
 			mapLineAcrossChunks(50, {
 				chunks: [],
 				sourceIsA: true,
 				sourceMaxLines: 100,
 				targetMaxLines: 100,
-				smooth: false,
 			}),
 		).toBe(50);
+	});
+
+	it("mapLineAcrossChunks clamps to bounds", () => {
 		// If line (250) > sourceMaxLines (200), it's clamped to 200 - eps
 		expect(
 			mapLineAcrossChunks(250, {
@@ -161,25 +134,9 @@ describe("Regression Tests: scrollMapping.ts", () => {
 				sourceIsA: true,
 				sourceMaxLines: 200,
 				targetMaxLines: 300,
-				smooth: false,
 			}),
 		).toBeCloseTo(200);
-	});
-
-	it("mapLineAcrossChunks trailing gap offset logic", () => {
-		const trailingChunks: DiffChunk[] = [
-			{ tag: "equal", startA: 0, endA: 10, startB: 0, endB: 20 },
-		];
-		// Line 15. Offset from last chunk is 20 - 10 = 10.
-		// Result 15 + 10 = 25.
-		expect(
-			mapLineAcrossChunks(15, {
-				chunks: trailingChunks,
-				sourceIsA: true,
-				sourceMaxLines: 100,
-				targetMaxLines: 100,
-				smooth: false,
-			}),
-		).toBe(25);
+		// Actually, mapLineAcrossChunks with no chunks returns targetClamp(clampedLine).
+		// targetClamp(Math.min(250, 200-eps)) = targetClamp(200-eps) = 200.
 	});
 });

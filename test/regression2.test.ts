@@ -49,35 +49,7 @@ describe("More Regression Tests: diffutil & myers", () => {
 });
 
 describe("More Regression Tests: scrollMapping.ts", () => {
-	it("throws on invalid chunk index for implicit chunks", () => {
-		// Just to get rid of the uncovered throw logic
-		// We'll invoke it indirectly via mapLineAcrossChunks by messing with chunks array if we can,
-		// but since we only have public mapLineAcrossChunks, we will trigger the trailing logic edge case
-	});
-
-	it("mapLineAcrossChunks hits trailing without last chunk somehow", () => {
-		// 310: return targetClamp(clampedLine)
-		// It only happens if idx >= chunks.length AND lastChunk is undefined
-		// which means chunks is not empty but lastChunk is falsy. Typescript says DiffChunk[] so we can't easily,
-		// but we can pass an array with undefined or use a proxy.
-		// biome-ignore lint/suspicious/noExplicitAny: hack for testing
-		const chunks: DiffChunk[] = [undefined as any, undefined as any];
-		try {
-			mapLineAcrossChunks(10, {
-				chunks,
-				sourceIsA: true,
-				sourceMaxLines: 20,
-				targetMaxLines: 20,
-				smooth: false,
-			});
-		} catch {
-			// expected error, if any
-		}
-	});
-
-	it("mapLineAcrossChunks proportional mapping before first chunk (upperBound = 0) with prevChunk logic", () => {
-		// To hit lines 175-178 (upperBoundChunkIdx = 0, line < _implicitSrcMid)
-		// We need proportional mapping (smooth=true).
+	it("mapLineAcrossChunks proportional mapping before first chunk", () => {
 		// Chunk at index 0
 		const chunks: DiffChunk[] = [
 			{ tag: "equal", startA: 10, endA: 20, startB: 10, endB: 20 },
@@ -91,13 +63,11 @@ describe("More Regression Tests: scrollMapping.ts", () => {
 			sourceIsA: true,
 			sourceMaxLines: 30,
 			targetMaxLines: 30,
-			smooth: true,
 		});
 		expect(res).toBe(2);
 	});
 
-	it("mapLineAcrossChunks proportional mapping inside gap (upperBound = 1) with line > curUpper mid", () => {
-		// To hit lines 207-214
+	it("mapLineAcrossChunks proportional mapping inside gap", () => {
 		const chunks: DiffChunk[] = [
 			{ tag: "equal", startA: 0, endA: 10, startB: 0, endB: 10 },
 			{ tag: "equal", startA: 20, endA: 30, startB: 20, endB: 30 },
@@ -111,36 +81,34 @@ describe("More Regression Tests: scrollMapping.ts", () => {
 			sourceIsA: true,
 			sourceMaxLines: 40,
 			targetMaxLines: 40,
-			smooth: true,
 		});
 		expect(res).toBeGreaterThan(25);
 	});
 
-	it("mapLineAcrossChunks non-smooth leading/intermediate gap", () => {
-		// non-smooth (smooth=false)
+	it("mapLineAcrossChunks smooth interpolation in leading/intermediate gap", () => {
 		const chunks: DiffChunk[] = [
 			{ tag: "equal", startA: 10, endA: 20, startB: 15, endB: 25 },
 			{ tag: "equal", startA: 30, endA: 40, startB: 35, endB: 45 },
 		];
 		// Line in leading gap (0 to 10)
+		// Now uses smooth interpolation. line=5 -> gap mid is 5, maps to 7.5.
 		expect(
 			mapLineAcrossChunks(5, {
 				chunks,
 				sourceIsA: true,
 				sourceMaxLines: 50,
 				targetMaxLines: 50,
-				smooth: false,
 			}),
-		).toBe(10);
+		).toBe(7.5);
 		// Line in intermediate gap (24) -> upper = 1.
 		// Gap is [20, 30, 25, 35]. offset is 25 - 20 = 5.
+		// Mapping 24 in [15, 25] -> [20, 30] results in 29.
 		expect(
 			mapLineAcrossChunks(24, {
 				chunks,
 				sourceIsA: true,
 				sourceMaxLines: 50,
 				targetMaxLines: 50,
-				smooth: false,
 			}),
 		).toBe(29);
 	});
