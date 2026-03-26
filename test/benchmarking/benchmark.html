@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meld Benchmark Runner</title>
+    <!-- Use relative paths to the bundled files -->
+    <link rel="stylesheet" href="../../out/webview/index.css">
+    <style>
+        body { padding: 0; margin: 0; background-color: #1e1e1e; }
+        #root { width: 100vw; height: 100vh; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script>
+        "use strict";
+        // Mock VS Code API
+        window.acquireVsCodeApi = () => ({
+            postMessage: (msg) => {
+                window.parent.postMessage({ type: 'vscode', msg }, '*');
+            },
+            getState: () => ({}),
+            setState: () => { /* noop */ }
+        });
+    </script>
+    <script src="../../out/webview/index.js"></script>
+</body>
+</html>

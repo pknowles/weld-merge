@@ -1,7 +1,10 @@
 ---
 description: Post-Implementation Quality Checks
 ---
+
 # Testing & Quality Guidelines
+
+After implementing features you must read through the coding-style.md and make sure everything you did conforms. Check you completed everything asked of you, that there are no regressions, introduced bugs, code duplication or dead code. Be honest and report any deficiencies to the user immediately.
 
 When implementing new features or making significant refactors in the `vscode-extension` directory, you MUST run these structural and quality tools post-implementation.
 

@@ -18,4 +18,5 @@ export default {
 			statements: 68,
 		},
 	},
+	testPathIgnorePatterns: ["/node_modules/", "/test/benchmarking/"],
 };

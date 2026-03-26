@@ -37,6 +37,7 @@ Rely on standard, native JavaScript/React APIs whenever possible. Don't build ma
 
 **Never decay code quality.**
 Agents MUST NOT relax linter rules, Knip configuration, or Dependency-Cruiser rules to "force" a build to pass. 
+- Write code that conforms to linting and fix all lint errors **without using biome-ignore, eslint-disable, or any suppression comments. If a rule cannot be satisfied you cannot finish your work and must explain why to the user instead of suppressing it.
 - **NO SILENCING ALLOWED**: It is strictly forbidden to use `// @ts-ignore`, `// @ts-expect-error`, `// biome-ignore`, or `// eslint-disable` comments. If a type is too complex to figure out immediately, it is better to refactor the data structure until the types are simple and obvious, rather than silencing the compiler. Do not use `any` to bypass the type checker.
 - If an architectural boundary is violated, the code must be refactored to respect the boundary. 
 - When creating new large modules, agents should proactively update configuration files to ensure the architecture scales safely:

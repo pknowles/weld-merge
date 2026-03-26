@@ -281,6 +281,7 @@ npm test              # run unit tests
 npm run test:coverage # run unit tests with code coverage report
 npm run test:mutate   # run Stryker mutation testing
 npm run test:fuzz     # run Jazzer.js fuzz testing
+npm run test:bench    # run performance benchmarks (logic & UI)
 npm run lint          # lint and format check
 npm run build         # build, lint etc
 npx vsce package      # build a .vsix installer
