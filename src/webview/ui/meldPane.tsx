@@ -114,11 +114,21 @@ const renderMeldCodePane = (
 			setTimeout(() => {
 				actions.setRenderTrigger((p) => p + 1);
 			}, 0);
-			const delay = i === 0 || i === 4 ? INITIAL_SYNC_DELAY : 0;
-			if (delay > 0) {
+			if (i === 0 || i === 4) {
+				const source = i === 0 ? 1 : 3;
+				const sync = () => {
+					if (ed.getLayoutInfo().height > 0) {
+						actions.forceSyncToPane(source, i);
+					}
+				};
+
+				// Sync now if ready, otherwise on layout change or after a delay
+				sync();
+				const disposable = ed.onDidLayoutChange(sync);
 				setTimeout(() => {
-					actions.forceSyncToPane(i === 0 ? 1 : 3, i);
-				}, delay);
+					disposable.dispose();
+					sync();
+				}, INITIAL_SYNC_DELAY);
 			}
 		}}
 	/>

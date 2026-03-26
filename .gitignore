@@ -11,3 +11,4 @@ test/fuzz/**/crash-*
 test/fuzz/**/timeout-*
 test/fuzz/**/slow-unit-*
 test/fuzz/**/oom-*
+Trace-*.json

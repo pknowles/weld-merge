@@ -198,15 +198,9 @@ const useMeldUIActions = (p: MeldUIActionsProps) =>
 			getHighlights: p.highlights,
 			requestClipboardText: p.requestClipboardText,
 			writeClipboardText: p.writeClipboardText,
-			onEditImmediate: (i: number) => {
-				if (i === 2) {
-					const nd = [...p.diffs] as PaneDiffs;
-					nd[1] = null;
-					nd[2] = null;
-					p.diffsRef.current = nd;
-					p.setDiffs(nd);
-					p.setRenderTrigger((prev) => prev + 1);
-				}
+			onEditImmediate: (_i: number) => {
+				// useCommitModelUpdate already clears/updates diffs debounced.
+				// Synchronous clearing here causes visible flicker on every keystroke.
 			},
 			onEdit: debounce((v: string | undefined, i: number) => {
 				if (v !== undefined && i === 2) {

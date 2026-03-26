@@ -145,6 +145,12 @@ export const createMockEditor = (content: string) => {
 		})),
 		getScrollTop: jest.fn(() => 0),
 		getScrollLeft: jest.fn(() => 0),
+		setScrollTop: jest.fn(() => {
+			/* mock */
+		}),
+		setScrollLeft: jest.fn(() => {
+			/* mock */
+		}),
 		getLayoutInfo: jest.fn(() => ({ height: 1000 })),
 		getContentHeight: jest.fn(() => 2000),
 		onDidScrollChange: jest.fn(() => ({
@@ -219,6 +225,11 @@ export const createMockEditor = (content: string) => {
 		updateOptions: jest.fn(() => {
 			/* mock */
 		}),
+		onDidLayoutChange: jest.fn(() => ({
+			dispose: jest.fn(() => {
+				/* mock */
+			}),
+		})),
 		layout: jest.fn(() => {
 			/* mock */
 		}),

@@ -31,3 +31,4 @@ test/fuzz/**/timeout-*
 test/fuzz/**/slow-unit-*
 test/fuzz/**/oom-*
 .stryker-tmp
+Trace-*.json

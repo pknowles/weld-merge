@@ -210,7 +210,6 @@ const useSynchronizedScrolling = (
 	setRenderTrigger: React.Dispatch<React.SetStateAction<number>>,
 ) => {
 	const scrollLockRef = React.useRef<boolean>(false);
-	const requestFrameRef = React.useRef<number | null>(null);
 
 	const syncEditors = React.useCallback(
 		(
@@ -249,34 +248,31 @@ const useSynchronizedScrolling = (
 					);
 				}
 			} finally {
-				if (requestFrameRef.current !== null) {
-					cancelAnimationFrame(requestFrameRef.current);
-				}
-				requestFrameRef.current = requestAnimationFrame(() => {
-					scrollLockRef.current = false;
-					requestFrameRef.current = null;
-				});
+				scrollLockRef.current = false;
 			}
 		},
 		[editorRefs, diffsRef, diffsAreReversedRef],
 	);
 
 	const attachScrollListener = React.useCallback(
-		(ed: editor.IStandaloneCodeEditor, edIndex: number) =>
-			ed.onDidScrollChange((e) => {
-				if (scrollLockRef.current) {
+		(ed: editor.IStandaloneCodeEditor, edIndex: number) => {
+			let pending: number | null = null;
+			return ed.onDidScrollChange(() => {
+				if (scrollLockRef.current || pending !== null) {
 					return;
 				}
-				setRenderTrigger((prev) => prev + 1);
-				if (e.scrollTopChanged || e.scrollLeftChanged) {
+				pending = requestAnimationFrame(() => {
+					pending = null;
+					setRenderTrigger((prev) => prev + 1);
 					syncEditors(
 						ed,
 						edIndex,
-						e.scrollTopChanged ? e.scrollTop : ed.getScrollTop(),
-						e.scrollLeftChanged ? e.scrollLeft : ed.getScrollLeft(),
+						ed.getScrollTop(),
+						ed.getScrollLeft(),
 					);
-				}
-			}),
+				});
+			});
+		},
 		[setRenderTrigger, syncEditors],
 	);
 
