@@ -75,10 +75,10 @@ type WebviewMessage =
 	| CompleteMergeMessage;
 
 /**
- * Custom text editor provider for the Meld 3-way merge view.
+ * Custom text editor provider for the Weld 3-way merge view.
  */
 export class MeldCustomEditorProvider implements CustomTextEditorProvider {
-	static readonly viewType = "meld.mergeEditor";
+	static readonly viewType = "weld.mergeEditor";
 	static readonly onRequestRefresh = new EventEmitter<Uri>();
 
 	private readonly extensionUri: Uri;
@@ -137,7 +137,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		repoPath: string,
 		relativeFilePath: string,
 	): Promise<void> {
-		const config = workspace.getConfiguration("meld");
+		const config = workspace.getConfiguration("weld");
 		const debounceDelay =
 			config.get<number>("mergeEditor.debounceDelay") ??
 			DEFAULT_DEBOUNCE_DELAY;
@@ -252,14 +252,14 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		webviewPanel: WebviewPanel,
 	) {
 		if (
-			e.affectsConfiguration("meld.mergeEditor.debounceDelay") ||
-			e.affectsConfiguration("meld.mergeEditor.syntaxHighlighting") ||
+			e.affectsConfiguration("weld.mergeEditor.debounceDelay") ||
+			e.affectsConfiguration("weld.mergeEditor.syntaxHighlighting") ||
 			e.affectsConfiguration(
-				"meld.mergeEditor.baseCompareHighlighting",
+				"weld.mergeEditor.baseCompareHighlighting",
 			) ||
-			e.affectsConfiguration("meld.mergeEditor.smoothScrolling")
+			e.affectsConfiguration("weld.mergeEditor.smoothScrolling")
 		) {
-			const newConfig = workspace.getConfiguration("meld");
+			const newConfig = workspace.getConfiguration("weld");
 			const config = {
 				debounceDelay:
 					newConfig.get<number>("mergeEditor.debounceDelay") ??
@@ -447,7 +447,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Meld Diff</title>
+                <title>Weld Merge</title>
                 <link rel="stylesheet" href="${cssUri}">
                 <style>
                     body { padding: 0; margin: 0; background-color: #1e1e1e; }

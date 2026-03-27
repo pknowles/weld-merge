@@ -2,6 +2,7 @@
 .vscode
 .git
 .husky
+.agents
 **/*.map
 node_modules
 src
@@ -25,6 +26,7 @@ package-lock.json
 coverage
 reports
 .cifuzz-corpus
+scripts/
 test/fuzz/**/corpus
 test/fuzz/**/crash-*
 test/fuzz/**/timeout-*

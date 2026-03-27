@@ -60,7 +60,7 @@ export function applyChunkEdit(
 		const maxCol = model.getLineMaxColumn(mMax);
 		const formattedText =
 			text && !text.startsWith("\n") ? `\n${text}` : text;
-		targetEditor.executeEdits("meld-action", [
+		targetEditor.executeEdits("weld-action", [
 			{
 				range: {
 					startLineNumber: mMax,
@@ -75,7 +75,7 @@ export function applyChunkEdit(
 	} else {
 		const eLine = eL >= mMax ? mMax : eL + 1;
 		const eCol = eL >= mMax ? model.getLineMaxColumn(mMax) : 1;
-		targetEditor.executeEdits("meld-action", [
+		targetEditor.executeEdits("weld-action", [
 			{
 				range: {
 					startLineNumber: sL,
@@ -107,7 +107,7 @@ export function deleteChunk(
 	const mMax = model.getLineCount();
 
 	if (eL >= mMax && sL > 1) {
-		targetEditor.executeEdits("meld-action", [
+		targetEditor.executeEdits("weld-action", [
 			{
 				range: {
 					startLineNumber: sL - 1,
@@ -122,7 +122,7 @@ export function deleteChunk(
 	} else {
 		const eLine = eL >= mMax ? mMax : eL + 1;
 		const eCol = eL >= mMax ? model.getLineMaxColumn(mMax) : 1;
-		targetEditor.executeEdits("meld-action", [
+		targetEditor.executeEdits("weld-action", [
 			{
 				range: {
 					startLineNumber: sL,
@@ -155,7 +155,7 @@ export function copyUpChunk(
 
 	if (sL > max) {
 		const formattedText = text.startsWith("\n") ? text : `\n${text}`;
-		targetEditor.executeEdits("meld-action", [
+		targetEditor.executeEdits("weld-action", [
 			{
 				range: {
 					startLineNumber: max,
@@ -168,7 +168,7 @@ export function copyUpChunk(
 			},
 		]);
 	} else {
-		targetEditor.executeEdits("meld-action", [
+		targetEditor.executeEdits("weld-action", [
 			{
 				range: {
 					startLineNumber: sL,
@@ -201,7 +201,7 @@ export function copyDownChunk(
 
 	if (ins > max) {
 		const formattedText = text.startsWith("\n") ? text : `\n${text}`;
-		targetEditor.executeEdits("meld-action", [
+		targetEditor.executeEdits("weld-action", [
 			{
 				range: {
 					startLineNumber: max,
@@ -214,7 +214,7 @@ export function copyDownChunk(
 			},
 		]);
 	} else {
-		targetEditor.executeEdits("meld-action", [
+		targetEditor.executeEdits("weld-action", [
 			{
 				range: {
 					startLineNumber: ins,

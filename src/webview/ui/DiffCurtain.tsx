@@ -99,6 +99,8 @@ interface ChunkActionsProps {
 	onDwn?: ((c: DiffChunk) => void) | undefined;
 	y1T: number;
 	y2T: number;
+	lEmp: boolean;
+	rEmp: boolean;
 }
 
 const ChunkActions: FC<ChunkActionsProps> = (p) => {
@@ -110,9 +112,12 @@ const ChunkActions: FC<ChunkActionsProps> = (p) => {
 	const yBase = p.applySide === "left" ? p.y1T : p.y2T;
 	const yDel = p.applySide === "left" ? p.y2T : p.y1T;
 
+	const sourceEmp = p.applySide === "left" ? p.lEmp : p.rEmp;
+	const destEmp = p.applySide === "left" ? p.rEmp : p.lEmp;
+
 	return (
 		<g className="diff-actions">
-			{p.onApp && (
+			{p.onApp && !sourceEmp && (
 				<ActionButton
 					y={yBase + 8}
 					side={sideApp}
@@ -121,7 +126,7 @@ const ChunkActions: FC<ChunkActionsProps> = (p) => {
 					onClick={() => p.onApp?.(p.chunk)}
 				/>
 			)}
-			{p.onUp && p.isReplace && (
+			{p.onUp && p.isReplace && !sourceEmp && (
 				<ActionButton
 					y={yBase - 8}
 					side={sideApp}
@@ -130,7 +135,7 @@ const ChunkActions: FC<ChunkActionsProps> = (p) => {
 					onClick={() => p.onUp?.(p.chunk)}
 				/>
 			)}
-			{p.onDwn && p.isReplace && (
+			{p.onDwn && p.isReplace && !sourceEmp && (
 				<ActionButton
 					y={yBase + 24}
 					side={sideApp}
@@ -139,7 +144,7 @@ const ChunkActions: FC<ChunkActionsProps> = (p) => {
 					onClick={() => p.onDwn?.(p.chunk)}
 				/>
 			)}
-			{p.onDel && (
+			{p.onDel && !destEmp && (
 				<ActionButton
 					y={yDel + 8}
 					side={sideDel}
@@ -208,6 +213,8 @@ const ChunkRenderer: FC<{
 					applySide={p.reversed ? "left" : "right"}
 					y1T={y1T}
 					y2T={y2T}
+					lEmp={b.lEmp}
+					rEmp={b.rEmp}
 					onApp={p.onApp}
 					onDel={p.onDel}
 					onUp={p.onUp}

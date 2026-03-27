@@ -44,7 +44,7 @@ export const AnimatedColumn = ({
 	const div = isOpen ? textColumns : textColumnsAfterAnimation;
 	const marginValue = active
 		? "0"
-		: `calc(-1 * ((100% + var(--meld-diff-width)) / ${div || 1}))`;
+		: `calc(-1 * ((100% + var(--weld-diff-width)) / ${div || 1}))`;
 
 	return (
 		<div

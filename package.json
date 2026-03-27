@@ -8,9 +8,11 @@
 	"author": "Pyarelal Knowles",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/pknowles/meld.git"
+		"url": "https://github.com/pknowles/weld-merge.git"
 	},
 	"keywords": [
+		"weld",
+		"weld-merge",
 		"meld",
 		"meld-style",
 		"merge",
@@ -36,7 +38,7 @@
 	"contributes": {
 		"customEditors": [
 			{
-				"viewType": "meld.mergeEditor",
+				"viewType": "weld.mergeEditor",
 				"displayName": "Weld 3-Way Merge",
 				"selector": [
 					{
@@ -58,7 +60,7 @@
 		"views": {
 			"scm": [
 				{
-					"id": "meldConflictedFiles",
+					"id": "weldConflictedFiles",
 					"name": "Weld Merge : Conflicted Files",
 					"icon": "$(warning)"
 				}
@@ -68,49 +70,49 @@
 			"view/item/context": [
 				{
 					"command": "meld-auto-merge.smartAdd",
-					"when": "view == meldConflictedFiles && viewItem == conflictedFile",
+					"when": "view == weldConflictedFiles && viewItem == conflictedFile",
 					"group": "inline@1"
 				},
 				{
 					"command": "meld-auto-merge.checkoutConflicted",
-					"when": "view == meldConflictedFiles && viewItem == resolvedFile",
+					"when": "view == weldConflictedFiles && viewItem == resolvedFile",
 					"group": "inline@2"
 				},
 				{
 					"command": "meld-auto-merge.autoMerge",
-					"when": "view == meldConflictedFiles && viewItem == conflictedFile",
+					"when": "view == weldConflictedFiles && viewItem == conflictedFile",
 					"group": "1_meld@1"
 				},
 				{
 					"command": "meld-auto-merge.checkoutConflicted",
-					"when": "view == meldConflictedFiles && viewItem == conflictedFile",
+					"when": "view == weldConflictedFiles && viewItem == conflictedFile",
 					"group": "1_meld@2"
 				},
 				{
 					"command": "meld-auto-merge.rerereForget",
-					"when": "view == meldConflictedFiles && viewItem == conflictedFile",
+					"when": "view == weldConflictedFiles && viewItem == conflictedFile",
 					"group": "1_meld@3"
 				},
 				{
 					"command": "meld-auto-merge.openConflictedFile",
-					"when": "view == meldConflictedFiles && viewItem == conflictedFile",
+					"when": "view == weldConflictedFiles && viewItem == conflictedFile",
 					"group": "2_open@1"
 				},
 				{
 					"command": "meld-auto-merge.openMergeEditor",
-					"when": "view == meldConflictedFiles && viewItem == conflictedFile",
+					"when": "view == weldConflictedFiles && viewItem == conflictedFile",
 					"group": "2_open@2"
 				}
 			],
 			"view/title": [
 				{
 					"command": "meld-auto-merge.autoMergeAll",
-					"when": "view == meldConflictedFiles",
+					"when": "view == weldConflictedFiles",
 					"group": "navigation@1"
 				},
 				{
 					"command": "meld-auto-merge.refreshConflicted",
-					"when": "view == meldConflictedFiles",
+					"when": "view == weldConflictedFiles",
 					"group": "navigation@2"
 				}
 			],
@@ -175,22 +177,22 @@
 		"configuration": {
 			"title": "Weld Merge",
 			"properties": {
-				"meld.mergeEditor.debounceDelay": {
+				"weld.mergeEditor.debounceDelay": {
 					"type": "integer",
 					"default": 300,
 					"description": "Delay in milliseconds before recomputing diff highlights while typing in the merge editor."
 				},
-				"meld.mergeEditor.syntaxHighlighting": {
+				"weld.mergeEditor.syntaxHighlighting": {
 					"type": "boolean",
 					"default": true,
 					"description": "Enable syntax highlighting in the merge editor."
 				},
-				"meld.mergeEditor.baseCompareHighlighting": {
+				"weld.mergeEditor.baseCompareHighlighting": {
 					"type": "boolean",
 					"default": false,
 					"description": "Use base diff highlight when base-comparing."
 				},
-				"meld.mergeEditor.smoothScrolling": {
+				"weld.mergeEditor.smoothScrolling": {
 					"type": "boolean",
 					"default": true,
 					"description": "Enable smooth proportional scrolling synchronization across panels."
@@ -199,14 +201,14 @@
 		},
 		"keybindings": [
 			{
-				"command": "meldConflictedFiles.focus",
+				"command": "weldConflictedFiles.focus",
 				"key": "alt+m",
 				"mac": "cmd+alt+m"
 			}
 		],
 		"colors": [
 			{
-				"id": "meldMerge.diffInsertBackground",
+				"id": "weldMerge.diffInsertBackground",
 				"description": "Background color for inserted lines in the merge editor.",
 				"defaults": {
 					"dark": "#00c80026",
@@ -215,7 +217,7 @@
 				}
 			},
 			{
-				"id": "meldMerge.diffDeleteBackground",
+				"id": "weldMerge.diffDeleteBackground",
 				"description": "Background color for deleted lines in the merge editor.",
 				"defaults": {
 					"dark": "#00c80026",
@@ -224,7 +226,7 @@
 				}
 			},
 			{
-				"id": "meldMerge.diffReplaceBackground",
+				"id": "weldMerge.diffReplaceBackground",
 				"description": "Background color for replaced lines in the merge editor.",
 				"defaults": {
 					"dark": "#0064ff26",
@@ -233,7 +235,7 @@
 				}
 			},
 			{
-				"id": "meldMerge.diffConflictBackground",
+				"id": "weldMerge.diffConflictBackground",
 				"description": "Background color for conflicting lines in the merge editor.",
 				"defaults": {
 					"dark": "#ff000026",
@@ -242,7 +244,7 @@
 				}
 			},
 			{
-				"id": "meldMerge.diffReplaceInlineBackground",
+				"id": "weldMerge.diffReplaceInlineBackground",
 				"description": "Background color for inline changed text within replaced lines.",
 				"defaults": {
 					"dark": "#0064ff59",
@@ -251,7 +253,7 @@
 				}
 			},
 			{
-				"id": "meldMerge.diffCurtainInsertFill",
+				"id": "weldMerge.diffCurtainInsertFill",
 				"description": "Fill color for insert diff areas in the merging curtain.",
 				"defaults": {
 					"dark": "#00c80033",
@@ -260,7 +262,7 @@
 				}
 			},
 			{
-				"id": "meldMerge.diffCurtainInsertStroke",
+				"id": "weldMerge.diffCurtainInsertStroke",
 				"description": "Stroke color for insert diff areas in the merging curtain.",
 				"defaults": {
 					"dark": "#00c80080",
@@ -269,7 +271,7 @@
 				}
 			},
 			{
-				"id": "meldMerge.diffCurtainDeleteFill",
+				"id": "weldMerge.diffCurtainDeleteFill",
 				"description": "Fill color for delete diff areas in the merging curtain.",
 				"defaults": {
 					"dark": "#00c80033",
@@ -278,7 +280,7 @@
 				}
 			},
 			{
-				"id": "meldMerge.diffCurtainDeleteStroke",
+				"id": "weldMerge.diffCurtainDeleteStroke",
 				"description": "Stroke color for delete diff areas in the merging curtain.",
 				"defaults": {
 					"dark": "#00c80080",
@@ -287,7 +289,7 @@
 				}
 			},
 			{
-				"id": "meldMerge.diffCurtainReplaceFill",
+				"id": "weldMerge.diffCurtainReplaceFill",
 				"description": "Fill color for replace diff areas in the merging curtain.",
 				"defaults": {
 					"dark": "#0064ff33",
@@ -296,7 +298,7 @@
 				}
 			},
 			{
-				"id": "meldMerge.diffCurtainReplaceStroke",
+				"id": "weldMerge.diffCurtainReplaceStroke",
 				"description": "Stroke color for replace diff areas in the merging curtain.",
 				"defaults": {
 					"dark": "#0064ff80",
@@ -305,7 +307,7 @@
 				}
 			},
 			{
-				"id": "meldMerge.diffCurtainConflictFill",
+				"id": "weldMerge.diffCurtainConflictFill",
 				"description": "Fill color for conflict diff areas in the merging curtain.",
 				"defaults": {
 					"dark": "#ff000033",
@@ -314,7 +316,7 @@
 				}
 			},
 			{
-				"id": "meldMerge.diffCurtainConflictStroke",
+				"id": "weldMerge.diffCurtainConflictStroke",
 				"description": "Stroke color for conflict diff areas in the merging curtain.",
 				"defaults": {
 					"dark": "#ff000080",
@@ -347,6 +349,11 @@
 		"jscpd": "jscpd src",
 		"depcruise": "depcruise src",
 		"prepare": "husky"
+	},
+	"overrides": {
+		"dompurify": "^3.3.3",
+		"tar": "^7.5.13",
+		"brace-expansion": "^5.0.5"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.4.4",

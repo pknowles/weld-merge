@@ -30,11 +30,11 @@ async function notifyIfNewConflicts(repoPath: string) {
 	const newConflicts = currentConflicts.filter((f) => !lastFiles.has(f));
 
 	if (newConflicts.length > 0) {
-		const message = `Meld: ${currentConflicts.length} merge conflict${currentConflicts.length > 1 ? "s" : ""} detected.`;
+		const message = `Weld: ${currentConflicts.length} merge conflict${currentConflicts.length > 1 ? "s" : ""} detected.`;
 		const action = "View Conflict List";
 		window.showInformationMessage(message, action).then((selection) => {
 			if (selection === action) {
-				commands.executeCommand("meldConflictedFiles.focus");
+				commands.executeCommand("weldConflictedFiles.focus");
 			}
 		});
 	}
@@ -164,7 +164,7 @@ async function handleAutoMerge(
 			getGitFileContent(repoPath, relativeFilePath, 3),
 		]);
 
-		window.showInformationMessage("Running Meld auto-merge heuristics...");
+		window.showInformationMessage("Running Weld auto-merge heuristics...");
 
 		const merger = new GitTextMerger();
 		const localLines = splitLines(localContent);
@@ -199,7 +199,7 @@ async function handleAutoMerge(
 		edit.replace(documentUri, fullRange, finalMergedText);
 		if (await workspace.applyEdit(edit)) {
 			window.showInformationMessage(
-				"Meld Auto-Merge complete! Unresolved conflicts marked.",
+				"Weld Auto-Merge complete! Unresolved conflicts marked.",
 			);
 			conflictedFilesProvider.refresh();
 		} else {
@@ -207,7 +207,7 @@ async function handleAutoMerge(
 		}
 	} catch (e: unknown) {
 		window.showErrorMessage(
-			`Meld Auto-Merge Error: ${(e as Error).message}`,
+			`Weld Auto-Merge Error: ${(e as Error).message}`,
 		);
 	}
 }
@@ -230,7 +230,7 @@ async function handleAutoMergeAll(
 	await window.withProgress(
 		{
 			location: ProgressLocation.Notification,
-			title: "Meld Auto-Merge All",
+			title: "Weld Auto-Merge All",
 			cancellable: false,
 		},
 		async (progress) => {
@@ -418,7 +418,7 @@ function registerViews(
 	conflictedFilesProvider: ConflictedFilesProvider,
 ) {
 	window.registerTreeDataProvider(
-		"meldConflictedFiles",
+		"weldConflictedFiles",
 		conflictedFilesProvider,
 	);
 	context.subscriptions.push(MeldCustomEditorProvider.register(context));

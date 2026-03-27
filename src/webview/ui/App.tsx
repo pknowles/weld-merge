@@ -34,31 +34,31 @@ const GlobalStyles: FC = () => (
             width: 100%;
             overflow: hidden;
         }
-        .diff-path-insert { fill: var(--vscode-meldMerge-diffCurtainInsertFill, rgba(0, 200, 0, 0.2)); }
-        .diff-path-delete { fill: var(--vscode-meldMerge-diffCurtainDeleteFill, rgba(0, 200, 0, 0.2)); }
-        .diff-path-replace { fill: var(--vscode-meldMerge-diffCurtainReplaceFill, rgba(0, 100, 255, 0.2)); }
-        .diff-path-conflict { fill: var(--vscode-meldMerge-diffCurtainConflictFill, rgba(255, 0, 0, 0.2)); }
+        .diff-path-insert { fill: var(--vscode-weldMerge-diffCurtainInsertFill, rgba(0, 200, 0, 0.2)); }
+        .diff-path-delete { fill: var(--vscode-weldMerge-diffCurtainDeleteFill, rgba(0, 200, 0, 0.2)); }
+        .diff-path-replace { fill: var(--vscode-weldMerge-diffCurtainReplaceFill, rgba(0, 100, 255, 0.2)); }
+        .diff-path-conflict { fill: var(--vscode-weldMerge-diffCurtainConflictFill, rgba(255, 0, 0, 0.2)); }
         
-        .diff-edge-insert { stroke: var(--vscode-meldMerge-diffCurtainInsertStroke, rgba(0, 200, 0, 0.5)); stroke-width: 1px; }
-        .diff-edge-delete { stroke: var(--vscode-meldMerge-diffCurtainDeleteStroke, rgba(0, 200, 0, 0.5)); stroke-width: 1px; }
-        .diff-edge-replace { stroke: var(--vscode-meldMerge-diffCurtainReplaceStroke, rgba(0, 100, 255, 0.5)); stroke-width: 1px; }
-        .diff-edge-conflict { stroke: var(--vscode-meldMerge-diffCurtainConflictStroke, rgba(255, 0, 0, 0.5)); stroke-width: 1px; }
+        .diff-edge-insert { stroke: var(--vscode-weldMerge-diffCurtainInsertStroke, rgba(0, 200, 0, 0.5)); stroke-width: 1px; }
+        .diff-edge-delete { stroke: var(--vscode-weldMerge-diffCurtainDeleteStroke, rgba(0, 200, 0, 0.5)); stroke-width: 1px; }
+        .diff-edge-replace { stroke: var(--vscode-weldMerge-diffCurtainReplaceStroke, rgba(0, 100, 255, 0.5)); stroke-width: 1px; }
+        .diff-edge-conflict { stroke: var(--vscode-weldMerge-diffCurtainConflictStroke, rgba(255, 0, 0, 0.5)); stroke-width: 1px; }
 
-        .diff-insert { background-color: var(--vscode-meldMerge-diffInsertBackground, rgba(0, 200, 0, 0.15)) !important; }
-        .diff-delete { background-color: var(--vscode-meldMerge-diffDeleteBackground, rgba(0, 200, 0, 0.15)) !important; }
-        .diff-replace { background-color: var(--vscode-meldMerge-diffReplaceBackground, rgba(0, 100, 255, 0.15)) !important; }
-        .diff-conflict { background-color: var(--vscode-meldMerge-diffConflictBackground, rgba(255, 0, 0, 0.2)) !important; }
+        .diff-insert { background-color: var(--vscode-weldMerge-diffInsertBackground, rgba(0, 200, 0, 0.15)) !important; }
+        .diff-delete { background-color: var(--vscode-weldMerge-diffDeleteBackground, rgba(0, 200, 0, 0.15)) !important; }
+        .diff-replace { background-color: var(--vscode-weldMerge-diffReplaceBackground, rgba(0, 100, 255, 0.15)) !important; }
+        .diff-conflict { background-color: var(--vscode-weldMerge-diffConflictBackground, rgba(255, 0, 0, 0.2)) !important; }
         .diff-margin { background-color: transparent !important; }
 
-        .diff-insert-margin { background-color: var(--vscode-meldMerge-diffInsertBackground, rgba(0, 200, 0, 0.15)) !important; }
-        .diff-delete-margin { background-color: var(--vscode-meldMerge-diffDeleteBackground, rgba(0, 200, 0, 0.15)) !important; }
-        .diff-replace-margin { background-color: var(--vscode-meldMerge-diffReplaceBackground, rgba(0, 100, 255, 0.15)) !important; }
-        .diff-conflict-margin { background-color: var(--vscode-meldMerge-diffConflictBackground, rgba(255, 0, 0, 0.2)) !important; }
+        .diff-insert-margin { background-color: var(--vscode-weldMerge-diffInsertBackground, rgba(0, 200, 0, 0.15)) !important; }
+        .diff-delete-margin { background-color: var(--vscode-weldMerge-diffDeleteBackground, rgba(0, 200, 0, 0.15)) !important; }
+        .diff-replace-margin { background-color: var(--vscode-weldMerge-diffReplaceBackground, rgba(0, 100, 255, 0.15)) !important; }
+        .diff-conflict-margin { background-color: var(--vscode-weldMerge-diffConflictBackground, rgba(255, 0, 0, 0.2)) !important; }
 
-        .diff-insert-inline { background-color: var(--vscode-meldMerge-diffInsertInlineBackground, rgba(0, 200, 0, 0.35)) !important; }
-        .diff-delete-inline { background-color: var(--vscode-meldMerge-diffDeleteInlineBackground, rgba(255, 0, 0, 0.35)) !important; }
-        .diff-replace-inline { background-color: var(--vscode-meldMerge-diffReplaceInlineBackground, rgba(0, 100, 255, 0.35)) !important; }
-        .diff-conflict-inline { background-color: var(--vscode-meldMerge-diffConflictInlineBackground, rgba(255, 0, 0, 0.35)) !important; }
+        .diff-insert-inline { background-color: var(--vscode-weldMerge-diffInsertInlineBackground, rgba(0, 200, 0, 0.35)) !important; }
+        .diff-delete-inline { background-color: var(--vscode-weldMerge-diffDeleteInlineBackground, rgba(255, 0, 0, 0.35)) !important; }
+        .diff-replace-inline { background-color: var(--vscode-weldMerge-diffReplaceInlineBackground, rgba(0, 100, 255, 0.35)) !important; }
+        .diff-conflict-inline { background-color: var(--vscode-weldMerge-diffConflictInlineBackground, rgba(255, 0, 0, 0.35)) !important; }
 
         .diff-view path { transition: opacity 0.2s; }
         .diff-container:hover .diff-view path { opacity: 0.8; }
@@ -100,10 +100,10 @@ const MeldRoot: FC<{ children: React.ReactNode }> = ({ children }) => (
 				height: "100vh",
 				overflow: "hidden",
 				position: "relative",
-				"--meld-diff-width": `${DIFF_WIDTH}px`,
+				"--weld-diff-width": `${DIFF_WIDTH}px`,
 			} as React.CSSProperties
 		}
-		data-testid="meld-root"
+		data-testid="weld-root"
 	>
 		<GlobalStyles />
 		{children}

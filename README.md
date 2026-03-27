@@ -3,7 +3,7 @@
 [![Install](https://img.shields.io/badge/VS%20Code-Install%20Extension-blue?logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=pknowles.meld-auto-merge)
 ![Installs](https://img.shields.io/visual-studio-marketplace/i/pknowles.meld-auto-merge?style=flat-square)
 ![Rating](https://img.shields.io/visual-studio-marketplace/r/pknowles.meld-auto-merge)
-![Build](https://github.com/pknowles/meld/actions/workflows/ci.yml/badge.svg)
+![Build](https://github.com/pknowles/weld-merge/actions/workflows/ci.yml/badge.svg)
 ![Verified](https://img.shields.io/badge/publisher-verified-brightgreen)
 ![License](https://img.shields.io/github/license/pknowles/meld)
 
@@ -47,7 +47,7 @@ Use at your own discretion.
 ## Installation
 
 1. In VS Code, open the Extensions view (`Ctrl+Shift+X`).
-2. Search for "Meld Merge".
+2. Search for "Weld Merge".
 3. Click "Install".
 
 Or use Quick Open (Ctrl+P), paste the following command, and press enter:
@@ -73,7 +73,7 @@ dedicated desktop tools like Meld:
 ![VS Code Three-Way View](./images/screenshot_vscode_threeway.png)
 *Standard VS Code 3-way conflict view.*
 
-**Meld for VS Code** provides a cleaner, dedicated 3-way merge editor modeled
+**Weld Merge for VS Code** provides a cleaner, dedicated 3-way merge editor modeled
 right after the Meld application. Beyond the improved UI, it brings Meld's
 highly-tuned conflict resolution algorithm that is capable of:
 
@@ -85,7 +85,7 @@ The end result? An intuitive merge experience that handles the tedious work for
 you.
 
 ![Teaser](./images/screenshot_meld_threeway.png)
-*Conflict resolution made intuitive – Meld resolves conflicts automatically when VS Code cannot.*
+*Conflict resolution made intuitive – Weld resolves conflicts automatically when VS Code cannot.*
 
 ## Features
 
@@ -115,7 +115,7 @@ to handle the merge conflicts. Necessary for the more difficult conflicts.
 
 ### Auto-Merge
 
-Manually trigger auto-merge at any time via the Command Palette: **"Meld:
+Manually trigger auto-merge at any time via the Command Palette: **"Weld:
 Auto-Merge Current File"**. This extracts the **LOCAL**, **BASE**, and
 **REMOTE** versions via Git and runs them through the Meld `AutoMergeDiffer`,
 applying Meld's auto-merge operation. There are sometimes cases where conflicts
@@ -124,9 +124,9 @@ happens when you open the 3-way merge editor too.
 
 ### Source Control Panel
 
-The extension adds a **Meld Merge : Conflicted Files** view to the native Source Control (SCM) panel. `Alt + M` to open by default (`Cmd + Alt + M` on Mac).
+The extension adds a **Weld Merge : Conflicted Files** view to the native Source Control (SCM) panel. `Alt + M` to open by default (`Cmd + Alt + M` on Mac).
 
-- **Primary Action (Click)**: Opens the **Meld 3-way merge editor** (native to VS Code, not an external app).
+- **Primary Action (Click)**: Opens the **Weld 3-way merge editor** (native to VS Code, not an external app).
 - **Inline Actions**:
   - **Smart Git Add** (icon): A safer `git add` that verifies no conflict markers (`<<<<<<<`) remain in the file before staging.
   - **Checkout Conflicted** (icon, for resolved files): Reset a botched merge attempt back to the original conflicted state via `git checkout -m`. (Asks for confirmation)
@@ -159,12 +159,12 @@ The logic runs entirely within the VS Code extension host process—no Python in
 1. Open a project that currently has Git merge conflicts.
 2. Click on the Source Control icon in your Activity Bar
 3. Under the standard "Source Control" view, you will see a new collapsible
-   section titled **Meld Merge : Conflicted Files**. The command **Source
-   Control : Focus on Meld Merge : Conflicted Files View** gets you here too,
+   section titled **Weld Merge : Conflicted Files**. The command **Source
+   Control : Focus on Weld Merge : Conflicted Files View** gets you here too,
    searchable in the command palette or with `Alt + M` by default (`Cmd + Alt +
    M` on Mac).
 4. Expanding this tab will show a list of all files currently marked as conflicted.
-5. **Click a file** to open it in the custom **Meld 3-way merge editor**.
+5. **Click a file** to open it in the custom **Weld 3-way merge editor**.
 6. Edit the center panel with the help of the arrows and crosses over the
    colored connection lines. When done, click **Save & Complete Merge** (or `Ctrl+S`
    followed by the **Smart Git Add** icon in the conflict list).
@@ -174,9 +174,9 @@ The logic runs entirely within the VS Code extension host process—no Python in
 If you already have a conflicted file actively open in your regular VS Code editor:
 
 1. Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac) to open the Command Palette.
-2. Type **Meld: 3-Way Merge Conflict Editor** and hit Enter.
+2. Type **Weld: 3-Way Merge Conflict Editor** and hit Enter.
 3. The custom 3-way merge viewer will open up immediately for that file.
-4. *(Optional)* Alternatively, you can run the **Meld: Auto-Merge Current File**
+4. *(Optional)* Alternatively, you can run the **Weld: Auto-Merge Current File**
    in case there are low hanging fruit conflicts that can be auto-resolved.
 
 ### Resolving Merge Conflicts
@@ -217,7 +217,7 @@ Please note that these default shortcuts may conflict with existing VS Code comm
 
 Shortcuts in the Merged editor (Previous/Next Diff/Conflict) are active **only when the editor has focus**. If they interfere with your workflow or you prefer VS Code's defaults, please be aware that we are considering leaving these **unbound by default** in future versions to avoid collisions.
 
-**Feedback Wanted:** Should these stay bound to the Merged editor by default, or should they be opt-in? Let us know in the [issues](https://github.com/pknowles/meld/issues)!
+**Feedback Wanted:** Should these stay bound to the Merged editor by default, or should they be opt-in? Let us know in the [issues](https://github.com/pknowles/weld-merge/issues)!
 
 ## Configuration Settings
 
@@ -225,8 +225,8 @@ You can customize the extension using the following VS Code settings (accessible
 
 | Setting | Default | Description |
 |---|---|---|
-| `meld.mergeEditor.debounceDelay` | `300` | Delay in milliseconds before recomputing diff highlights while typing. |
-| `meld.mergeEditor.syntaxHighlighting` | `true` | Enable or disable syntax highlighting in the merge editor. |
+| `weld.mergeEditor.debounceDelay` | `300` | Delay in milliseconds before recomputing diff highlights while typing. |
+| `weld.mergeEditor.syntaxHighlighting` | `true` | Enable or disable syntax highlighting in the merge editor. |
 
 ### Theme Colors
 
@@ -234,26 +234,26 @@ All diff highlight colors are fully themeable via the workbench `colorCustomizat
 
 | Color Token | Default | Description |
 |---|---|---|
-| `meldMerge.diffInsertBackground` | `#00c80026` | Background for inserted lines. |
-| `meldMerge.diffDeleteBackground` | `#00c80026` | Background for deleted lines. |
-| `meldMerge.diffReplaceBackground` | `#0064ff26` | Background for replaced lines. |
-| `meldMerge.diffReplaceInlineBackground` | `#0064ff59` | Highlight for inline changed text within replaced lines. |
-| `meldMerge.diffConflictBackground` | `#ff000026` | Background for unresolved conflict lines. |
-| `meldMerge.diffCurtainInsertFill` | `#00c80033` | Fill color for insert regions in the connecting curtain SVG. |
-| `meldMerge.diffCurtainInsertStroke` | `#00c80080` | Stroke color for insert regions in the connecting curtain SVG. |
-| `meldMerge.diffCurtainDeleteFill` | `#00c80033` | Fill color for delete regions in the connecting curtain SVG. |
-| `meldMerge.diffCurtainDeleteStroke` | `#00c80080` | Stroke color for delete regions in the connecting curtain SVG. |
-| `meldMerge.diffCurtainReplaceFill` | `#0064ff33` | Fill color for replace regions in the connecting curtain SVG. |
-| `meldMerge.diffCurtainReplaceStroke` | `#0064ff80` | Stroke color for replace regions in the connecting curtain SVG. |
-| `meldMerge.diffCurtainConflictFill` | `#ff000033` | Fill color for conflict regions in the connecting curtain SVG. |
-| `meldMerge.diffCurtainConflictStroke` | `#ff000080` | Stroke color for conflict regions in the connecting curtain SVG. |
+| `weldMerge.diffInsertBackground` | `#00c80026` | Background for inserted lines. |
+| `weldMerge.diffDeleteBackground` | `#00c80026` | Background for deleted lines. |
+| `weldMerge.diffReplaceBackground` | `#0064ff26` | Background for replaced lines. |
+| `weldMerge.diffReplaceInlineBackground` | `#0064ff59` | Highlight for inline changed text within replaced lines. |
+| `weldMerge.diffConflictBackground` | `#ff000026` | Background for unresolved conflict lines. |
+| `weldMerge.diffCurtainInsertFill` | `#00c80033` | Fill color for insert regions in the connecting curtain SVG. |
+| `weldMerge.diffCurtainInsertStroke` | `#00c80080` | Stroke color for insert regions in the connecting curtain SVG. |
+| `weldMerge.diffCurtainDeleteFill` | `#00c80033` | Fill color for delete regions in the connecting curtain SVG. |
+| `weldMerge.diffCurtainDeleteStroke` | `#00c80080` | Stroke color for delete regions in the connecting curtain SVG. |
+| `weldMerge.diffCurtainReplaceFill` | `#0064ff33` | Fill color for replace regions in the connecting curtain SVG. |
+| `weldMerge.diffCurtainReplaceStroke` | `#0064ff80` | Stroke color for replace regions in the connecting curtain SVG. |
+| `weldMerge.diffCurtainConflictFill` | `#ff000033` | Fill color for conflict regions in the connecting curtain SVG. |
+| `weldMerge.diffCurtainConflictStroke` | `#ff000080` | Stroke color for conflict regions in the connecting curtain SVG. |
 
 Example `settings.json` snippet to tweak colors:
 
 ```json
 "workbench.colorCustomizations": {
-    "meldMerge.diffConflictBackground": "#ff00001a",
-    "meldMerge.diffInsertBackground": "#00ff001a"
+    "weldMerge.diffConflictBackground": "#ff00001a",
+    "weldMerge.diffInsertBackground": "#00ff001a"
 }
 ```
 
@@ -308,4 +308,4 @@ GPL Version 2; see [LICENSE](LICENSE).
 ## Feedback & Support
 
 If you encounter a bug, have a feature request, or just want to share feedback, please file an issue on our GitHub repository at:  
-[https://github.com/pknowles/meld/issues](https://github.com/pknowles/meld/issues)
+[https://github.com/pknowles/weld-merge/issues](https://github.com/pknowles/weld-merge/issues)

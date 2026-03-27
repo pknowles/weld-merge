@@ -11,6 +11,30 @@
 ### Fixed
 - None
 
+## [0.0.7] - 2026-03-26
+
+### Added
+- **Benchmarking Suite**: Implemented high-precision, profiler-based benchmarking infrastructure with adaptive duration formatting.
+- **Fuzz Testing**: Integrated Jazzer.js for structure-aware fuzzing of core diffing and merging components.
+- **Stress Testing**: Added E2E survival stress tests and comprehensive UI validation to ensure deterministic merge logic.
+- **Viewport Connection Filtering**: Optimized rendering by selectively drawing connectors only within the active viewport.
+- **Regression Tests**: Added high-value tests for `merge.ts`, `scrollMapping.ts`, and incremental edit parity against the original Python Meld backend.
+
+### Changed
+- **Rebranding**: Officially renamed the project to **Weld Merge**, updating all UI elements and extension metadata.
+- **Performance**: Surgical UI optimizations, including removal of scroll-induced "render storms" and build minification.
+- **Scroll Engine**: Unified scroll mapping to a smooth-only proportional engine, removing the legacy discrete mode.
+- **Infrastructure**: Setup comprehensive testing environment with coverage and mutation testing (Stryker) ratchets.
+- **Refactoring**: Webview modularization and strict linting compliance.
+
+### Fixed
+- **Stability**: Resolved multiple `DiffCurtain` out-of-bounds crashes and connection accumulation issues.
+- **Consistency**: Fixed a critical incremental diff consistency bug in `Differ._changeSequence`.
+- **Layout**: Fixed animation glitches and layout stability in "Compare to Base" panels.
+- **Git Integration**: Reverted to sequential auto-merge to avoid git index locks during batch operations.
+- **UI**: Fixed reversed connectors in 5-panel view and addressed nested button errors.
+- **Dependencies**: Updated project dependencies.
+
 ## [0.0.6] - 2026-03-15
 
 ### Added
@@ -29,7 +53,7 @@
 - **N-Way Scroll Sync**: Implemented a robust chaining algorithm for proportional scrolling across any number of active panes.
 - **Smooth Interpolation**: Introduced a new scroll mapping engine that ensures smooth, continuous transitions even through highly disproportionate diff chunks.
 - **Unit Tests**: Added comprehensive test coverage for line mapping and multi-pane synchronization logic.
-- **Focus Shortcut**: Added `Alt+M` (or `Cmd+Alt+M` on Mac) to quickly focus the Meld Merge: Conflicted Files view in the Source Control panel.
+- **Focus Shortcut**: Added `Alt+M` (or `Cmd+Alt+M` on Mac) to quickly focus the **Weld Merge : Conflicted Files** view in the Source Control panel.
 - **Default Editor Action**: Added "Open File (Default Editor)" as a context menu option for conflicted files.
 
 ### Changed
@@ -72,7 +96,7 @@
 - **N-Way Diff Viewer**: Advanced Webview UI containing N-way Monaco CodePanes and Meld-style connecting Bezier curves as a `DiffCurtain`.
 - **Merge Editing**: Middle column automatically pre-populates with merged results and highlights conflict chunks.
 - **Context Toolbar**: Added "Save" and "Save & Complete Merge" buttons that trigger git add when resolving conflicts.
-- **Settings**: Added configurable debounce delay (`meld.mergeEditor.debounceDelay`) and syntax highlighting toggles.
+- **Settings**: Added configurable debounce delay (`weld.mergeEditor.debounceDelay`) and syntax highlighting toggles.
 
 ### Changed
 - **Architecture**: Transitions to `CustomTextEditorProvider` for native VS Code document lifecycle management.
