@@ -13,6 +13,7 @@ import {
 	window,
 	workspace,
 } from "vscode";
+import { restoreSubmoduleConflict } from "./gitSubmodule.ts";
 import {
 	execGit,
 	getConflictedFiles,
@@ -21,6 +22,7 @@ import {
 import { GitTextMerger } from "./matchers/gitTextMerger.ts";
 import { ConflictedFilesProvider, type GitFile } from "./treeView.ts";
 import { MeldCustomEditorProvider } from "./webview/meldWebviewPanel.ts";
+import { SubmodulePanel } from "./webview/submodulePanel.ts";
 
 const lastConflictedFilesPerRepo: Map<string, Set<string>> = new Map();
 
@@ -115,6 +117,41 @@ function handleOpenMeldDiff(file?: GitFile) {
 		"vscode.openWith",
 		documentUri,
 		MeldCustomEditorProvider.viewType,
+	);
+}
+
+async function handleOpenSubmoduleDiff(
+	file: GitFile,
+	extensionUri: Uri,
+	conflictedFilesProvider: ConflictedFilesProvider,
+) {
+	const workspaceFolder = workspace.getWorkspaceFolder(file.uri);
+	if (!workspaceFolder) {
+		return;
+	}
+	if (file.contextValue === "resolvedSubmodule") {
+		const action = await window.showInformationMessage(
+			`Submodule ${file.label} is already resolved. Would you like to restore the conflict to re-resolve it?`,
+			"Restore Conflict",
+		);
+		if (action === "Restore Conflict") {
+			const success = await commands.executeCommand<boolean>(
+				"weldMerge.checkoutConflicted",
+				file,
+			);
+			if (!success) {
+				return;
+			}
+		} else {
+			return;
+		}
+	}
+
+	await SubmodulePanel.open(
+		extensionUri,
+		workspaceFolder.uri.fsPath,
+		file.label as string,
+		conflictedFilesProvider,
 	);
 }
 
@@ -243,10 +280,7 @@ async function handleAutoMergeAll(
 					progress.report({
 						message: `Merging ${file.label}...`,
 					});
-					await commands.executeCommand(
-						"meld-auto-merge.autoMerge",
-						file,
-					);
+					await commands.executeCommand("weldMerge.autoMerge", file);
 					successCount++;
 				} catch {
 					errorCount++;
@@ -262,53 +296,90 @@ async function handleAutoMergeAll(
 	);
 }
 
+async function checkIfSubmodule(
+	repoPath: string,
+	relativeFilePath: string,
+	file?: GitFile,
+): Promise<boolean> {
+	try {
+		const lsStage = await execGit(
+			["ls-files", "-s", "--", relativeFilePath],
+			repoPath,
+		);
+		return (
+			lsStage.includes("160000") ||
+			Boolean(file?.contextValue?.toLowerCase().includes("submodule"))
+		);
+	} catch {
+		return false;
+	}
+}
+
 async function handleCheckoutConflicted(
 	file: GitFile | undefined,
 	conflictedFilesProvider: ConflictedFilesProvider,
-) {
+): Promise<boolean> {
 	let documentUri: Uri;
 	if (file) {
 		documentUri = file.uri;
 	} else {
 		const editor = window.activeTextEditor;
 		if (!editor?.document || editor.document.isUntitled) {
-			return;
+			return false;
 		}
 		documentUri = editor.document.uri;
 	}
 
+	const workspaceFolder = workspace.getWorkspaceFolder(documentUri);
+	if (!workspaceFolder) {
+		return false;
+	}
+
+	const repoPath = file?.repoPath ?? workspaceFolder.uri.fsPath;
+	const relativeFilePath =
+		file?.label?.toString() ?? getRelativeRepoPath(documentUri);
+	if (!relativeFilePath) {
+		return false;
+	}
+
+	const isSubmodule = await checkIfSubmodule(
+		repoPath,
+		relativeFilePath,
+		file,
+	);
+
 	const relativePath = getRelativeRepoPath(documentUri) || documentUri.fsPath;
+	const message = isSubmodule
+		? `Are you sure you want to restore the conflict state for submodule ${relativeFilePath} (git update-index --index-info)? This will overwrite your current staged resolution.`
+		: `Are you sure you want to checkout the conflicted version of ${relativePath} (git checkout -m)? This will overwrite your current file.`;
+
 	const confirm = await window.showWarningMessage(
-		`Are you sure you want to checkout the conflicted version of ${relativePath} (-m)? This will overwrite your current file.`,
+		message,
 		{ modal: true },
 		"Yes",
 	);
 	if (confirm !== "Yes") {
-		return;
-	}
-
-	const workspaceFolder = workspace.getWorkspaceFolder(documentUri);
-	if (!workspaceFolder) {
-		return;
-	}
-
-	const repoPath = workspaceFolder.uri.fsPath;
-	const relativeFilePath = getRelativeRepoPath(documentUri);
-	if (!relativeFilePath) {
-		return;
+		return false;
 	}
 
 	try {
-		await execGit(["checkout", "-m", "--", relativeFilePath], repoPath);
-		const newContent = await readFile(documentUri.fsPath, "utf8");
-		await updateIfOpen(documentUri, newContent);
+		if (isSubmodule) {
+			await restoreSubmoduleConflict(repoPath, relativeFilePath);
+		} else {
+			await execGit(["checkout", "-m", "--", relativeFilePath], repoPath);
+			const newContent = await readFile(documentUri.fsPath, "utf8");
+			await updateIfOpen(documentUri, newContent);
+		}
+
 		MeldCustomEditorProvider.onRequestRefresh.fire(documentUri);
 		window.showInformationMessage(
 			`Checked out conflicted version of ${relativeFilePath}`,
 		);
 		conflictedFilesProvider.refresh();
+		return true;
 	} catch (e: unknown) {
 		window.showErrorMessage(`Checkout failed: ${(e as Error).message}`);
+		return false;
 	}
 }
 
@@ -429,42 +500,45 @@ function registerCommands(
 	conflictedFilesProvider: ConflictedFilesProvider,
 ) {
 	context.subscriptions.push(
-		commands.registerCommand("meld-auto-merge.refreshConflicted", () => {
+		commands.registerCommand("weldMerge.refreshConflicted", () => {
 			conflictedFilesProvider.refresh();
 		}),
 		commands.registerCommand(
-			"meld-auto-merge.openConflictedFile",
+			"weldMerge.openConflictedFile",
 			(file: GitFile) => {
 				window.showTextDocument(file.uri);
 			},
 		),
 		commands.registerCommand(
-			"meld-auto-merge.openMergeEditor",
+			"weldMerge.openMergeEditor",
 			(file?: GitFile) => handleOpenMergeEditor(file),
 		),
-		commands.registerCommand(
-			"meld-auto-merge.openMeldDiff",
-			(file?: GitFile) => handleOpenMeldDiff(file),
+		commands.registerCommand("weldMerge.openMeldDiff", (file?: GitFile) =>
+			handleOpenMeldDiff(file),
 		),
-		commands.registerCommand(
-			"meld-auto-merge.autoMerge",
-			(file?: GitFile) => handleAutoMerge(file, conflictedFilesProvider),
+		commands.registerCommand("weldMerge.autoMerge", (file?: GitFile) =>
+			handleAutoMerge(file, conflictedFilesProvider),
 		),
-		commands.registerCommand("meld-auto-merge.autoMergeAll", () =>
+		commands.registerCommand("weldMerge.autoMergeAll", () =>
 			handleAutoMergeAll(conflictedFilesProvider),
 		),
 		commands.registerCommand(
-			"meld-auto-merge.checkoutConflicted",
+			"weldMerge.checkoutConflicted",
 			(file?: GitFile) =>
 				handleCheckoutConflicted(file, conflictedFilesProvider),
 		),
-		commands.registerCommand(
-			"meld-auto-merge.rerereForget",
-			(file?: GitFile) =>
-				handleRerereForget(file, conflictedFilesProvider),
+		commands.registerCommand("weldMerge.rerereForget", (file?: GitFile) =>
+			handleRerereForget(file, conflictedFilesProvider),
 		),
-		commands.registerCommand("meld-auto-merge.smartAdd", (file?: GitFile) =>
+		commands.registerCommand("weldMerge.smartAdd", (file?: GitFile) =>
 			handleSmartAdd(file, conflictedFilesProvider),
+		),
+		commands.registerCommand("weld.openSubmoduleDiff", (file: GitFile) =>
+			handleOpenSubmoduleDiff(
+				file,
+				context.extensionUri,
+				conflictedFilesProvider,
+			),
 		),
 	);
 }

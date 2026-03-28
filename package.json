@@ -2,7 +2,7 @@
 	"name": "meld-auto-merge",
 	"displayName": "Weld Merge",
 	"description": "3-Way Git Merge Conflict Editor for VS Code, ported from GNOME Meld",
-	"version": "0.0.7",
+	"version": "0.0.8",
 	"icon": "images/icon.png",
 	"publisher": "pknowles",
 	"author": "Pyarelal Knowles",
@@ -51,7 +51,7 @@
 		"viewsContainers": {
 			"activitybar": [
 				{
-					"id": "meld-auto-merge",
+					"id": "weldMerge",
 					"title": "Weld Merge",
 					"icon": "images/icon.png"
 				}
@@ -69,109 +69,113 @@
 		"menus": {
 			"view/item/context": [
 				{
-					"command": "meld-auto-merge.smartAdd",
+					"command": "weldMerge.smartAdd",
 					"when": "view == weldConflictedFiles && viewItem == conflictedFile",
 					"group": "inline@1"
 				},
 				{
-					"command": "meld-auto-merge.checkoutConflicted",
-					"when": "view == weldConflictedFiles && viewItem == resolvedFile",
+					"command": "weldMerge.checkoutConflicted",
+					"when": "view == weldConflictedFiles && (viewItem == resolvedFile || viewItem == resolvedSubmodule)",
 					"group": "inline@2"
 				},
 				{
-					"command": "meld-auto-merge.autoMerge",
-					"when": "view == weldConflictedFiles && viewItem == conflictedFile",
+					"command": "weldMerge.autoMerge",
+					"when": "view == weldConflictedFiles && (viewItem == conflictedFile || viewItem == conflictedSubmodule)",
 					"group": "1_meld@1"
 				},
 				{
-					"command": "meld-auto-merge.checkoutConflicted",
-					"when": "view == weldConflictedFiles && viewItem == conflictedFile",
+					"command": "weldMerge.checkoutConflicted",
+					"when": "view == weldConflictedFiles && (viewItem == conflictedFile || viewItem == conflictedSubmodule || viewItem == resolvedFile || viewItem == resolvedSubmodule)",
 					"group": "1_meld@2"
 				},
 				{
-					"command": "meld-auto-merge.rerereForget",
+					"command": "weldMerge.rerereForget",
 					"when": "view == weldConflictedFiles && viewItem == conflictedFile",
 					"group": "1_meld@3"
 				},
 				{
-					"command": "meld-auto-merge.openConflictedFile",
-					"when": "view == weldConflictedFiles && viewItem == conflictedFile",
+					"command": "weldMerge.openConflictedFile",
+					"when": "view == weldConflictedFiles && (viewItem == conflictedFile || viewItem == conflictedSubmodule)",
 					"group": "2_open@1"
 				},
 				{
-					"command": "meld-auto-merge.openMergeEditor",
+					"command": "weldMerge.openMergeEditor",
 					"when": "view == weldConflictedFiles && viewItem == conflictedFile",
 					"group": "2_open@2"
 				}
 			],
 			"view/title": [
 				{
-					"command": "meld-auto-merge.autoMergeAll",
+					"command": "weldMerge.autoMergeAll",
 					"when": "view == weldConflictedFiles",
 					"group": "navigation@1"
 				},
 				{
-					"command": "meld-auto-merge.refreshConflicted",
+					"command": "weldMerge.refreshConflicted",
 					"when": "view == weldConflictedFiles",
 					"group": "navigation@2"
 				}
 			],
 			"commandPalette": [
 				{
-					"command": "meld-auto-merge.openMergeEditor",
+					"command": "weldMerge.openMergeEditor",
 					"when": "false"
 				},
 				{
-					"command": "meld-auto-merge.openConflictedFile",
+					"command": "weldMerge.openConflictedFile",
 					"when": "false"
 				}
 			]
 		},
 		"commands": [
 			{
-				"command": "meld-auto-merge.autoMerge",
+				"command": "weldMerge.autoMerge",
 				"title": "Weld: Auto-Merge Current File",
 				"icon": "$(merge)"
 			},
 			{
-				"command": "meld-auto-merge.autoMergeAll",
+				"command": "weldMerge.autoMergeAll",
 				"title": "Weld: Auto-Merge All Conflicted Files",
 				"icon": "$(check-all)"
 			},
 			{
-				"command": "meld-auto-merge.checkoutConflicted",
+				"command": "weldMerge.checkoutConflicted",
 				"title": "Weld: Checkout Conflicted (-m)",
 				"icon": "$(history)"
 			},
 			{
-				"command": "meld-auto-merge.rerereForget",
+				"command": "weldMerge.rerereForget",
 				"title": "Weld: Rerere Forget File",
 				"icon": "$(trash)"
 			},
 			{
-				"command": "meld-auto-merge.smartAdd",
+				"command": "weldMerge.smartAdd",
 				"title": "Weld: Git Add Resolved",
 				"icon": "$(add)"
 			},
 			{
-				"command": "meld-auto-merge.openMergeEditor",
+				"command": "weldMerge.openMergeEditor",
 				"title": "Open VS Code's 3-Way Merge Editor",
 				"icon": "$(git-merge)"
 			},
 			{
-				"command": "meld-auto-merge.openConflictedFile",
+				"command": "weldMerge.openConflictedFile",
 				"title": "Open File (Default Editor)",
 				"icon": "$(file-text)"
 			},
 			{
-				"command": "meld-auto-merge.openMeldDiff",
+				"command": "weldMerge.openMeldDiff",
 				"title": "Weld: 3-Way Merge Conflict Editor",
 				"icon": "$(split-horizontal)"
 			},
 			{
-				"command": "meld-auto-merge.refreshConflicted",
+				"command": "weldMerge.refreshConflicted",
 				"title": "Weld: Refresh Conflicted Files",
 				"icon": "$(refresh)"
+			},
+			{
+				"command": "weld.openSubmoduleDiff",
+				"title": "Weld: Resolve Submodule Conflict"
 			}
 		],
 		"configuration": {
@@ -328,12 +332,15 @@
 	},
 	"scripts": {
 		"vscode:prepublish": "npm run build",
-		"build:webview": "esbuild ./src/webview/ui/index.tsx --bundle --outfile=./out/webview/index.js --format=iife --platform=browser --loader:.ttf=file --minify --define:process.env.NODE_ENV='\"production\"'",
+		"build:ui:merge": "esbuild ./src/webview/ui/index.tsx --bundle --outfile=./out/webview/merge.js --format=iife --platform=browser --loader:.ttf=file --minify --define:process.env.NODE_ENV='\"production\"'",
+		"build:ui:submodule": "esbuild ./src/webview/submoduleUi/index.tsx --bundle --outfile=./out/webview/submodule.js --format=iife --platform=browser --loader:.ttf=file --minify --define:process.env.NODE_ENV='\"production\"'",
+		"build:test:submodule": "esbuild ./test/webview/mockSubmodule.tsx --bundle --outfile=./out/test/submodule_mock.js --format=iife --platform=browser --loader:.ttf=file --minify --define:process.env.NODE_ENV='\"development\"'",
 		"build:extension": "esbuild ./src/extension.ts --bundle --outfile=./out/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
-		"build": "tsc --noEmit && npm run format && npm run lint && npm run knip && npm run build:webview && npm run build:extension",
-		"watch:webview": "esbuild ./src/webview/ui/index.tsx --bundle --outfile=./out/webview/index.js --format=iife --platform=browser --loader:.ttf=file --watch --define:process.env.NODE_ENV='\"development\"'",
+		"build": "tsc --noEmit && npm run format && npm run lint && npm run knip && npm run build:ui:merge && npm run build:ui:submodule && npm run build:test:submodule && npm run build:extension",
+		"watch:ui:merge": "esbuild ./src/webview/ui/index.tsx --bundle --outfile=./out/webview/merge.js --format=iife --platform=browser --loader:.ttf=file --watch --define:process.env.NODE_ENV='\"development\"'",
+		"watch:ui:submodule": "esbuild ./src/webview/submoduleUi/index.tsx --bundle --outfile=./out/webview/submodule.js --format=iife --platform=browser --loader:.ttf=file --watch --define:process.env.NODE_ENV='\"development\"'",
 		"watch:extension": "esbuild ./src/extension.ts --bundle --outfile=./out/extension.js --external:vscode --format=cjs --platform=node --sourcemap --watch",
-		"watch": "npm run watch:webview & npm run watch:extension & tsc --noEmit --watch",
+		"watch": "npm run watch:ui:merge & npm run watch:ui:submodule & npm run watch:extension & tsc --noEmit --watch",
 		"pretest": "npm run build",
 		"test": "npx jest",
 		"test:coverage": "npx jest --coverage",
@@ -357,6 +364,8 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.4.4",
+		"@gitgraph/core": "^1.5.0",
+		"@gitgraph/react": "^1.6.0",
 		"@jazzer.js/core": "^2.1.0",
 		"@jazzer.js/jest-runner": "^2.1.0",
 		"@jest/globals": "^30.3.0",
@@ -396,5 +405,8 @@
 		"*.{js,ts,jsx,tsx,json}": [
 			"biome check --error-on-warnings --write"
 		]
+	},
+	"knip": {
+		"ignore": []
 	}
 }

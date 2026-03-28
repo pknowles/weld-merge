@@ -11,6 +11,13 @@
 ### Fixed
 - None
 
+## [0.0.8] - 2026-03-28
+
+### Added
+- **Submodule Conflict Resolution**: Fully interactive submodule merge conflict UI for resolving git index conflicts by selecting specific commits.
+- **GitGraph Integration**: Integrated a topologically accurate commit DAG visualization to navigate local, remote, and base submodule states.
+- **Mock Testing Harness**: Added a standalone webview test environment in `test/webview/` for rapid UI iteration and mocking of extension-host messages.
+
 ## [0.0.7] - 2026-03-26
 
 ### Added

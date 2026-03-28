@@ -36,6 +36,7 @@ interface MessageHandlersDeps {
 	resolveClipboardRead: (id: number, text: string) => void;
 	vscodeApi: ReturnType<typeof useVscodeMessageBus>;
 	differRef: React.MutableRefObject<Differ | null>;
+	setError: (error: string | null) => void;
 }
 
 interface LoadDiffData {
@@ -64,6 +65,7 @@ function handleConfig(config: LoadDiffData["config"], p: MessageHandlersDeps) {
 }
 
 function handleLoadDiff(data: LoadDiffData, p: MessageHandlersDeps) {
+	p.setError(null);
 	const iF: PaneFiles = [
 		null,
 		data.files[0] ?? null,
@@ -253,11 +255,13 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 		differRef,
 		filesRef,
 		diffsRef,
+		setError,
 	} = p;
 	useEffect(() => {
 		const handleMessage = (event: MessageEvent) => {
 			const m = event.data;
 			switch (m.command) {
+				case "init":
 				case "loadDiff":
 					handleLoadDiff(m.data, {
 						setFiles,
@@ -273,7 +277,11 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 						differRef,
 						filesRef,
 						diffsRef,
+						setError,
 					});
+					break;
+				case "error":
+					setError(m.message);
 					break;
 				case "loadBaseDiff":
 					handleLoadBaseDiff(m.data, {
@@ -290,6 +298,7 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 						differRef,
 						filesRef,
 						diffsRef,
+						setError,
 					});
 					break;
 				case "updateContent":
@@ -311,6 +320,7 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 						differRef,
 						filesRef,
 						diffsRef,
+						setError,
 					});
 					break;
 				case "clipboardText":

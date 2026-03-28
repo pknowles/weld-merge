@@ -36,4 +36,5 @@ test/fuzz/**/oom-*
 test-results/
 test/benchmarking/results/
 Trace-*.json
+out/test/
 trace_processor

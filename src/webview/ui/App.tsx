@@ -166,6 +166,7 @@ const useMeldUIActions = (p: MeldUIActionsProps) =>
 			attachScrollListener: p.attachScrollListener,
 			forceSyncToPane: p.forceSyncToPane,
 			...p.chunkActions,
+			vscodeApi: p.vscodeApi,
 			handleCopyHash: (hash: string) =>
 				p.vscodeApi?.postMessage({ command: "copyHash", hash }),
 			handleShowDiff: (idx: number) =>
@@ -251,6 +252,7 @@ const useAppCoreData = () => {
 	const [baseCompareHighlighting, setBaseCompareHighlighting] =
 		useState(false);
 	const [renderTrigger, setRenderTrigger] = useState(0);
+	const [error, setError] = useState<string | null>(null);
 	const editorRefArray = useRef<editor.IStandaloneCodeEditor[]>([]);
 	const diffsAreReversedRef = useRef<boolean[]>([false, true, false, false]);
 	return {
@@ -271,6 +273,8 @@ const useAppCoreData = () => {
 		setBaseCompareHighlighting,
 		renderTrigger,
 		setRenderTrigger,
+		error,
+		setError,
 		editorRefArray,
 		diffsAreReversedRef,
 	};
@@ -303,6 +307,7 @@ const useAppStateMessageHandlers = (
 		resolveClipboardRead: s.resolveClipboardRead,
 		vscodeApi: s.vscodeApi,
 		differRef: d.differRef,
+		setError: d.setError,
 	});
 };
 
@@ -412,11 +417,39 @@ const useAppState = () => {
 		debounceDelay: d.debounceDelay,
 	});
 
-	return { files: d.files, uiState, uiActions };
+	return { files: d.files, uiState, uiActions, error: d.error };
 };
 
 export const App: FC = () => {
-	const { files, uiState, uiActions } = useAppState();
+	const { files, uiState, uiActions, error } = useAppState();
+
+	if (error) {
+		return (
+			<div
+				style={{
+					color: "var(--vscode-errorForeground)",
+					padding: "20px",
+					fontFamily: "var(--vscode-font-family)",
+				}}
+			>
+				<h3>Merge Error</h3>
+				<p>{error}</p>
+				<button
+					type="button"
+					onClick={() => uiActions.vscodeApi?.postMessage({ command: "ready" })}
+					style={{
+						backgroundColor: "var(--vscode-button-background)",
+						color: "var(--vscode-button-foreground)",
+						border: "none",
+						padding: "4px 12px",
+						cursor: "pointer",
+					}}
+				>
+					Retry
+				</button>
+			</div>
+		);
+	}
 
 	if (files[1] === null) {
 		return (

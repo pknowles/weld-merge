@@ -1,6 +1,6 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	type Event,
@@ -14,6 +14,7 @@ import {
 import { execGit } from "./gitUtils.ts";
 
 const CONFLICT_PREFIX_REGEX = /^#?\t/;
+const UNMERGED_INFO_REGEX = /^(\d+) ([0-9a-f]+) (\d+)\t(.+)$/;
 
 interface GitFileOptions {
 	label: string;
@@ -45,10 +46,21 @@ class ConflictedFile extends GitFile {
 	constructor(options: Omit<GitFileOptions, "commandId">) {
 		super({
 			...options,
-			commandId: "meld-auto-merge.openMeldDiff",
+			commandId: "weldMerge.openMeldDiff",
 		});
 		this.description = "Conflicted";
 		this.contextValue = "conflictedFile";
+	}
+}
+
+class ConflictedSubmodule extends GitFile {
+	constructor(options: Omit<GitFileOptions, "commandId">) {
+		super({
+			...options,
+			commandId: "weld.openSubmoduleDiff",
+		});
+		this.description = "Conflicted Submodule";
+		this.contextValue = "conflictedSubmodule";
 	}
 }
 
@@ -56,10 +68,21 @@ class ResolvedFile extends GitFile {
 	constructor(options: Omit<GitFileOptions, "commandId">) {
 		super({
 			...options,
-			commandId: "meld-auto-merge.openConflictedFile",
+			commandId: "weldMerge.openConflictedFile",
 		});
 		this.description = "Resolved";
 		this.contextValue = "resolvedFile";
+	}
+}
+
+class ResolvedSubmodule extends GitFile {
+	constructor(options: Omit<GitFileOptions, "commandId">) {
+		super({
+			...options,
+			commandId: "weld.openSubmoduleDiff",
+		});
+		this.description = "Resolved Submodule";
+		this.contextValue = "resolvedSubmodule";
 	}
 }
 
@@ -94,9 +117,10 @@ class ConflictedFilesProvider implements TreeDataProvider<GitFile> {
 		}
 
 		try {
-			const unmergedFiles = await this._getUnmergedFiles(repoPath);
+			const unmergedInfo = await this._getUnmergedInfo(repoPath);
+			const unmergedFiles = Array.from(unmergedInfo.keys());
 			const items: GitFile[] = this._createConflictedItems(
-				unmergedFiles,
+				unmergedInfo,
 				repoPath,
 			);
 
@@ -115,41 +139,85 @@ class ConflictedFilesProvider implements TreeDataProvider<GitFile> {
 	}
 
 	private _createConflictedItems(
-		files: string[],
+		unmergedInfo: Map<
+			string,
+			{ mode: string; stages: Map<number, string> }
+		>,
 		repoPath: string,
 	): GitFile[] {
-		return files.map(
-			(file) =>
-				new ConflictedFile({
-					label: file,
-					collapsibleState: TreeItemCollapsibleState.None,
-					uri: Uri.file(join(repoPath, file)),
-					repoPath,
-				}),
-		);
+		const items: GitFile[] = [];
+		for (const [file, info] of unmergedInfo) {
+			const options = {
+				label: file,
+				collapsibleState: TreeItemCollapsibleState.None,
+				uri: Uri.file(join(repoPath, file)),
+				repoPath,
+			};
+			if (info.mode === "160000") {
+				items.push(new ConflictedSubmodule(options));
+			} else {
+				items.push(new ConflictedFile(options));
+			}
+		}
+		return items;
 	}
 
 	private _createResolvedItems(files: string[], repoPath: string): GitFile[] {
-		return files.map(
-			(file) =>
-				new ResolvedFile({
-					label: file,
-					collapsibleState: TreeItemCollapsibleState.None,
-					uri: Uri.file(join(repoPath, file)),
-					repoPath,
-				}),
-		);
+		return files.map((file) => {
+			const fullPath = join(repoPath, file);
+			const options = {
+				label: file,
+				collapsibleState: TreeItemCollapsibleState.None,
+				uri: Uri.file(fullPath),
+				repoPath,
+			};
+
+			try {
+				if (existsSync(fullPath) && lstatSync(fullPath).isDirectory()) {
+					return new ResolvedSubmodule(options);
+				}
+			} catch {
+				/* Ignore stat errors, fallback to regular file */
+			}
+
+			return new ResolvedFile(options);
+		});
 	}
 
-	private async _getUnmergedFiles(repoPath: string): Promise<string[]> {
+	private async _getUnmergedInfo(
+		repoPath: string,
+	): Promise<Map<string, { mode: string; stages: Map<number, string> }>> {
 		const unmergedOutput = await execGit(
-			["diff", "--name-only", "--diff-filter=U"],
+			["ls-files", "-u", "--stage"],
 			repoPath,
 		);
-		return unmergedOutput
+		const lines = unmergedOutput
 			.trim()
 			.split("\n")
-			.filter((f) => f);
+			.filter((l) => l);
+		const infoMap = new Map<
+			string,
+			{ mode: string; stages: Map<number, string> }
+		>();
+
+		for (const line of lines) {
+			// Format: <mode> <sha> <stage> <path>
+			const match = line.match(UNMERGED_INFO_REGEX);
+			if (match?.[1] && match[2] && match[3] && match[4]) {
+				const mode = match[1];
+				const sha = match[2];
+				const stageStr = match[3];
+				const path = match[4];
+				const stage = Number.parseInt(stageStr, 10);
+				let info = infoMap.get(path);
+				if (!info) {
+					info = { mode, stages: new Map() };
+					infoMap.set(path, info);
+				}
+				info.stages.set(stage, sha);
+			}
+		}
+		return infoMap;
 	}
 
 	private _isInConflictState(repoPath: string): boolean {

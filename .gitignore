@@ -6,12 +6,12 @@ coverage/
 .stryker-tmp/
 reports/
 .cifuzz-corpus/
-test/fuzz/**/corpus/
-test/fuzz/**/crash-*
-test/fuzz/**/timeout-*
-test/fuzz/**/slow-unit-*
-test/fuzz/**/oom-*
+test/*.corpus/
+test/*.fuzz/
+test/fuzz/*.corpus/
+test/fuzz/*.fuzz/
 test-results/
 test/benchmarking/results/
 Trace-*.json
 trace_processor
+
