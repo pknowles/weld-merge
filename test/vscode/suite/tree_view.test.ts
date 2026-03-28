@@ -9,6 +9,8 @@ import { ConflictedFilesProvider, GitFile } from "../../../src/treeView.ts";
 import {
 	makeConflict,
 	makeRepo,
+	makeSubmoduleAndTextConflictRepo,
+	makeSubmoduleConflictRepo,
 	openRepoInGitExtension,
 	runGit,
 	waitForMergeChanges,
@@ -114,6 +116,74 @@ describe("ConflictedFilesProvider — conflict detection (VS Code host)", () => 
 
 			assert.equal(conflicted.length, 1);
 			assert.ok(conflicted[0]?.uri.fsPath.endsWith("tracked.txt"));
+		} finally {
+			const closePromise = waitForRepoClose(repoPath);
+			await rm(repoPath, { recursive: true, force: true });
+			await closePromise;
+		}
+	});
+});
+
+describe("ConflictedFilesProvider — submodule conflicts", () => {
+	it("shows conflicted submodules as submodule resolver rows", async () => {
+		const repoPath = await makeSubmoduleConflictRepo("weld-tv-submodule-");
+		try {
+			await openRepoInGitExtension(repoPath);
+			const repo = getGitApi().getRepository(Uri.file(repoPath));
+			assert.ok(repo, "expected repository to be registered");
+			await waitForMergeChanges(repo, 1);
+
+			const children = await new ConflictedFilesProvider().getChildren();
+			const submodule = children.find(
+				(item) =>
+					item instanceof GitFile &&
+					item.contextValue === "conflictedSubmodule" &&
+					item.uri.fsPath === join(repoPath, "sub"),
+			);
+
+			assert.ok(submodule, "expected conflictedSubmodule tree item");
+			assert.equal(
+				submodule.command?.command,
+				"meld-auto-merge.openMeldDiff",
+			);
+		} finally {
+			const closePromise = waitForRepoClose(repoPath);
+			await rm(repoPath, { recursive: true, force: true });
+			await closePromise;
+		}
+	});
+
+	it("keeps a submodule conflicted when a text conflict is active in the same merge", async () => {
+		const repoPath = await makeSubmoduleAndTextConflictRepo(
+			"weld-tv-submodule-text-",
+		);
+		try {
+			await openRepoInGitExtension(repoPath);
+			const repo = getGitApi().getRepository(Uri.file(repoPath));
+			assert.ok(repo, "expected repository to be registered");
+			await waitForMergeChanges(repo, 2);
+
+			const apiPaths = repo.state.mergeChanges.map((change) =>
+				change.uri.fsPath.slice(repoPath.length + 1),
+			);
+			assert.deepEqual(
+				apiPaths.sort(),
+				["sub", "tracked.txt"],
+				"VS Code Git API must report both active unmerged paths",
+			);
+
+			const children = await new ConflictedFilesProvider().getChildren();
+			const submoduleItems = children.filter(
+				(item) =>
+					item instanceof GitFile &&
+					item.uri.fsPath === join(repoPath, "sub"),
+			);
+
+			assert.equal(submoduleItems.length, 1);
+			assert.equal(
+				submoduleItems[0]?.contextValue,
+				"conflictedSubmodule",
+			);
 		} finally {
 			const closePromise = waitForRepoClose(repoPath);
 			await rm(repoPath, { recursive: true, force: true });

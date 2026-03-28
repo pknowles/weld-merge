@@ -19,7 +19,22 @@ function runGit(args: string[], cwd: string): string {
 	return execFileSync("git", args, {
 		cwd,
 		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
 	}).trim();
+}
+
+function assertUnmergedPaths(repoPath: string, expectedPaths: string[]): void {
+	const unmergedPaths = runGit(
+		["diff", "--name-only", "--diff-filter=U"],
+		repoPath,
+	).split("\n");
+	for (const expectedPath of expectedPaths) {
+		if (!unmergedPaths.includes(expectedPath)) {
+			throw new Error(
+				`Expected ${expectedPath} to be unmerged in ${repoPath}; got ${unmergedPaths.join(", ")}`,
+			);
+		}
+	}
 }
 
 async function makeRepo(prefix: string): Promise<string> {
@@ -30,6 +45,124 @@ async function makeRepo(prefix: string): Promise<string> {
 	await writeFile(join(repoPath, "tracked.txt"), "base\n");
 	runGit(["add", "--", "tracked.txt"], repoPath);
 	runGit(["commit", "-m", "init"], repoPath);
+	return repoPath;
+}
+
+async function makeSubmoduleConflictRepo(prefix: string): Promise<string> {
+	const rootPath = await mkdtemp(join(tmpdir(), prefix));
+	const subSourcePath = join(rootPath, "subsrc");
+	const repoPath = join(rootPath, "parent");
+	await mkdir(subSourcePath);
+	await mkdir(repoPath);
+	runGit(["init", "-b", "main"], subSourcePath);
+	runGit(["config", "user.name", "Weld Test"], subSourcePath);
+	runGit(["config", "user.email", "weld-test@example.com"], subSourcePath);
+	await writeFile(join(subSourcePath, "file.txt"), "base\n");
+	runGit(["add", "file.txt"], subSourcePath);
+	runGit(["commit", "-m", "base"], subSourcePath);
+	const base = runGit(["rev-parse", "HEAD"], subSourcePath);
+	runGit(["checkout", "-b", "other"], subSourcePath);
+	await writeFile(join(subSourcePath, "file.txt"), "remote\n");
+	runGit(["commit", "-am", "remote"], subSourcePath);
+	const remote = runGit(["rev-parse", "HEAD"], subSourcePath);
+	runGit(["checkout", "main"], subSourcePath);
+	await writeFile(join(subSourcePath, "file.txt"), "local\n");
+	runGit(["commit", "-am", "local"], subSourcePath);
+	const local = runGit(["rev-parse", "HEAD"], subSourcePath);
+
+	runGit(["init", "-b", "main"], repoPath);
+	runGit(["config", "user.name", "Weld Test"], repoPath);
+	runGit(["config", "user.email", "weld-test@example.com"], repoPath);
+	runGit(
+		[
+			"-c",
+			"protocol.file.allow=always",
+			"submodule",
+			"add",
+			subSourcePath,
+			"sub",
+		],
+		repoPath,
+	);
+	runGit(["checkout", base], join(repoPath, "sub"));
+	runGit(["add", "sub", ".gitmodules"], repoPath);
+	runGit(["commit", "-m", "add sub"], repoPath);
+	runGit(["checkout", "-b", "other"], repoPath);
+	runGit(["checkout", remote], join(repoPath, "sub"));
+	runGit(["add", "sub"], repoPath);
+	runGit(["commit", "-m", "remote sub"], repoPath);
+	runGit(["checkout", "main"], repoPath);
+	runGit(["checkout", local], join(repoPath, "sub"));
+	runGit(["add", "sub"], repoPath);
+	runGit(["commit", "-m", "local sub"], repoPath);
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits non-zero for the expected submodule conflict.
+	}
+	assertUnmergedPaths(repoPath, ["sub"]);
+	return repoPath;
+}
+
+async function makeSubmoduleAndTextConflictRepo(
+	prefix: string,
+): Promise<string> {
+	const rootPath = await mkdtemp(join(tmpdir(), prefix));
+	const subSourcePath = join(rootPath, "subsrc");
+	const repoPath = join(rootPath, "parent");
+	await mkdir(subSourcePath);
+	await mkdir(repoPath);
+	runGit(["init", "-q", "-b", "main"], subSourcePath);
+	runGit(["config", "user.name", "Weld Test"], subSourcePath);
+	runGit(["config", "user.email", "weld-test@example.com"], subSourcePath);
+	await writeFile(join(subSourcePath, "file.txt"), "base\n");
+	runGit(["add", "file.txt"], subSourcePath);
+	runGit(["commit", "-q", "-m", "base"], subSourcePath);
+	const base = runGit(["rev-parse", "HEAD"], subSourcePath);
+	runGit(["checkout", "-q", "-b", "other"], subSourcePath);
+	await writeFile(join(subSourcePath, "file.txt"), "remote\n");
+	runGit(["commit", "-am", "remote", "-q"], subSourcePath);
+	const remote = runGit(["rev-parse", "HEAD"], subSourcePath);
+	runGit(["checkout", "-q", "main"], subSourcePath);
+	await writeFile(join(subSourcePath, "file.txt"), "local\n");
+	runGit(["commit", "-am", "local", "-q"], subSourcePath);
+	const local = runGit(["rev-parse", "HEAD"], subSourcePath);
+
+	runGit(["init", "-q", "-b", "main"], repoPath);
+	runGit(["config", "user.name", "Weld Test"], repoPath);
+	runGit(["config", "user.email", "weld-test@example.com"], repoPath);
+	runGit(
+		[
+			"-c",
+			"protocol.file.allow=always",
+			"submodule",
+			"add",
+			"-q",
+			subSourcePath,
+			"sub",
+		],
+		repoPath,
+	);
+	runGit(["checkout", "-q", base], join(repoPath, "sub"));
+	await writeFile(join(repoPath, "tracked.txt"), "base\n");
+	runGit(["add", "sub", ".gitmodules", "tracked.txt"], repoPath);
+	runGit(["commit", "-q", "-m", "add sub and text"], repoPath);
+	runGit(["checkout", "-q", "-b", "other"], repoPath);
+	runGit(["checkout", "-q", remote], join(repoPath, "sub"));
+	await writeFile(join(repoPath, "tracked.txt"), "remote\n");
+	runGit(["add", "sub", "tracked.txt"], repoPath);
+	runGit(["commit", "-q", "-m", "remote changes"], repoPath);
+	runGit(["checkout", "-q", "main"], repoPath);
+	runGit(["checkout", "-q", local], join(repoPath, "sub"));
+	await writeFile(join(repoPath, "tracked.txt"), "local\n");
+	runGit(["add", "sub", "tracked.txt"], repoPath);
+	runGit(["commit", "-q", "-m", "local changes"], repoPath);
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits non-zero for the expected combined conflict.
+	}
+	assertUnmergedPaths(repoPath, ["sub", "tracked.txt"]);
 	return repoPath;
 }
 
@@ -73,6 +206,7 @@ function makeConflict(repoPath: string): void {
 	} catch {
 		// git exits 1 for a conflict — expected
 	}
+	assertUnmergedPaths(repoPath, ["tracked.txt"]);
 }
 
 // Creates a second conflict on the same repo after makeConflict + merge --abort.
@@ -96,6 +230,7 @@ function makeSecondConflict(repoPath: string): void {
 	} catch {
 		// git exits 1 for a conflict — expected
 	}
+	assertUnmergedPaths(repoPath, ["tracked.txt"]);
 }
 
 // Creates a delete/modify conflict where local deleted tracked.txt and remote
@@ -113,6 +248,7 @@ function makeDeletedByUsConflict(repoPath: string): void {
 	} catch {
 		// git exits 1 for a conflict — expected
 	}
+	assertUnmergedPaths(repoPath, ["tracked.txt"]);
 }
 
 // Creates a delete/modify conflict where remote deleted tracked.txt and local
@@ -130,6 +266,7 @@ function makeDeletedByThemConflict(repoPath: string): void {
 	} catch {
 		// git exits 1 for a conflict — expected
 	}
+	assertUnmergedPaths(repoPath, ["tracked.txt"]);
 }
 
 // Creates a both-added conflict on conflict.txt (not present in the initial
@@ -149,6 +286,7 @@ function makeBothAddedConflict(repoPath: string): void {
 	} catch {
 		// git exits 1 for a conflict — expected
 	}
+	assertUnmergedPaths(repoPath, ["conflict.txt"]);
 }
 
 // Waits for the git extension to fire onDidCloseRepository for repoPath.
@@ -278,6 +416,8 @@ export {
 	makeRepo,
 	makeRepoFile,
 	makeSecondConflict,
+	makeSubmoduleAndTextConflictRepo,
+	makeSubmoduleConflictRepo,
 	openRepoInGitExtension,
 	runGit,
 	waitForMergeChanges,

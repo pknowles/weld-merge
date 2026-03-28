@@ -24,6 +24,11 @@ import {
 	getGitApi,
 	isSupportedScheme,
 } from "./repoContext.ts";
+import {
+	isActiveSubmoduleGitlinkConflict,
+	isKnownSubmoduleConflictPath,
+	isSubmoduleGitlinkChange,
+} from "./submoduleConflict.ts";
 
 const CONFLICT_PREFIX_REGEX = /^#?\t/;
 
@@ -84,6 +89,17 @@ class ConflictedFile extends GitFile {
 	}
 }
 
+class ConflictedSubmodule extends GitFile {
+	constructor(options: Omit<GitFileOptions, "commandId">) {
+		super({
+			...options,
+			commandId: "meld-auto-merge.openMeldDiff",
+		});
+		this.description = "Conflicted Submodule";
+		this.contextValue = "conflictedSubmodule";
+	}
+}
+
 class ResolvedFile extends GitFile {
 	constructor(options: Omit<GitFileOptions, "commandId">) {
 		super({
@@ -92,6 +108,17 @@ class ResolvedFile extends GitFile {
 		});
 		this.description = "Resolved";
 		this.contextValue = "resolvedFile";
+	}
+}
+
+class ResolvedSubmodule extends GitFile {
+	constructor(options: Omit<GitFileOptions, "commandId">) {
+		super({
+			...options,
+			commandId: "meld-auto-merge.openMeldDiff",
+		});
+		this.description = "Resolved Submodule";
+		this.contextValue = "resolvedSubmodule";
 	}
 }
 
@@ -183,7 +210,7 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 		try {
 			const conflictState = await readConflictState(repository);
 			const mergeChanges = repository.state.mergeChanges;
-			const conflictedItems = this._createConflictedItems(
+			const conflictedItems = await this._createConflictedItems(
 				mergeChanges,
 				repository,
 			);
@@ -192,7 +219,7 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 				conflictState,
 				mergeChanges.map((change) => change.uri),
 			);
-			const resolvedItems = this._createResolvedItems(
+			const resolvedItems = await this._createResolvedItems(
 				resolvedFileUris,
 				repository,
 			);
@@ -228,31 +255,49 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 	private _createConflictedItems(
 		changes: GitApiChange[],
 		repository: GitApiRepository,
-	): GitFile[] {
-		return changes.map(
-			(change) =>
-				new ConflictedFile({
+	): Promise<GitFile[]> {
+		return Promise.all(
+			changes.map(async (change) => {
+				const options = {
 					label: workspace.asRelativePath(change.uri, false),
 					collapsibleState: TreeItemCollapsibleState.None,
 					conflictedItem: createConflictedItem(repository, change),
-				}),
+				};
+				if (
+					await isActiveSubmoduleGitlinkConflict(
+						repository,
+						change.uri,
+					)
+				) {
+					return new ConflictedSubmodule(options);
+				}
+				return new ConflictedFile(options);
+			}),
 		);
 	}
 
 	private _createResolvedItems(
 		files: Uri[],
 		repository: GitApiRepository,
-	): GitFile[] {
-		return files.map(
-			(file) =>
-				new ResolvedFile({
+	): Promise<GitFile[]> {
+		return Promise.all(
+			files.map(async (file) => {
+				const options = {
 					label: workspace.asRelativePath(file, false),
 					collapsibleState: TreeItemCollapsibleState.None,
 					conflictedItem: createConflictedItemFromUri(
 						repository,
 						file,
 					),
-				}),
+				};
+				if (
+					(await isSubmoduleGitlinkChange(repository, file)) ||
+					(await isKnownSubmoduleConflictPath(repository, file))
+				) {
+					return new ResolvedSubmodule(options);
+				}
+				return new ResolvedFile(options);
+			}),
 		);
 	}
 

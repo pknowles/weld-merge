@@ -34,6 +34,7 @@ import {
 	getGitApi,
 	isSupportedScheme,
 } from "./repoContext.ts";
+import { SubmoduleConflict } from "./submoduleConflict.ts";
 import { ConflictedFilesProvider, GitFile } from "./treeView.ts";
 import { extractConflictLabels } from "./webview/conflictLabels.ts";
 import {
@@ -41,6 +42,7 @@ import {
 	fetchConflictStages,
 } from "./webview/diffPayload.ts";
 import { MeldCustomEditorProvider } from "./webview/meldWebviewPanel.ts";
+import { SubmoduleConflictEditorProvider } from "./webview/submoduleConflictEditor.ts";
 
 const lastConflictedFilesPerRepo: Map<string, Set<string>> = new Map();
 const ZERO_OBJECT_ID = "0000000000000000000000000000000000000000";
@@ -155,6 +157,7 @@ async function refreshRepo(
 		repoUri: repo.rootUri,
 		stateKey,
 	});
+	SubmoduleConflictEditorProvider.onRepositoryStateChanged.fire(repo.rootUri);
 }
 
 function watchRepo(
@@ -287,6 +290,20 @@ async function handleOpenMeldDiff(conflictedItem: ConflictedItem) {
 		"vscode.openWith",
 		conflictedItem.uri,
 		MeldCustomEditorProvider.viewType,
+	);
+}
+
+function isSubmoduleTreeItem(file: GitFile): boolean {
+	return (
+		file.contextValue === "conflictedSubmodule" ||
+		file.contextValue === "resolvedSubmodule"
+	);
+}
+
+async function handleOpenSubmoduleConflict(file: GitFile): Promise<void> {
+	await SubmoduleConflictEditorProvider.open(
+		file.conflictedItem.repository,
+		file.uri,
 	);
 }
 
@@ -527,6 +544,37 @@ async function handleCheckoutConflicted(
 	}
 }
 
+async function handleCheckoutSubmoduleConflict(
+	file: GitFile,
+	conflictedFilesProvider: ConflictedFilesProvider,
+): Promise<void> {
+	const confirm = await window.showWarningMessage(
+		`Are you sure you want to restore the conflicted submodule index entries for ${file.uri}?`,
+		{ modal: true },
+		"Yes",
+	);
+	if (confirm !== "Yes") {
+		return;
+	}
+	try {
+		await SubmoduleConflict.restore(
+			file.conflictedItem.repository,
+			file.uri,
+		);
+		window.showInformationMessage(
+			`Restored conflicted submodule ${file.uri}`,
+		);
+		conflictedFilesProvider.refresh();
+		SubmoduleConflictEditorProvider.onRepositoryStateChanged.fire(
+			file.conflictedItem.repository.rootUri,
+		);
+	} catch (error: unknown) {
+		const message = `Submodule restore failed: ${getErrorMessage(error)}`;
+		window.showErrorMessage(message);
+		getWeldLogChannel().error(message);
+	}
+}
+
 // git checkout -m fails for delete/modify conflicts because one index stage is
 // absent. Instead: try checkout -m first (works for both-modified). If that
 // fails, detect the deleted side, restore the surviving content, and recreate
@@ -649,6 +697,12 @@ async function handleTreeAutoMerge(
 	file: GitFile,
 	conflictedFilesProvider: ConflictedFilesProvider,
 ) {
+	if (isSubmoduleTreeItem(file)) {
+		window.showErrorMessage(
+			"Submodule conflicts cannot be auto-merged as text. Open the submodule resolver from the tree instead.",
+		);
+		return;
+	}
 	await handleAutoMerge(
 		file.conflictedItem,
 		file.uri,
@@ -677,6 +731,10 @@ async function handleTreeCheckoutConflicted(
 	file: GitFile,
 	conflictedFilesProvider: ConflictedFilesProvider,
 ) {
+	if (isSubmoduleTreeItem(file)) {
+		await handleCheckoutSubmoduleConflict(file, conflictedFilesProvider);
+		return;
+	}
 	await handleCheckoutConflicted(
 		file.conflictedItem,
 		file.uri,
@@ -783,6 +841,10 @@ async function handleOpenMeldDiffCommand(
 	target: GitFile | UriCommandArg | undefined,
 ) {
 	if (target instanceof GitFile) {
+		if (isSubmoduleTreeItem(target)) {
+			await handleOpenSubmoduleConflict(target);
+			return;
+		}
 		await handleOpenMeldDiff(target.conflictedItem);
 		return;
 	}
@@ -912,6 +974,12 @@ function registerViews(
 		conflictedFilesProvider,
 	);
 	context.subscriptions.push(MeldCustomEditorProvider.register(context));
+	context.subscriptions.push(
+		SubmoduleConflictEditorProvider.register(
+			context,
+			conflictedFilesProvider,
+		),
+	);
 }
 
 function registerCommands(

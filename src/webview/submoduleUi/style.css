@@ -1,0 +1,357 @@
+html,
+body {
+	height: 100%;
+}
+
+body {
+	font-family: var(--vscode-font-family);
+	font-size: var(--vscode-font-size);
+}
+
+button,
+input {
+	font: inherit;
+}
+
+.submodule-app {
+	display: flex;
+	flex-direction: column;
+	height: 100vh;
+	background: var(--vscode-editor-background);
+	color: var(--vscode-editor-foreground);
+}
+
+.submodule-sidebar {
+	display: flex;
+	min-width: 0;
+	min-height: 0;
+	flex-direction: column;
+	overflow: hidden;
+	border-right: 1px solid var(--vscode-panel-border);
+}
+
+.submodule-header {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 10px 12px;
+	border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.submodule-header h1 {
+	margin: 0;
+	font-size: 14px;
+	font-weight: 400;
+}
+
+.submodule-header h1 strong {
+	font-weight: 600;
+}
+
+.submodule-header p,
+.muted {
+	margin: 4px 0 0;
+	color: var(--vscode-descriptionForeground);
+}
+
+.submodule-search {
+	position: relative;
+	display: grid;
+	grid-template-columns: minmax(120px, 1fr) auto;
+	gap: 6px;
+}
+
+.submodule-search input {
+	min-width: 0;
+	padding: 4px 8px;
+	border: 1px solid var(--vscode-input-border);
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+}
+
+.submodule-search button,
+.file-list button {
+	border: none;
+	background: var(--vscode-button-background);
+	color: var(--vscode-button-foreground);
+	cursor: pointer;
+}
+
+.submodule-search button {
+	padding: 4px 12px;
+}
+
+.submodule-search button:disabled {
+	cursor: default;
+	opacity: 0.55;
+}
+
+.submodule-search-results {
+	position: absolute;
+	top: 30px;
+	left: 0;
+	right: 0;
+	z-index: 4;
+	display: flex;
+	flex-direction: column;
+	max-height: 280px;
+	overflow: auto;
+	border: 1px solid var(--vscode-dropdown-border);
+	background: var(--vscode-dropdown-background);
+	box-shadow: 0 4px 12px rgb(0 0 0 / 35%);
+}
+
+.submodule-search-results button {
+	display: grid;
+	grid-template-columns: 72px minmax(0, 1fr);
+	gap: 8px;
+	padding: 6px 8px;
+	text-align: left;
+	background: transparent;
+	color: var(--vscode-dropdown-foreground);
+}
+
+.submodule-search-results button:hover,
+.file-list button:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.conflict-lost {
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--vscode-panel-border);
+	color: var(--vscode-errorForeground);
+}
+
+.submodule-body {
+	display: grid;
+	min-height: 0;
+	flex: 1;
+}
+
+.submodule-graph {
+	position: relative;
+	min-width: 0;
+	min-height: 0;
+	flex: 1;
+	overflow: auto;
+	padding: 8px 4px;
+}
+
+.commit-list {
+	width: 100%;
+	min-width: 0;
+}
+
+.commit-row {
+	box-sizing: border-box;
+	display: flex;
+	width: 100%;
+	height: 28px;
+	min-width: 0;
+	align-items: center;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--vscode-editor-foreground);
+	text-align: left;
+}
+
+button.commit-row {
+	cursor: pointer;
+}
+
+button.commit-row:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+button.commit-row:hover svg circle {
+	filter: brightness(1.15);
+}
+
+.commit-row--selected {
+	background: var(--vscode-list-activeSelectionBackground);
+	color: var(--vscode-list-activeSelectionForeground);
+}
+
+.commit-row--sentinel {
+	color: var(--vscode-descriptionForeground);
+}
+
+.commit-row__graph {
+	display: block;
+	flex: 0 0 auto;
+}
+
+.commit-row__content {
+	box-sizing: border-box;
+	display: flex;
+	flex: 1 1 auto;
+	min-width: 0;
+	align-items: center;
+	gap: 8px;
+	padding-right: 12px;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.commit-row__summary {
+	display: flex;
+	flex: 0 1 auto;
+	min-width: 0;
+	align-items: baseline;
+	gap: 6px;
+	overflow: hidden;
+}
+
+.commit-row__hash {
+	flex: 0 0 auto;
+	color: var(--vscode-descriptionForeground);
+	font-family: var(--vscode-editor-font-family);
+}
+
+.commit-row__subject {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.commit-row__refs,
+.commit-row__roles {
+	display: inline-flex;
+	min-width: 0;
+	align-items: center;
+	gap: 4px;
+	overflow: hidden;
+}
+
+.commit-row__refs {
+	flex: 0 1 auto;
+}
+
+.commit-row__roles {
+	flex: 0 0 auto;
+}
+
+.commit-badge {
+	display: inline-block;
+	flex: 0 1 auto;
+	max-width: 180px;
+	padding: 1px 5px;
+	overflow: hidden;
+	border: 1px solid var(--vscode-badge-background);
+	border-radius: 2px;
+	background: var(--vscode-badge-background);
+	color: var(--vscode-badge-foreground);
+	font-size: 10px;
+	line-height: 14px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.commit-badge--head {
+	border-color: var(--vscode-charts-blue);
+	background: transparent;
+	color: var(--vscode-charts-blue);
+}
+
+.commit-badge--branch {
+	border-color: var(--vscode-charts-green);
+	background: transparent;
+	color: var(--vscode-charts-green);
+}
+
+.commit-badge--remote {
+	border-color: var(--vscode-descriptionForeground);
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+}
+
+.commit-badge--tag {
+	border-color: var(--vscode-charts-yellow);
+	background: transparent;
+	color: var(--vscode-charts-yellow);
+}
+
+.commit-badge--role {
+	flex: 0 0 auto;
+	max-width: none;
+	border-color: var(--vscode-button-background);
+	background: var(--vscode-button-background);
+	color: var(--vscode-button-foreground);
+	font-weight: 600;
+}
+
+.submodule-resizer {
+	width: 6px;
+	height: 100%;
+	margin: 0;
+	border: 0;
+	background: transparent;
+	cursor: col-resize;
+}
+
+.submodule-resizer:hover {
+	background: var(--vscode-focusBorder);
+}
+
+.submodule-details {
+	min-width: 0;
+	overflow: auto;
+	padding: 14px;
+}
+
+.submodule-details h2,
+.submodule-details h3 {
+	margin: 0 0 8px;
+	font-size: 14px;
+}
+
+.submodule-details pre {
+	white-space: pre-wrap;
+	font-family: var(--vscode-editor-font-family);
+	font-size: var(--vscode-editor-font-size);
+}
+
+.hash {
+	overflow-wrap: anywhere;
+	color: var(--vscode-descriptionForeground);
+	font-family: var(--vscode-editor-font-family);
+}
+
+.file-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.file-list button {
+	display: grid;
+	grid-template-columns: 42px minmax(0, 1fr);
+	gap: 8px;
+	padding: 5px 6px;
+	text-align: left;
+	background: transparent;
+	color: var(--vscode-editor-foreground);
+}
+
+.file-list span {
+	color: var(--vscode-gitDecoration-modifiedResourceForeground);
+}
+
+.status-page {
+	display: flex;
+	height: 100vh;
+	align-items: center;
+	justify-content: center;
+	padding: 20px;
+	background: var(--vscode-editor-background);
+	color: var(--vscode-editor-foreground);
+}
+
+.status-page.error {
+	color: var(--vscode-errorForeground);
+}
+
+.submodule-empty {
+	padding: 12px;
+	color: var(--vscode-descriptionForeground);
+}

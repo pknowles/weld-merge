@@ -55,6 +55,16 @@
 					}
 				],
 				"priority": "option"
+			},
+			{
+				"viewType": "weld.submoduleConflict",
+				"displayName": "Weld Submodule Conflict",
+				"selector": [
+					{
+						"filenamePattern": "*.weld-submodule-conflict"
+					}
+				],
+				"priority": "option"
 			}
 		],
 		"viewsContainers": {
@@ -84,7 +94,7 @@
 				},
 				{
 					"command": "meld-auto-merge.checkoutConflicted",
-					"when": "view == weldConflictedFiles && viewItem == resolvedFile",
+					"when": "view == weldConflictedFiles && (viewItem == resolvedFile || viewItem == resolvedSubmodule)",
 					"group": "inline@2"
 				},
 				{
@@ -94,7 +104,7 @@
 				},
 				{
 					"command": "meld-auto-merge.checkoutConflicted",
-					"when": "view == weldConflictedFiles && viewItem == conflictedFile",
+					"when": "view == weldConflictedFiles && (viewItem == conflictedFile || viewItem == conflictedSubmodule)",
 					"group": "1_meld@2"
 				},
 				{
@@ -332,10 +342,10 @@
 	},
 	"scripts": {
 		"vscode:prepublish": "npm run build",
-		"build:webview": "esbuild ./src/webview/ui/index.tsx --bundle --outfile=./out/webview/index.js --format=iife --platform=browser --loader:.ttf=file --minify --define:process.env.NODE_ENV='\"production\"'",
+		"build:webview": "esbuild ./src/webview/ui/index.tsx --bundle --outfile=./out/webview/index.js --format=iife --platform=browser --loader:.ttf=file --minify --define:process.env.NODE_ENV='\"production\"' && esbuild ./src/webview/submoduleUi/index.tsx --bundle --outfile=./out/webview/submodule.js --format=iife --platform=browser --loader:.ttf=file --minify --define:process.env.NODE_ENV='\"production\"'",
 		"build:extension": "esbuild ./src/extension.ts --bundle --outfile=./out/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
 		"build": "tsc --noEmit && npm run format && npm run lint && npm run knip && npm run build:webview && npm run build:extension",
-		"watch:webview": "esbuild ./src/webview/ui/index.tsx --bundle --outfile=./out/webview/index.js --format=iife --platform=browser --loader:.ttf=file --watch --define:process.env.NODE_ENV='\"development\"'",
+		"watch:webview": "esbuild ./src/webview/ui/index.tsx --bundle --outfile=./out/webview/index.js --format=iife --platform=browser --loader:.ttf=file --watch --define:process.env.NODE_ENV='\"development\"' & esbuild ./src/webview/submoduleUi/index.tsx --bundle --outfile=./out/webview/submodule.js --format=iife --platform=browser --loader:.ttf=file --watch --define:process.env.NODE_ENV='\"development\"'",
 		"watch:extension": "esbuild ./src/extension.ts --bundle --outfile=./out/extension.js --external:vscode --format=cjs --platform=node --sourcemap --watch",
 		"watch": "npm run watch:webview & npm run watch:extension & tsc --noEmit --watch",
 		"pretest": "npm run build",

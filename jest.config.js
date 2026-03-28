@@ -29,4 +29,7 @@ export default {
 	// trees. Each install ships ~70 built-in extensions whose package.json
 	// names collide across versions (e.g. "diff"), breaking module resolution.
 	modulePathIgnorePatterns: ["<rootDir>/.vscode-test/"],
+	moduleNameMapper: {
+		"^vscode$": "<rootDir>/test/mockVscode.ts",
+	},
 };
