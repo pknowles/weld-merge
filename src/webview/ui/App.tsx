@@ -436,7 +436,9 @@ export const App: FC = () => {
 				<p>{error}</p>
 				<button
 					type="button"
-					onClick={() => uiActions.vscodeApi?.postMessage({ command: "ready" })}
+					onClick={() =>
+						uiActions.vscodeApi?.postMessage({ command: "ready" })
+					}
 					style={{
 						backgroundColor: "var(--vscode-button-background)",
 						color: "var(--vscode-button-foreground)",

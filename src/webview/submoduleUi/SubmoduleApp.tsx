@@ -183,128 +183,127 @@ const Header: FC<{
 	onSelect,
 	onSearch,
 }) => {
-		const [isOpen, setIsOpen] = useState(false);
-		const [q, setQ] = useState("");
-		const searchRef = useRef<HTMLDivElement>(null);
+	const [isOpen, setIsOpen] = useState(false);
+	const [q, setQ] = useState("");
+	const searchRef = useRef<HTMLDivElement>(null);
 
-		useEffect(() => {
-			const trimmed = q.trim();
-			if (trimmed.length < 3) {
-				return;
-			}
-			const timer = setTimeout(() => {
-				onSearch(trimmed);
-			}, 500);
-			return () => {
-				clearTimeout(timer);
-			};
-		}, [q, onSearch]);
+	useEffect(() => {
+		const trimmed = q.trim();
+		if (trimmed.length < 3) {
+			return;
+		}
+		const timer = setTimeout(() => {
+			onSearch(trimmed);
+		}, 500);
+		return () => {
+			clearTimeout(timer);
+		};
+	}, [q, onSearch]);
 
-
-		const sortedCommits = useMemo(() => {
-			const filtered = q
-				? commits.filter(
+	const sortedCommits = useMemo(() => {
+		const filtered = q
+			? commits.filter(
 					(c) =>
 						c.subject.toLowerCase().includes(q.toLowerCase()) ||
 						c.hash.includes(q),
 				)
-				: commits;
-			const local = filtered.filter((c) => c.hash === localSha);
-			const remote = filtered.filter(
-				(c) => c.hash === remoteSha && c.hash !== localSha,
-			);
-			const others = filtered.filter(
-				(c) => c.hash !== localSha && c.hash !== remoteSha,
-			);
-			return [...local, ...remote, ...others];
-		}, [commits, localSha, remoteSha, q]);
-
-		useEffect(() => {
-			const handleClickAway = (e: MouseEvent) => {
-				if (
-					searchRef.current &&
-					!searchRef.current.contains(e.target as Node)
-				) {
-					setIsOpen(false);
-				}
-			};
-			document.addEventListener("mousedown", handleClickAway);
-			return () => document.removeEventListener("mousedown", handleClickAway);
-		}, []);
-
-		return (
-			<div
-				style={{
-					padding: "10px",
-					borderBottom: "1px solid var(--vscode-panel-border)",
-					display: "flex",
-					flexDirection: "column",
-					gap: "8px",
-				}}
-			>
-				<h2 style={{ margin: 0, fontSize: "1.05em", fontWeight: "normal" }}>
-					Resolve:{" "}
-					<span style={{ fontWeight: "bold" }}>{submoduleName}</span>
-				</h2>
-				<div
-					style={{ display: "flex", gap: "4px", position: "relative" }}
-					ref={searchRef}
-				>
-					<input
-						type="text"
-						placeholder="Select commit..."
-						value={
-							isOpen
-								? q
-								: selectedCommit
-									? `${selectedCommit.shortHash} - ${selectedCommit.subject}`
-									: ""
-						}
-						style={{
-							flex: 1,
-							backgroundColor: "var(--vscode-input-background)",
-							color: "var(--vscode-input-foreground)",
-							border: "1px solid var(--vscode-input-border)",
-							padding: "4px 8px",
-						}}
-						onChange={(e) => {
-							setQ(e.target.value);
-							setIsOpen(true);
-						}}
-						onFocus={() => {
-							setQ("");
-							setIsOpen(true);
-						}}
-					/>
-					<SearchOverlay
-						results={sortedCommits}
-						localSha={localSha}
-						remoteSha={remoteSha}
-						isOpen={isOpen}
-						onSelect={(sha) => {
-							onSelect(sha);
-							setIsOpen(false);
-						}}
-					/>
-					<button
-						type="button"
-						onClick={onStage}
-						disabled={!canStage}
-						style={{
-							backgroundColor: "var(--vscode-button-background)",
-							color: "var(--vscode-button-foreground)",
-							border: "none",
-							padding: "4px 12px",
-							cursor: canStage ? "pointer" : "default",
-							opacity: canStage ? 1 : 0.5,
-						}}
-					>
-						Stage
-					</button>
-				</div>
-			</div>
+			: commits;
+		const local = filtered.filter((c) => c.hash === localSha);
+		const remote = filtered.filter(
+			(c) => c.hash === remoteSha && c.hash !== localSha,
 		);
-	};
+		const others = filtered.filter(
+			(c) => c.hash !== localSha && c.hash !== remoteSha,
+		);
+		return [...local, ...remote, ...others];
+	}, [commits, localSha, remoteSha, q]);
+
+	useEffect(() => {
+		const handleClickAway = (e: MouseEvent) => {
+			if (
+				searchRef.current &&
+				!searchRef.current.contains(e.target as Node)
+			) {
+				setIsOpen(false);
+			}
+		};
+		document.addEventListener("mousedown", handleClickAway);
+		return () => document.removeEventListener("mousedown", handleClickAway);
+	}, []);
+
+	return (
+		<div
+			style={{
+				padding: "10px",
+				borderBottom: "1px solid var(--vscode-panel-border)",
+				display: "flex",
+				flexDirection: "column",
+				gap: "8px",
+			}}
+		>
+			<h2 style={{ margin: 0, fontSize: "1.05em", fontWeight: "normal" }}>
+				Resolve:{" "}
+				<span style={{ fontWeight: "bold" }}>{submoduleName}</span>
+			</h2>
+			<div
+				style={{ display: "flex", gap: "4px", position: "relative" }}
+				ref={searchRef}
+			>
+				<input
+					type="text"
+					placeholder="Select commit..."
+					value={
+						isOpen
+							? q
+							: selectedCommit
+								? `${selectedCommit.shortHash} - ${selectedCommit.subject}`
+								: ""
+					}
+					style={{
+						flex: 1,
+						backgroundColor: "var(--vscode-input-background)",
+						color: "var(--vscode-input-foreground)",
+						border: "1px solid var(--vscode-input-border)",
+						padding: "4px 8px",
+					}}
+					onChange={(e) => {
+						setQ(e.target.value);
+						setIsOpen(true);
+					}}
+					onFocus={() => {
+						setQ("");
+						setIsOpen(true);
+					}}
+				/>
+				<SearchOverlay
+					results={sortedCommits}
+					localSha={localSha}
+					remoteSha={remoteSha}
+					isOpen={isOpen}
+					onSelect={(sha) => {
+						onSelect(sha);
+						setIsOpen(false);
+					}}
+				/>
+				<button
+					type="button"
+					onClick={onStage}
+					disabled={!canStage}
+					style={{
+						backgroundColor: "var(--vscode-button-background)",
+						color: "var(--vscode-button-foreground)",
+						border: "none",
+						padding: "4px 12px",
+						cursor: canStage ? "pointer" : "default",
+						opacity: canStage ? 1 : 0.5,
+					}}
+				>
+					Stage
+				</button>
+			</div>
+		</div>
+	);
+};
 
 const FileItem: FC<{
 	file: { path: string; status: string };
@@ -415,7 +414,8 @@ const CommitDetail: FC<{
 					scrollbarWidth: "thin",
 				}}
 			>
-				{commit.message && commit.message.trim() !== commit.subject.trim() ? (
+				{commit.message &&
+				commit.message.trim() !== commit.subject.trim() ? (
 					<pre
 						style={{
 							whiteSpace: "pre-wrap",
@@ -425,7 +425,13 @@ const CommitDetail: FC<{
 						{commit.message}
 					</pre>
 				) : (
-					<p style={{ opacity: 0.4, fontSize: "0.9em", fontStyle: "italic" }}>
+					<p
+						style={{
+							opacity: 0.4,
+							fontSize: "0.9em",
+							fontStyle: "italic",
+						}}
+					>
 						No additional message
 					</p>
 				)}
@@ -528,7 +534,10 @@ const Sidebar: FC<{
 		[allCommits, state.selected],
 	);
 
-	const onSelect = useCallback((sha: string) => setState((s) => ({ ...s, selected: sha })), [setState]);
+	const onSelect = useCallback(
+		(sha: string) => setState((s) => ({ ...s, selected: sha })),
+		[setState],
+	);
 
 	return (
 		<div
@@ -555,7 +564,9 @@ const Sidebar: FC<{
 				remoteSha={state.remote}
 				selectedCommit={selectedCommit}
 				onSelect={onSelect}
-				onSearch={(query) => vscode.postMessage({ command: "searchCommits", query })}
+				onSearch={(query) =>
+					vscode.postMessage({ command: "searchCommits", query })
+				}
 			/>
 			<div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
 				<GitGraph
@@ -652,8 +663,8 @@ const MainLayout: FC<{
 					transition: "background-color 0.1s",
 				}}
 				onMouseEnter={(e) =>
-				(e.currentTarget.style.backgroundColor =
-					"var(--vscode-focusBorder)")
+					(e.currentTarget.style.backgroundColor =
+						"var(--vscode-focusBorder)")
 				}
 				onMouseLeave={(e) =>
 					(e.currentTarget.style.backgroundColor = "transparent")

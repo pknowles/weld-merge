@@ -22,6 +22,20 @@ const splitLines = (text: string) => {
 
 const HACK_SYNC_DELAY = 100;
 
+type PaneFiles = [
+	FileState | null,
+	FileState | null,
+	FileState | null,
+	FileState | null,
+	FileState | null,
+];
+type PaneDiffs = [
+	DiffChunk[] | null,
+	DiffChunk[] | null,
+	DiffChunk[] | null,
+	DiffChunk[] | null,
+];
+
 interface MessageHandlersDeps {
 	filesRef: React.MutableRefObject<PaneFiles>;
 	diffsRef: React.MutableRefObject<PaneDiffs>;
@@ -47,6 +61,24 @@ interface LoadDiffData {
 		syntaxHighlighting?: boolean;
 		baseCompareHighlighting?: boolean;
 	};
+}
+
+interface CommitDeps {
+	filesRef: React.MutableRefObject<PaneFiles>;
+	diffsRef: React.MutableRefObject<PaneDiffs>;
+	setFiles: (f: PaneFiles) => void;
+	setDiffs: (d: PaneDiffs) => void;
+	setRenderTrigger: (p: (p: number) => number) => void;
+	differRef: React.MutableRefObject<Differ | null>;
+}
+
+interface AppMessage {
+	command: string;
+	data?: LoadDiffData | BaseDiffPayload;
+	message?: string;
+	text?: string;
+	config?: LoadDiffData["config"];
+	requestId?: string | number;
 }
 
 function handleConfig(config: LoadDiffData["config"], p: MessageHandlersDeps) {
@@ -139,30 +171,43 @@ function findTargetChunk(
 	return c.startA + 1 < cur ? c : (sorted[(idx - 1 + n) % n] ?? null);
 }
 
-interface CommitDeps {
-	filesRef: React.MutableRefObject<PaneFiles>;
-	diffsRef: React.MutableRefObject<PaneDiffs>;
-	setFiles: (f: PaneFiles) => void;
-	setDiffs: (d: PaneDiffs) => void;
-	setRenderTrigger: (p: (p: number) => number) => void;
-	differRef: React.MutableRefObject<Differ | null>;
-}
+const dispatchMessage = (m: AppMessage, p: MessageHandlersDeps) => {
+	switch (m.command) {
+		case "init":
+		case "loadDiff":
+			if (m.data) {
+				handleLoadDiff(m.data as LoadDiffData, p);
+			}
+			break;
+		case "error":
+			p.setError(m.message ?? "Unknown error");
+			break;
+		case "loadBaseDiff":
+			if (m.data) {
+				handleLoadBaseDiff(m.data as BaseDiffPayload, p);
+			}
+			break;
+		case "updateContent":
+			p.setExternalSyncId((id) => id + 1);
+			p.commitModelUpdate(m.text ?? "");
+			break;
+		case "updateConfig":
+			if (m.config) {
+				handleConfig(m.config, p);
+			}
+			break;
+		case "clipboardText":
+			p.resolveClipboardRead(
+				Number(m.requestId),
+				(m.text as string) ?? "",
+			);
+			break;
+		default:
+			break;
+	}
+};
 
-export type PaneFiles = [
-	FileState | null,
-	FileState | null,
-	FileState | null,
-	FileState | null,
-	FileState | null,
-];
-export type PaneDiffs = [
-	DiffChunk[] | null,
-	DiffChunk[] | null,
-	DiffChunk[] | null,
-	DiffChunk[] | null,
-];
-
-export function usePreviousNonNull<T>(value: T | null): T | null {
+function usePreviousNonNull<T>(value: T | null): T | null {
 	const ref = useRef<T | null>(value);
 	useEffect(() => {
 		if (value !== null) {
@@ -172,7 +217,7 @@ export function usePreviousNonNull<T>(value: T | null): T | null {
 	return value !== null ? value : ref.current;
 }
 
-export function useCommitModelUpdate(deps: CommitDeps) {
+function useCommitModelUpdate(deps: CommitDeps) {
 	const {
 		filesRef,
 		diffsRef,
@@ -240,7 +285,7 @@ export function useCommitModelUpdate(deps: CommitDeps) {
 	);
 }
 
-export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
+const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 	const {
 		setFiles,
 		setDiffs,
@@ -259,76 +304,22 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 	} = p;
 	useEffect(() => {
 		const handleMessage = (event: MessageEvent) => {
-			const m = event.data;
-			switch (m.command) {
-				case "init":
-				case "loadDiff":
-					handleLoadDiff(m.data, {
-						setFiles,
-						setDiffs,
-						setExternalSyncId,
-						setDebounceDelay,
-						setSyntaxHighlighting,
-						setBaseCompareHighlighting,
-						setRenderTrigger,
-						commitModelUpdate,
-						resolveClipboardRead,
-						vscodeApi,
-						differRef,
-						filesRef,
-						diffsRef,
-						setError,
-					});
-					break;
-				case "error":
-					setError(m.message);
-					break;
-				case "loadBaseDiff":
-					handleLoadBaseDiff(m.data, {
-						setFiles,
-						setDiffs,
-						setExternalSyncId,
-						setDebounceDelay,
-						setSyntaxHighlighting,
-						setBaseCompareHighlighting,
-						setRenderTrigger,
-						commitModelUpdate,
-						resolveClipboardRead,
-						vscodeApi,
-						differRef,
-						filesRef,
-						diffsRef,
-						setError,
-					});
-					break;
-				case "updateContent":
-					setExternalSyncId((id) => id + 1);
-					commitModelUpdate(m.text);
-					break;
-				case "updateConfig":
-					handleConfig(m.config, {
-						setFiles,
-						setDiffs,
-						setExternalSyncId,
-						setDebounceDelay,
-						setSyntaxHighlighting,
-						setBaseCompareHighlighting,
-						setRenderTrigger,
-						commitModelUpdate,
-						resolveClipboardRead,
-						vscodeApi,
-						differRef,
-						filesRef,
-						diffsRef,
-						setError,
-					});
-					break;
-				case "clipboardText":
-					resolveClipboardRead(Number(m.requestId), m.text as string);
-					break;
-				default:
-					break;
-			}
+			dispatchMessage(event.data, {
+				setFiles,
+				setDiffs,
+				setExternalSyncId,
+				setDebounceDelay,
+				setSyntaxHighlighting,
+				setBaseCompareHighlighting,
+				setRenderTrigger,
+				commitModelUpdate,
+				resolveClipboardRead,
+				vscodeApi,
+				differRef,
+				filesRef,
+				diffsRef,
+				setError,
+			});
 		};
 		window.addEventListener("message", handleMessage);
 		if (vscodeApi) {
@@ -349,14 +340,11 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 		differRef,
 		filesRef,
 		diffsRef,
+		setError,
 	]);
 };
 
-export const useAppHighlights = (
-	files: PaneFiles,
-	diffs: PaneDiffs,
-	bCH: boolean,
-) =>
+const useAppHighlights = (files: PaneFiles, diffs: PaneDiffs, bCH: boolean) =>
 	useCallback(
 		(idx: number) => {
 			if (files.length < 5) {
@@ -369,7 +357,7 @@ export const useAppHighlights = (
 		[diffs, files, bCH],
 	);
 
-export const useAppNavigation = (
+const useAppNavigation = (
 	editorRefs: React.RefObject<editor.IStandaloneCodeEditor[]>,
 	diffsRef: React.MutableRefObject<PaneDiffs>,
 ) =>
@@ -413,7 +401,7 @@ export const useAppNavigation = (
 		[editorRefs, diffsRef],
 	);
 
-export const useAppChunkActions = (
+const useAppChunkActions = (
 	editorRefs: React.RefObject<editor.IStandaloneCodeEditor[]>,
 ) => {
 	const handleApplyChunk = useCallback(
@@ -481,3 +469,13 @@ export const useAppChunkActions = (
 		handleCopyDownChunk,
 	};
 };
+
+export {
+	usePreviousNonNull,
+	useCommitModelUpdate,
+	useAppMessageHandlers,
+	useAppHighlights,
+	useAppNavigation,
+	useAppChunkActions,
+};
+export type { PaneFiles, PaneDiffs };

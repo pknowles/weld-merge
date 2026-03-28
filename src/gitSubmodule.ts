@@ -68,9 +68,26 @@ interface GitCommit {
 }
 
 /**
+ * Finds the common ancestor (merge-base) of two commits.
+ */
+async function getMergeBase(
+	repoPath: string,
+	sha1: string,
+	sha2: string,
+): Promise<string> {
+	try {
+		const output = await execGit(["merge-base", sha1, sha2], repoPath);
+		return output.trim();
+	} catch (e: unknown) {
+		const error = e as Error;
+		throw new Error(`Failed to get merge base: ${error.message}`);
+	}
+}
+
+/**
  * Gets the 3 staged SHAs for a conflicted submodule from the parent repository.
  */
-export async function getStagedSubmoduleShas(
+async function getStagedSubmoduleShas(
 	repoPath: string,
 	submodulePath: string,
 ): Promise<{ base: string; local: string; remote: string }> {
@@ -101,7 +118,7 @@ export async function getStagedSubmoduleShas(
 /**
  * Stages a specific commit for a submodule in the parent repository's index.
  */
-export async function stageSubmoduleCommit(
+async function stageSubmoduleCommit(
 	repoPath: string,
 	submodulePath: string,
 	sha: string,
@@ -132,7 +149,7 @@ export async function stageSubmoduleCommit(
 /**
  * Finds the VSCode Git extension API.
  */
-export async function getGitApi(): Promise<GitAPI | undefined> {
+async function getGitApi(): Promise<GitAPI | undefined> {
 	const gitExtension = extensions.getExtension("vscode.git");
 	if (!gitExtension) {
 		return;
@@ -146,7 +163,7 @@ export async function getGitApi(): Promise<GitAPI | undefined> {
 /**
  * Finds the repository object for a given filesystem path.
  */
-export function getRepoForPath(
+function getRepoForPath(
 	gitApi: GitAPI,
 	fsPath: string,
 ): GitRepository | undefined {
@@ -157,7 +174,7 @@ export function getRepoForPath(
 /**
  * Gets the list of files changed in a specific commit.
  */
-export async function getCommitFiles(
+async function getCommitFiles(
 	repoPath: string,
 	sha: string,
 ): Promise<{ path: string; status: string }[]> {
@@ -182,26 +199,9 @@ export async function getCommitFiles(
 }
 
 /**
- * Finds the common ancestor (merge-base) of two commits.
- */
-export async function getMergeBase(
-	repoPath: string,
-	sha1: string,
-	sha2: string,
-): Promise<string> {
-	try {
-		const output = await execGit(["merge-base", sha1, sha2], repoPath);
-		return output.trim();
-	} catch (e: unknown) {
-		const error = e as Error;
-		throw new Error(`Failed to get merge base: ${error.message}`);
-	}
-}
-
-/**
  * Restores a conflicted state for a submodule that was previously resolved.
  */
-export async function restoreSubmoduleConflict(
+async function restoreSubmoduleConflict(
 	repoPath: string,
 	submodulePath: string,
 ): Promise<void> {
@@ -289,3 +289,12 @@ export async function restoreSubmoduleConflict(
 	// stages using the low-level update-index command.
 	await execGit(["update-index", "--index-info"], repoPath, indexInfo);
 }
+
+export {
+	getStagedSubmoduleShas,
+	stageSubmoduleCommit,
+	getGitApi,
+	getRepoForPath,
+	getCommitFiles,
+	restoreSubmoduleConflict,
+};

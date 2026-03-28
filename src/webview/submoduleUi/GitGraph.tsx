@@ -1,8 +1,12 @@
 import { Gitgraph, TemplateName, templateExtend } from "@gitgraph/react";
-import type { GitgraphUserApi, BranchUserApi } from "@gitgraph/react";
-import type { ReactSvgElement } from "@gitgraph/react/lib/types";
-import { type FC, useMemo, useRef, useLayoutEffect } from "react";
+import { type FC, useLayoutEffect, useMemo, useRef } from "react";
 import type { CommitInfo } from "./types.ts";
+
+// Using any for internal types because @gitgraph/react might not export them cleanly
+// biome-ignore lint/suspicious/noExplicitAny: library types are problematic
+type GitgraphApi = any;
+// biome-ignore lint/suspicious/noExplicitAny: library types are problematic
+type BranchApi = any;
 
 interface GitGraphProps {
 	commits: CommitInfo[];
@@ -14,182 +18,368 @@ interface GitGraphProps {
 }
 
 const customTemplate = templateExtend(TemplateName.Metro, {
-	branch: { spacing: 20, lineWidth: 3, label: { display: false } },
+	colors: [
+		"var(--vscode-charts-blue)",
+		"var(--vscode-charts-purple)",
+		"var(--vscode-charts-orange)",
+		"var(--vscode-charts-green)",
+		"var(--vscode-charts-red)",
+	],
 	commit: {
-		spacing: 24,
-		dot: { size: 7 },
 		message: {
-			font: "var(--vscode-font-family)",
 			displayHash: false,
-			displayAuthor: false
+			displayAuthor: false,
+		},
+		dot: {
+			size: 10,
 		},
 	},
 });
 
-const renderGraph = (gitgraph: GitgraphUserApi<ReactSvgElement>, props: GitGraphProps) => {
-	const { commits, onSelect, baseSha, localSha, remoteSha } = props;
-	const branchMap = new Map<string, BranchUserApi<ReactSvgElement>>();
-	const allCommits = new Set<string>();
-
-	const main = gitgraph.branch("main");
+const calculateChildCounts = (
+	commits: CommitInfo[],
+	baseSha: string,
+	localSha: string,
+	remoteSha: string,
+) => {
 	const rootKey = "ROOT";
-	main.commit({
-		hash: rootKey,
-		subject: "Earlier history...",
-		style: { dot: { size: 6 } },
-	} as any);
-	branchMap.set(rootKey, main);
-	let nextBranchIndex = 0;
-
+	const allCommits = new Set<string>();
 	const childCounts: Record<string, number> = { [rootKey]: 0 };
+
 	for (const c of commits) {
 		for (const p of c.parents) {
-			if (!allCommits.has(p)) {
-				childCounts[rootKey] += 1;
-			} else {
+			if (allCommits.has(p)) {
 				childCounts[p] = (childCounts[p] || 0) + 1;
+			} else {
+				childCounts[rootKey] = (childCounts[rootKey] || 0) + 1;
 			}
 		}
 		allCommits.add(c.hash);
 	}
-	// All special markers terminate a branch so it's a distinguished color
+
 	for (const sha of [baseSha, localSha, remoteSha]) {
-		if (!allCommits.has(sha)) continue;
-		childCounts[sha] = (childCounts[sha] || 0) + 1;
+		if (allCommits.has(sha)) {
+			childCounts[sha] = (childCounts[sha] || 0) + 1;
+		}
 	}
 
-	const branchPool = new Map<string, Array<BranchUserApi<ReactSvgElement>>>();
+	return { allCommits, childCounts, rootKey };
+};
 
-	for (const c of commits) {
-		const p1 = allCommits.has(c.parents[0]) ? c.parents[0] : rootKey;
-
-		if (!branchMap.has(p1)) {
-			const pool = branchPool.get(p1);
-			if (!pool || pool.length === 0)
-				throw new Error(`Did not pre-create enough branches for ${p1}`);
-			branchMap.set(p1, pool.pop()!);
+const ensureBranch = (
+	p1: string,
+	state: {
+		branchMap: Map<string, BranchApi>;
+		branchPool: Map<string, BranchApi[]>;
+	},
+) => {
+	const { branchMap, branchPool } = state;
+	if (branchMap.has(p1)) {
+		return;
+	}
+	const pool = branchPool.get(p1);
+	if (pool && pool.length > 0) {
+		const target = pool.pop();
+		if (target) {
+			branchMap.set(p1, target);
+			return;
 		}
-		const target = branchMap.get(p1)!;
+	}
+	throw new Error(`Did not pre-create enough branches for ${p1}`);
+};
 
-		target.commit({
-			hash: c.hash,
-			subject: `${c.shortHash} - ${c.subject}`,
-			onMessageClick: (commit: any) => onSelect(commit.hash),
-			onClick: (commit: any) => onSelect(commit.hash),
-			...(c.hash === baseSha ? { tag: "Base" } : {}),
-			...(c.hash === localSha ? { tag: "Local" } : {}),
-			...(c.hash === remoteSha ? { tag: "Remote" } : {}),
-		} as any);
+const renderCommitDot = (
+	c: CommitInfo,
+	target: BranchApi,
+	props: {
+		onSelect: (sha: string) => void;
+		baseSha: string;
+		localSha: string;
+		remoteSha: string;
+	},
+) => {
+	const { onSelect, baseSha, localSha, remoteSha } = props;
+	target.commit({
+		hash: c.hash,
+		subject: `${c.shortHash} - ${c.subject}`,
+		// biome-ignore lint/suspicious/noExplicitAny: library types
+		onMessageClick: (commit: any) => onSelect(commit.hash),
+		// biome-ignore lint/suspicious/noExplicitAny: library types
+		onClick: (commit: any) => onSelect(commit.hash),
+		...(c.hash === baseSha ? { tag: "Base" } : {}),
+		...(c.hash === localSha ? { tag: "Local" } : {}),
+		...(c.hash === remoteSha ? { tag: "Remote" } : {}),
+		// biome-ignore lint/suspicious/noExplicitAny: library types
+	} as any);
+};
 
-		branchMap.delete(p1);
+const createExtraBranches = (
+	c: CommitInfo,
+	target: BranchApi,
+	state: {
+		branchPool: Map<string, BranchApi[]>;
+		childCounts: Record<string, number>;
+		nextBranchIndex: number;
+	},
+) => {
+	if (!state.branchPool.has(c.hash)) {
+		state.branchPool.set(c.hash, []);
+	}
+	const pool = state.branchPool.get(c.hash);
+	if (!pool) {
+		return;
+	}
 
-		// Create all extra child branch points immediately after the parent is created
-		if (!branchPool.has(c.hash)) branchPool.set(c.hash, []);
-		const pool = branchPool.get(c.hash)!;
-		for (let i = 1; i < (childCounts[c.hash] || 0); i++) {
-			pool.push(target.branch(String.fromCharCode(65 + (nextBranchIndex % 26))));
-			nextBranchIndex++;
-		}
+	const count = state.childCounts[c.hash] || 0;
+	for (let i = 1; i < count; i++) {
+		pool.push(
+			target.branch(
+				String.fromCharCode(65 + (state.nextBranchIndex % 26)),
+			),
+		);
+		state.nextBranchIndex++;
+	}
+};
 
-		// All special markers terminate a branch so it's a distinguished color
-		if (c.hash !== baseSha && c.hash !== localSha && c.hash !== remoteSha)
-			branchMap.set(c.hash, target);
-
-		const p2 = c.parents?.[1];
-		if (p2 && branchMap.has(p2)) {
-			// Correctly merge the branch representing the second parent into the current target
+const handleMergeParents = (
+	c: CommitInfo,
+	target: BranchApi,
+	branchMap: Map<string, BranchApi>,
+) => {
+	const p2 = c.parents?.[1];
+	if (p2 && branchMap.has(p2)) {
+		const sourceBranch = branchMap.get(p2);
+		if (sourceBranch) {
 			target.merge({
-				branch: branchMap.get(p2)!,
+				branch: sourceBranch,
 				commitOptions: {
 					style: { message: { display: false } },
 				},
+				// biome-ignore lint/suspicious/noExplicitAny: library types
 			} as any);
 		}
 	}
 };
 
-export const GitGraph: FC<GitGraphProps> = ({ commits, localSha, remoteSha, baseSha, selectedSha, onSelect }) => {
+const processCommit = (
+	c: CommitInfo,
+	props: {
+		onSelect: (sha: string) => void;
+		allCommits: Set<string>;
+		baseSha: string;
+		localSha: string;
+		remoteSha: string;
+		rootKey: string;
+	},
+	state: {
+		branchMap: Map<string, BranchApi>;
+		branchPool: Map<string, BranchApi[]>;
+		childCounts: Record<string, number>;
+		nextBranchIndex: number;
+	},
+) => {
+	const parent0 = c.parents[0];
+	const p1 =
+		parent0 && props.allCommits.has(parent0) ? parent0 : props.rootKey;
+	ensureBranch(p1, state);
+
+	const target = state.branchMap.get(p1);
+	if (!target) {
+		return;
+	}
+
+	renderCommitDot(c, target, props);
+
+	state.branchMap.delete(p1);
+	createExtraBranches(c, target, state);
+
+	if (
+		c.hash !== props.baseSha &&
+		c.hash !== props.localSha &&
+		c.hash !== props.remoteSha
+	) {
+		state.branchMap.set(c.hash, target);
+	}
+
+	handleMergeParents(c, target, state.branchMap);
+};
+
+const renderGraph = (gitgraph: GitgraphApi, props: GitGraphProps) => {
+	const { commits, onSelect, baseSha, localSha, remoteSha } = props;
+	const { allCommits, childCounts, rootKey } = calculateChildCounts(
+		commits,
+		baseSha,
+		localSha,
+		remoteSha,
+	);
+	const branchMap = new Map<string, BranchApi>();
+	const branchPool = new Map<string, BranchApi[]>();
+
+	const main = gitgraph.branch("main");
+	main.commit({
+		hash: rootKey,
+		subject: "Earlier history...",
+		style: { dot: { size: 6 } },
+		// biome-ignore lint/suspicious/noExplicitAny: library types
+	} as any);
+	branchMap.set(rootKey, main);
+
+	const state = {
+		branchMap,
+		branchPool,
+		childCounts,
+		nextBranchIndex: 0,
+	};
+
+	for (const c of commits) {
+		processCommit(
+			c,
+			{
+				onSelect,
+				allCommits,
+				baseSha,
+				localSha,
+				remoteSha,
+				rootKey,
+			},
+			state,
+		);
+	}
+};
+
+const resetSelectionStyles = (container: HTMLDivElement) => {
+	const dots = container.querySelectorAll("circle");
+	const labels = container.querySelectorAll("text");
+	for (const d of Array.from(dots)) {
+		d.style.stroke = "none";
+		d.style.strokeWidth = "0";
+		d.setAttribute(
+			"fill",
+			d.getAttribute("data-original-fill") ||
+				d.getAttribute("fill") ||
+				"",
+		);
+	}
+	for (const l of Array.from(labels)) {
+		l.style.fontWeight = "normal";
+		l.setAttribute(
+			"fill",
+			l.getAttribute("data-original-fill") ||
+				l.getAttribute("fill") ||
+				"",
+		);
+	}
+};
+
+const applySelectionHighlight = (
+	container: HTMLDivElement,
+	selectedSha: string,
+) => {
+	const useElement = container.querySelector(
+		`use[*|href="#${selectedSha}"], use[href="#${selectedSha}"]`,
+	);
+	if (!useElement) {
+		return;
+	}
+
+	const targetDot = container.querySelector(
+		`circle[id="${selectedSha}"]`,
+	) as SVGCircleElement | null;
+	const commitRoot = targetDot?.parentElement?.parentElement;
+	const targetLabel = commitRoot?.querySelector(
+		"text",
+	) as SVGTextElement | null;
+
+	if (targetDot) {
+		if (!targetDot.getAttribute("data-original-fill")) {
+			targetDot.setAttribute(
+				"data-original-fill",
+				targetDot.getAttribute("fill") || "",
+			);
+		}
+		targetDot.setAttribute("fill", "var(--vscode-focusBorder)");
+		targetDot.style.stroke = "var(--vscode-focusBorder)";
+		targetDot.style.strokeWidth = "2px";
+	}
+
+	if (targetLabel) {
+		if (!targetLabel.getAttribute("data-original-fill")) {
+			targetLabel.setAttribute(
+				"data-original-fill",
+				targetLabel.getAttribute("fill") || "",
+			);
+		}
+		targetLabel.style.fontWeight = "bold";
+		targetLabel.setAttribute("fill", "var(--vscode-focusBorder)");
+	}
+};
+
+export const GitGraph: FC<GitGraphProps> = ({
+	commits,
+	localSha,
+	remoteSha,
+	baseSha,
+	selectedSha,
+	onSelect,
+}) => {
 	const options = useMemo(() => ({ template: customTemplate }), []);
 	const containerRef = useRef<HTMLDivElement>(null);
 
-	// Imperative selection update to avoid full re-render & scroll reset
 	useLayoutEffect(() => {
 		const container = containerRef.current;
-		if (!container) return;
-
-		// 1. Reset all nodes & text (Cleanup)
-		const dots = container.querySelectorAll("circle");
-		const labels = container.querySelectorAll("text");
-		for (const d of dots) {
-			d.style.stroke = "none";
-			d.style.strokeWidth = "0";
-			d.setAttribute("fill", d.getAttribute("data-original-fill") || d.getAttribute("fill") || "");
+		if (!container) {
+			return;
 		}
-		for (const l of labels) {
-			l.style.fontWeight = "normal";
-			l.setAttribute("fill", l.getAttribute("data-original-fill") || l.getAttribute("fill") || "");
+		resetSelectionStyles(container);
+		if (selectedSha) {
+			applySelectionHighlight(container, selectedSha);
 		}
+	}, [selectedSha]);
 
-		if (!selectedSha) return;
+	const graph = useMemo(
+		() => (
+			<Gitgraph options={options}>
+				{(gitgraph) =>
+					renderGraph(gitgraph, {
+						commits,
+						selectedSha,
+						onSelect,
+						baseSha,
+						localSha,
+						remoteSha,
+					})
+				}
+			</Gitgraph>
+		),
+		[commits, options, onSelect, baseSha, localSha, remoteSha, selectedSha],
+	);
 
-		// 2. Find and highlight the selected node by its native ID
-		// The library puts 'id="[full-sha]"' on the <circle> in <defs>, and uses a <use> for the dot.
-		const useElement = container.querySelector(`use[*|href="#${selectedSha}"], use[href="#${selectedSha}"]`);
-		if (!useElement) return;
-
-		// The visible dot is the <use> element, but the style is often in the original circle or the use.
-		// We can target the original definition circle for highlighting.
-		const targetDot = container.querySelector(`circle[id="${selectedSha}"]`);
-
-		// The labels are inside a separate <g> tree, but they share the same grandparent with the <use>
-		const commitRoot = targetDot.parentElement?.parentElement;
-		const targetLabel = commitRoot?.querySelector("text");
-
-		if (targetDot) {
-			if (!targetDot.getAttribute("data-original-fill")) {
-				targetDot.setAttribute("data-original-fill", targetDot.getAttribute("fill") || "");
-			}
-			targetDot.setAttribute("fill", "var(--vscode-focusBorder)");
-			targetDot.style.stroke = "var(--vscode-focusBorder)";
-			targetDot.style.strokeWidth = "2px";
-		}
-
-		if (targetLabel) {
-			if (!targetLabel.getAttribute("data-original-fill")) {
-				targetLabel.setAttribute("data-original-fill", targetLabel.getAttribute("fill") || "");
-			}
-			targetLabel.style.fontWeight = "bold";
-			targetLabel.setAttribute("fill", "var(--vscode-focusBorder)");
-		}
-	}, [selectedSha, commits]);
-
-	if (commits.length === 0) { return <div style={{ padding: "10px", opacity: 0.5 }}>No history.</div>; }
-
-	// Ensure the graph ONLY re-builds when the history data changes
-	const graph = useMemo(() => (
-		<Gitgraph options={options}>
-			{(gitgraph) => renderGraph(gitgraph, { commits, selectedSha, onSelect, baseSha, localSha, remoteSha })}
-		</Gitgraph>
-	), [commits, options, onSelect, baseSha, localSha, remoteSha]);
+	if (commits.length === 0) {
+		return <div style={{ padding: "10px", opacity: 0.5 }}>No history.</div>;
+	}
 
 	return (
 		<div
 			ref={containerRef}
-			style={{ flex: 1, width: "100%", height: "100%", overflow: "auto", scrollbarWidth: "thin", position: "relative" }}
+			style={{
+				flex: 1,
+				width: "100%",
+				height: "100%",
+				overflow: "auto",
+				scrollbarWidth: "thin",
+				position: "relative",
+			}}
 		>
 			<style>{`
-				svg circle, svg text, .gitgraph-commit-dot, .gitgraph-commit-message { 
-					cursor: pointer !important; 
-					pointer-events: auto !important; 
-				}
-				svg circle:hover { filter: brightness(1.2); }
-				svg text:hover { opacity: 0.8; }
-			`}</style>
+                svg circle, svg text, .gitgraph-commit-dot, .gitgraph-commit-message { 
+                    cursor: pointer !important; 
+                    pointer-events: auto !important; 
+                }
+                svg circle:hover { filter: brightness(1.2); }
+                svg text:hover { opacity: 0.8; }
+            `}</style>
 
-			<div style={{ padding: "30px 20px" }}>
-				{graph}
-			</div>
+			<div style={{ padding: "30px 20px" }}>{graph}</div>
 		</div>
 	);
 };
-
