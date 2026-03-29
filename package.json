@@ -193,7 +193,7 @@
 				},
 				"weld.mergeEditor.baseCompareHighlighting": {
 					"type": "boolean",
-					"default": false,
+					"default": true,
 					"description": "Use base diff highlight when base-comparing."
 				},
 				"weld.mergeEditor.smoothScrolling": {
