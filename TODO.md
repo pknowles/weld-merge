@@ -2,11 +2,7 @@
 
 ## Funcional breakages
 
-Undo history is broken after making changes with the action buttons
-
-Connections sides with no content should not have action buttons
-
-Should conflict blocks have an "x" action button? Does it match meld?
+Check auto-reload works if there are no pending changes - need to reload base, local, remote panes and re-run auto-merge.
 
 ## Perf improvements
 
@@ -104,3 +100,29 @@ save individual panels. Low !/$.
 - **Fix Returns**: Handle failures properly, e.g. from `getGitState`, without silently passing empty strings.
 - **UX**: Rethink `Ctrl+K` to avoid interfering with global VS Code chord prefixes.
 - **Refactor `DiffCurtain`**: Split into `CurtainContainer` + `CurtainSVG`. The container should always render to maintain 40px flexbox stability, while the SVG/drawing logic only activates when editors are ready. This will allow removing the `undefined` editor types from the core drawing functions.
+
+Questionable code in c06d4923:
+
+1. Hardcoded Race Condition Workarounds
+   The agent used setTimeout everywhere to paper over race conditions between Monaco's lifecycle and React's render cycle.
+
+   In meldPane.tsx, it uses setTimeout(..., 50) just to force a scroll sync
+   after mounting. In CodePane.tsx, it uses setTimeout(..., 500) (line 610) to
+   automatically trigger a "Next Conflict" navigation after mount. This is
+   particularly annoying as it might jump the user's view unexpectedly half a
+   second after the page loads.
+2. Aggressive Content Syncing The sync logic in CodePane.tsx (lines 485-498)
+   uses computeMinimalEdits and then m.pushEditOperations on every external
+   sync. While this preserves undo history, doing this via a useEffect that
+   triggers on an externalSyncId is a bit "hammer-ish" and could lead to
+   performance issues or cursor jumping if the sync frequency increases.
+
+3. Fragile Testing Mocks The mocking of Monaco in test/webview_e2e.test.tsx
+   (lines 8-51) is extremely verbose and "brittle"—it defines specific numeric
+   values for KeyCode and KeyMod (e.g., CtrlCmd: 2048). If the version of Monaco
+   ever changes its internal enum values (which it occasionally does), these
+   tests will pass incorrectly or fail mysteriously.
+
+4. Search/Navigation Coupling In CodePane.tsx, the onSubmit handler (line 501)
+   manually splits the entire editor contents by line just to find conflict
+   markers (<<<<<<<, etc.):

@@ -429,9 +429,6 @@ const setupActions = (ed: editor.IStandaloneCodeEditor, p: CodePaneProps) => {
 				.requestClipboardText?.()
 				.then((t) => e.trigger("keyboard", "paste", { text: t })),
 	});
-	ed.onDidBlurEditorText(() => {
-		p.actions.writeClipboardText?.(ed.getValue());
-	});
 };
 
 const getHighlightOptions = (h: Highlight) => ({
