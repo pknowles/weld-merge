@@ -178,12 +178,12 @@ async function handleAutoMerge(
 		}
 
 		const mergeGen = merger.merge3FilesGit(true);
-		let finalMergedText: string | null = null;
-		for (const res of mergeGen) {
-			if (res !== null && typeof res === "string") {
-				finalMergedText = res;
-			}
+		let resMerge = mergeGen.next();
+		while (!resMerge.done) {
+			resMerge = mergeGen.next();
 		}
+		const finalMergedText =
+			resMerge.value !== undefined ? (resMerge.value as string) : null;
 
 		if (finalMergedText === null) {
 			throw new Error("Merge generation failed to produce text.");

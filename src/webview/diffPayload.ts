@@ -160,7 +160,6 @@ const runMerge = (
 	localLines: string[],
 	baseLines: string[],
 	incomingLines: string[],
-	fallback: string,
 ): string => {
 	// Step 1: Run the Merger to produce merged text with (??) conflict markers
 	// This matches Meld's _merge_files() in filediff.py
@@ -173,13 +172,15 @@ const runMerge = (
 	}
 
 	const mergeGen = merger.merge3Files(true);
-	let mergedContent = fallback;
-	for (const res of mergeGen) {
-		if (res !== null && typeof res === "string") {
-			mergedContent = res;
-		}
+	let res = mergeGen.next();
+	while (!res.done) {
+		res = mergeGen.next();
 	}
-	return mergedContent;
+	const result = res.value;
+	if (typeof result !== "string") {
+		throw new Error("Merge engine failed to produce a result string.");
+	}
+	return result;
 };
 
 const runDiff = (
@@ -237,12 +238,7 @@ async function buildDiffPayload(
 	const baseLines = splitLines(base);
 	const incomingLines = splitLines(incoming);
 
-	const mergedContent = runMerge(
-		localLines,
-		baseLines,
-		incomingLines,
-		base, // fallback if merge fails
-	);
+	const mergedContent = runMerge(localLines, baseLines, incomingLines);
 	const mergedLines = splitLines(mergedContent);
 
 	const { leftDiffs, rightDiffs } = runDiff(

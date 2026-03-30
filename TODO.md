@@ -4,6 +4,8 @@
 
 Check auto-reload works if there are no pending changes - need to reload base, local, remote panes and re-run auto-merge.
 
+Off-by-one error for DiffCurtain connecting to the very last line of a file.
+
 ## Perf improvements
 
 Update SVG connection attributes rather than re-render the entire SVG. This involves keeping track of which we've displayed/culled, only updating the svg if those changed, and otherwise just updating the path coordinates.

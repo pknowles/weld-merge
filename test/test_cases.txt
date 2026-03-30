@@ -544,3 +544,145 @@ A
 B
 C_mod_R
 D
+---
+# Weld-Merge
+
+This is the local content
+
+# 1
+
+# 2
+
+Replaced
+
+# 3
+
+Local changes
+
+# 4
+
+# 5
+
+Local replaced
+===
+# Weld-Merge
+
+This is the base content
+
+# 1
+
+Both will delete this
+
+# 2
+
+Both will replace this with the same thing
+
+# 3
+
+Both will replace this with different things
+
+# 4
+
+Local removes this and remote replaces it
+
+# 5
+
+Remote removes this and local replaces it
+===
+# Weld-Merge
+
+This is the remote content
+
+# 1
+
+# 2
+
+Replaced
+
+# 3
+
+Remote changes
+
+# 4
+
+Remote replaced
+
+# 5
+---
+# Weld-Merge
+
+This is the local content
+
+# 1
+
+# 2
+
+Replaced
+
+# 3
+
+Local changes
+
+# 4
+
+# 5
+
+Local replaced
+
+# 6
+
+Both will add lines below
+Local addition
+===
+# Weld-Merge
+
+This is the base content
+
+# 1
+
+Both will delete this
+
+# 2
+
+Both will replace this with the same thing
+
+# 3
+
+Both will replace this with different things
+
+# 4
+
+Local removes this and remote replaces it
+
+# 5
+
+Remote removes this and local replaces it
+
+# 6
+
+Both will add lines below
+===
+# Weld-Merge
+
+This is the remote content
+
+# 1
+
+# 2
+
+Replaced
+
+# 3
+
+Remote changes
+
+# 4
+
+Remote replaced
+
+# 5
+
+# 6
+
+Both will add lines below
+Remote addition

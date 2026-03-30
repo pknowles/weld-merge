@@ -1,15 +1,13 @@
 # Changelog
 
-## [Unreleased]
+## [0.0.8]
 
 ### Added
-- None
-
-### Changed
-- None
+- New test cases that only verify the algorithm, not the UI.
 
 ### Fixed
-- None
+- Copy file contents on blur... *tableflip*
+- Silent fallback to base contents
 
 ## [0.0.7] - 2026-03-26
 

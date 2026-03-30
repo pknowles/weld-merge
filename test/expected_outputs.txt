@@ -192,3 +192,30 @@ A
 B
 (??)C
 D
+---
+# Weld-Merge
+(??)This is the base content
+# 1
+# 2
+Replaced
+# 3
+(??)Both will replace this with different things
+# 4
+(??)Local removes this and remote replaces it
+# 5
+(??)Remote removes this and local replaces it
+---
+# Weld-Merge
+(??)This is the base content
+# 1
+# 2
+Replaced
+# 3
+(??)Both will replace this with different things
+# 4
+(??)Local removes this and remote replaces it
+# 5
+(??)Remote removes this and local replaces it
+# 6
+Both will add lines below
+(??)

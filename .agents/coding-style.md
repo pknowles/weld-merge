@@ -69,3 +69,7 @@ Avoid unnecessary object or array transformations. Don't map over arrays or copy
 Use existing structures to hold data. If an external library or API takes a specific configuration object, construct and pass that object directly. There is no need to unpack, forward, and repack arguments through multiple custom wrapper functions. This is the single definition rule.
 
 Once a core library (like React, or a state management tool) is instantiated, use its API directly. Don't wrap standard hooks or functions in custom "helper" abstractions just for the sake of it (e.g., don't write a `useAppEffect` that just calls `useEffect`). This reduces cognitive load for anyone familiar with the standard JS/React ecosystem and online examples.
+
+## Return convention
+
+Avoid `yield`. LLMs can easily be confused by the pattern and miss the final return value.
