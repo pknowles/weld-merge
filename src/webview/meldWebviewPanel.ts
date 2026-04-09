@@ -148,45 +148,55 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		const smoothScrolling =
 			config.get<boolean>("mergeEditor.smoothScrolling") ?? true;
 
-		const payload = (await buildDiffPayload(
-			repoPath,
-			relativeFilePath,
-		)) as WebviewPayload;
+		try {
+			const payload = (await buildDiffPayload(
+				repoPath,
+				relativeFilePath,
+			)) as WebviewPayload;
 
-		payload.data.config = {
-			debounceDelay,
-			syntaxHighlighting,
-			baseCompareHighlighting,
-			smoothScrolling,
-		};
+			payload.data.config = {
+				debounceDelay,
+				syntaxHighlighting,
+				baseCompareHighlighting,
+				smoothScrolling,
+			};
 
-		let isUpdatingFromWebview = false;
+			let isUpdatingFromWebview = false;
 
-		const messageListener = webviewPanel.webview.onDidReceiveMessage(
-			async (msg: WebviewMessage) => {
-				await this._handleMessage(msg, {
-					document,
-					webviewPanel,
-					repoPath,
-					relativeFilePath,
-					payload,
-					updateState: (val) => {
-						isUpdatingFromWebview = val;
-					},
-				});
-			},
-		);
+			const messageListener = webviewPanel.webview.onDidReceiveMessage(
+				async (msg: WebviewMessage) => {
+					await this._handleMessage(msg, {
+						document,
+						webviewPanel,
+						repoPath,
+						relativeFilePath,
+						payload,
+						updateState: (val) => {
+							isUpdatingFromWebview = val;
+						},
+					});
+				},
+			);
 
-		this._setupSubscriptions(document, webviewPanel, {
-			messageListener,
-			isUpdatingFromWebview: () => isUpdatingFromWebview,
-			repoPath,
-			relativeFilePath,
-			debounceDelay,
-			syntaxHighlighting,
-			baseCompareHighlighting,
-			smoothScrolling,
-		});
+			this._setupSubscriptions(document, webviewPanel, {
+				messageListener,
+				isUpdatingFromWebview: () => isUpdatingFromWebview,
+				repoPath,
+				relativeFilePath,
+				debounceDelay,
+				syntaxHighlighting,
+				baseCompareHighlighting,
+				smoothScrolling,
+			});
+		} catch (e: unknown) {
+			const error = (e as Error).message;
+			window.showErrorMessage(`Merge initialization error: ${error}`);
+			webviewPanel.webview.postMessage({
+				command: "error",
+				message: error,
+			});
+			throw e;
+		}
 	}
 
 	private _setupSubscriptions(
@@ -225,17 +235,30 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		const refreshSubscription =
 			MeldCustomEditorProvider.onRequestRefresh.event(async (uri) => {
 				if (uri.toString() === document.uri.toString()) {
-					const newPayload = (await buildDiffPayload(
-						ctx.repoPath,
-						ctx.relativeFilePath,
-					)) as WebviewPayload;
-					newPayload.data.config = {
-						debounceDelay: ctx.debounceDelay,
-						syntaxHighlighting: ctx.syntaxHighlighting,
-						baseCompareHighlighting: ctx.baseCompareHighlighting,
-						smoothScrolling: ctx.smoothScrolling,
-					};
-					webviewPanel.webview.postMessage(newPayload);
+					try {
+						const newPayload = (await buildDiffPayload(
+							ctx.repoPath,
+							ctx.relativeFilePath,
+						)) as WebviewPayload;
+						newPayload.data.config = {
+							debounceDelay: ctx.debounceDelay,
+							syntaxHighlighting: ctx.syntaxHighlighting,
+							baseCompareHighlighting:
+								ctx.baseCompareHighlighting,
+							smoothScrolling: ctx.smoothScrolling,
+						};
+						webviewPanel.webview.postMessage(newPayload);
+					} catch (e: unknown) {
+						const error = (e as Error).message;
+						window.showErrorMessage(
+							`Merge refresh error: ${error}`,
+						);
+						webviewPanel.webview.postMessage({
+							command: "error",
+							message: error,
+						});
+						throw e;
+					}
 				}
 			});
 
@@ -370,15 +393,25 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		},
 		msg: RequestBaseDiffMessage,
 	) {
-		const basePayload = (await buildBaseDiffPayload(
-			ctx.repoPath,
-			ctx.relativeFilePath,
-			msg.side,
-		)) as {
-			command: string;
-			data: BaseDiffPayload;
-		};
-		ctx.webviewPanel.webview.postMessage(basePayload);
+		try {
+			const basePayload = (await buildBaseDiffPayload(
+				ctx.repoPath,
+				ctx.relativeFilePath,
+				msg.side,
+			)) as {
+				command: string;
+				data: BaseDiffPayload;
+			};
+			ctx.webviewPanel.webview.postMessage(basePayload);
+		} catch (e: unknown) {
+			const error = (e as Error).message;
+			window.showErrorMessage(`Base diff error: ${error}`);
+			ctx.webviewPanel.webview.postMessage({
+				command: "error",
+				message: error,
+			});
+			throw e;
+		}
 	}
 
 	private async _handleCompleteMerge(
@@ -393,7 +426,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		} else {
 			await document.save();
 			const success = await commands.executeCommand(
-				"meld-auto-merge.smartAdd",
+				"weldMerge.smartAdd",
 				{ uri: document.uri },
 			);
 			if (success === true) {
@@ -436,7 +469,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 
 	private _getHtmlForWebview(webview: Webview): string {
 		const scriptUri = webview.asWebviewUri(
-			Uri.joinPath(this.extensionUri, "out", "webview", "index.js"),
+			Uri.joinPath(this.extensionUri, "out", "webview", "merge.js"),
 		);
 		const cssUri = webview.asWebviewUri(
 			Uri.joinPath(this.extensionUri, "out", "webview", "index.css"),

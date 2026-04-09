@@ -113,6 +113,11 @@ Easily toggle diffs between Base and Local/Remote. This is handy to understand
 what changes were made to arrive at Local and Remote states before deciding how
 to handle the merge conflicts. Necessary for the more difficult conflicts.
 
+### Submodules
+
+Submodule merge conflict resolution page that shows a graph connecting submodule
+states in Local, Remote, and Base and allows you to choose the state you want.
+
 ### Auto-Merge
 
 Manually trigger auto-merge at any time via the Command Palette: **"Weld:

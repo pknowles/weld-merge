@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mock Submodule UI Test</title>
+    <style>
+        :root {
+            --vscode-editor-background: #1e1e1e;
+            --vscode-editor-foreground: #cccccc;
+            --vscode-panel-border: #333333;
+            --vscode-input-background: #3c3c3c;
+            --vscode-input-foreground: #cccccc;
+            --vscode-input-border: #3c3c3c;
+            --vscode-button-background: #0e639c;
+            --vscode-button-foreground: #ffffff;
+            --vscode-dropdown-background: #3c3c3c;
+            --vscode-dropdown-border: #3c3c3c;
+            --vscode-list-hoverBackground: #2a2d2e;
+            --vscode-focusBorder: #007fd4;
+            --vscode-gitDecoration-addedResourceForeground: #81b88b;
+            --vscode-gitDecoration-modifiedResourceForeground: #e2c08d;
+            --vscode-gitDecoration-deletedResourceForeground: #c74e39;
+            --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            --vscode-font-size: 13px;
+            --vscode-editor-font-family: "SF Mono", Monaco, Menlo, Consolas, "Ubuntu Mono", "Liberation Mono", "DejaVu Sans Mono", "Courier New", monospace;
+        }
+        body { margin: 0; padding: 0; background-color: var(--vscode-editor-background); color: var(--vscode-editor-foreground); }
+        #root { height: 100vh; overflow: hidden; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script src="../../out/test/submodule_mock.js"></script>
+</body>
+</html>

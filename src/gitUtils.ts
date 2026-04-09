@@ -11,10 +11,14 @@ const MAX_BUFFER_SIZE = TEN_MEGABYTES;
 /**
  * Executes a git command and returns the stdout.
  */
-export async function execGit(args: string[], cwd: string): Promise<string> {
+export async function execGit(
+	args: string[],
+	cwd: string,
+	stdin?: string,
+): Promise<string> {
 	const cmd = await getGitExecutable();
 	return new Promise((resolve, reject) => {
-		execFile(
+		const child = execFile(
 			cmd,
 			args,
 			{ cwd, maxBuffer: MAX_BUFFER_SIZE },
@@ -26,6 +30,10 @@ export async function execGit(args: string[], cwd: string): Promise<string> {
 				}
 			},
 		);
+		if (stdin && child.stdin) {
+			child.stdin.write(stdin);
+			child.stdin.end();
+		}
 	});
 }
 
