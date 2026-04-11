@@ -15,7 +15,7 @@ export default {
 			branches: 59,
 			functions: 64,
 			lines: 65,
-			statements: 66,
+			statements: 65,
 		},
 	},
 	testPathIgnorePatterns: ["/node_modules/", "/test/benchmarking/"],

@@ -613,8 +613,18 @@ export const CodePane: FC<CodePaneProps> = (p) => {
 							}, 500);
 						}
 					}}
-					onChange={(v) => {
+					onChange={(v, ev) => {
 						if (!isApplyingSync.current) {
+							if (
+								p.actions.onEditSync &&
+								typeof p.index === "number" &&
+								p.index === 2
+							) {
+								p.actions.onEditSync(
+									ev?.changes || [],
+									v || "",
+								);
+							}
 							if (v !== p.file.content) {
 								p.actions.onEditImmediate(p.index);
 							}

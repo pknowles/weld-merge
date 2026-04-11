@@ -43,6 +43,12 @@ interface ContentChangedMessage {
 	text: string;
 }
 
+interface ContentChangedDeltaMessage {
+	command: "contentChangedDelta";
+	changes: unknown[];
+	fullText: string;
+}
+
 interface RequestBaseDiffMessage {
 	command: "requestBaseDiff";
 	side: "left" | "right";
@@ -84,7 +90,8 @@ type WebviewMessage =
 	| WriteClipboardMessage
 	| ShowDiffMessage
 	| ReadyMessage
-	| CompleteMergeMessage;
+	| CompleteMergeMessage
+	| ContentChangedDeltaMessage;
 
 /**
  * Custom text editor provider for the Weld 3-way merge view.
@@ -94,6 +101,8 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 	static readonly onRequestRefresh = new EventEmitter<Uri>();
 
 	private readonly extensionUri: Uri;
+
+	private _editQueue: Promise<void> = Promise.resolve();
 
 	constructor(extensionUri: Uri) {
 		this.extensionUri = extensionUri;
@@ -203,7 +212,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 
 		payload.data.config = config;
 
-		let isUpdatingFromWebview = false;
+		let lastKnownWebviewText = "";
 
 		const messageListener = webviewPanel.webview.onDidReceiveMessage(
 			async (msg: WebviewMessage) => {
@@ -213,8 +222,8 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 					repoPath,
 					relativeFilePath,
 					payload,
-					updateState: (val) => {
-						isUpdatingFromWebview = val;
+					updateLastKnownText: (val: string) => {
+						lastKnownWebviewText = val;
 					},
 				});
 			},
@@ -222,7 +231,10 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 
 		this._setupSubscriptions(document, webviewPanel, {
 			messageListener,
-			isUpdatingFromWebview: () => isUpdatingFromWebview,
+			getLastKnownText: () => lastKnownWebviewText,
+			setLastKnownText: (val) => {
+				lastKnownWebviewText = val;
+			},
 			repoPath,
 			relativeFilePath,
 			debounceDelay: config.debounceDelay,
@@ -357,7 +369,8 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		webviewPanel: WebviewPanel,
 		ctx: {
 			messageListener: Disposable;
-			isUpdatingFromWebview: () => boolean;
+			getLastKnownText: () => string;
+			setLastKnownText: (val: string) => void;
 			repoPath: string;
 			relativeFilePath: string;
 			debounceDelay: number;
@@ -368,14 +381,15 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 	) {
 		const changeDocumentSubscription = workspace.onDidChangeTextDocument(
 			(e) => {
-				if (
-					e.document.uri.toString() === document.uri.toString() &&
-					!ctx.isUpdatingFromWebview()
-				) {
-					webviewPanel.webview.postMessage({
-						command: "updateContent",
-						text: e.document.getText(),
-					});
+				if (e.document.uri.toString() === document.uri.toString()) {
+					const currentText = e.document.getText();
+					if (currentText !== ctx.getLastKnownText()) {
+						ctx.setLastKnownText(currentText);
+						webviewPanel.webview.postMessage({
+							command: "updateContent",
+							text: currentText,
+						});
+					}
 				}
 			},
 		);
@@ -453,7 +467,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			repoPath: string;
 			relativeFilePath: string;
 			payload: WebviewPayload;
-			updateState: (val: boolean) => void;
+			updateLastKnownText: (val: string) => void;
 		},
 	): Promise<void> {
 		switch (msg.command) {
@@ -461,10 +475,10 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 				ctx.webviewPanel.webview.postMessage(ctx.payload);
 				break;
 			case "contentChanged":
-				await this._applyContentEdit(
-					ctx.document,
-					msg.text,
-					ctx.updateState,
+				// fallback for any remaining debounced string updates
+				ctx.updateLastKnownText(msg.text);
+				this._editQueue = this._editQueue.then(() =>
+					this._applyContentEdit(ctx.document, msg.text),
 				);
 				break;
 			case "copyHash":
@@ -489,28 +503,51 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			case "completeMerge":
 				await this._handleCompleteMerge(ctx.document, ctx.webviewPanel);
 				break;
+			case "contentChangedDelta":
+				ctx.updateLastKnownText(msg.fullText);
+				this._editQueue = this._editQueue.then(() =>
+					this._applyContentDelta(ctx.document, msg.changes),
+				);
+				break;
 			default:
 				break;
 		}
 	}
 
-	private async _applyContentEdit(
+	private async _applyContentDelta(
 		document: TextDocument,
-		text: string,
-		updateState: (val: boolean) => void,
+		changes: unknown[],
 	) {
-		updateState(true);
-		try {
-			const fullRange = new Range(
-				document.positionAt(0),
-				document.positionAt(document.getText().length),
+		const edit = new WorkspaceEdit();
+		for (const ch of changes) {
+			const change = ch as {
+				range: {
+					startLineNumber: number;
+					startColumn: number;
+					endLineNumber: number;
+					endColumn: number;
+				};
+				text: string;
+			};
+			const vsRange = new Range(
+				change.range.startLineNumber - 1,
+				change.range.startColumn - 1,
+				change.range.endLineNumber - 1,
+				change.range.endColumn - 1,
 			);
-			const edit = new WorkspaceEdit();
-			edit.replace(document.uri, fullRange, text);
-			await workspace.applyEdit(edit);
-		} finally {
-			updateState(false);
+			edit.replace(document.uri, vsRange, change.text);
 		}
+		await workspace.applyEdit(edit);
+	}
+
+	private async _applyContentEdit(document: TextDocument, text: string) {
+		const fullRange = new Range(
+			document.positionAt(0),
+			document.positionAt(document.getText().length),
+		);
+		const edit = new WorkspaceEdit();
+		edit.replace(document.uri, fullRange, text);
+		await workspace.applyEdit(edit);
 	}
 
 	private async _handleReadClipboard(

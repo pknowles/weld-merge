@@ -205,12 +205,16 @@ const useMeldUIActions = (p: MeldUIActionsProps) =>
 			onEdit: debounce((v: string | undefined, i: number) => {
 				if (v !== undefined && i === 2) {
 					p.commitModelUpdate(v);
-					p.vscodeApi?.postMessage({
-						command: "contentChanged",
-						text: v,
-					});
+					// Removed the debounced postMessage because onEditSync handles it instantly
 				}
 			}, p.debounceDelay),
+			onEditSync: (changes: unknown[], fullText: string) => {
+				p.vscodeApi?.postMessage({
+					command: "contentChangedDelta",
+					changes,
+					fullText,
+				});
+			},
 		}),
 		[
 			p.attachScrollListener,

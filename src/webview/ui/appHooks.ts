@@ -185,21 +185,19 @@ export function useCommitModelUpdate(deps: CommitDeps) {
 			if (!(cF[1] && cF[2] && cF[3])) {
 				return;
 			}
-			const oldM = splitLines(cF[2].content);
 			const newM = splitLines(value);
 			let nD: PaneDiffs | null = null;
 			const d = differRef.current;
 			if (d) {
-				let sIdx = 0;
-				const mLen = Math.min(oldM.length, newM.length);
-				while (sIdx < mLen && oldM[sIdx] === newM[sIdx]) {
-					sIdx++;
-				}
-				d.changeSequence(1, sIdx, newM.length - oldM.length, [
+				const dI = d.setSequencesIter([
 					splitLines(cF[1].content),
 					newM,
 					splitLines(cF[3].content),
 				]);
+				let dS = dI.next();
+				while (!dS.done) {
+					dS = dI.next();
+				}
 				const dedupe = (chunks: DiffChunk[]) => {
 					const seen = new Set<string>();
 					return chunks.filter((c) => {

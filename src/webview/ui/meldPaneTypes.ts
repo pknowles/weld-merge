@@ -35,7 +35,12 @@ export interface MeldUIActions {
 	getHighlights: (idx: number) => Highlight[];
 	requestClipboardText: () => Promise<string>;
 	writeClipboardText: (text: string) => Promise<void>;
+	requestSave?: (v: string) => void;
 	onEdit: (v: string | undefined, i: number) => void;
+	onEditSync?: (
+		changes: editor.IModelContentChange[],
+		fullText: string,
+	) => void;
 	onEditImmediate: (i: number) => void;
 	setRenderTrigger: (p: (prev: number) => number) => void;
 }
