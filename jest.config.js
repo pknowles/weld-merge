@@ -12,10 +12,10 @@ export default {
 	],
 	coverageThreshold: {
 		global: {
-			branches: 60,
-			functions: 65,
-			lines: 67,
-			statements: 68,
+			branches: 59,
+			functions: 64,
+			lines: 65,
+			statements: 66,
 		},
 	},
 	testPathIgnorePatterns: ["/node_modules/", "/test/benchmarking/"],

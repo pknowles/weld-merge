@@ -310,4 +310,11 @@ async function buildBaseDiffPayload(
 	};
 }
 
-export { buildDiffPayload, buildBaseDiffPayload };
+export {
+	buildDiffPayload,
+	buildBaseDiffPayload,
+	getGitState,
+	GIT_STAGE_BASE,
+	GIT_STAGE_LOCAL,
+	GIT_STAGE_REMOTE,
+};

@@ -1,6 +1,7 @@
-// Copyright (C) 2026 Pyarelal Knowles, GPL v2
-
-import { basename, relative } from "node:path";
+import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join, relative } from "node:path";
 import {
 	type CancellationToken,
 	type ConfigurationChangeEvent,
@@ -20,11 +21,22 @@ import {
 	window,
 	workspace,
 } from "vscode";
+import { getGitExecutable } from "../gitPath.ts";
 import { getUnresolvedReasons } from "../gitUtils.ts";
-import { buildBaseDiffPayload, buildDiffPayload } from "./diffPayload.ts";
+import {
+	buildBaseDiffPayload,
+	buildDiffPayload,
+	GIT_STAGE_BASE,
+	GIT_STAGE_LOCAL,
+	GIT_STAGE_REMOTE,
+	getGitState,
+} from "./diffPayload.ts";
 import type { BaseDiffPayload, WebviewPayload } from "./ui/types.ts";
 
 const DEFAULT_DEBOUNCE_DELAY = 300;
+const LOCAL_LABEL_REGEX = /^<<<<<<< (.*)$/m;
+const BASE_LABEL_REGEX = /^\|\|\|\|\|\|\| (.*)$/m;
+const REMOTE_LABEL_REGEX = /^>>>>>>> (.*)$/m;
 
 interface ContentChangedMessage {
 	command: "contentChanged";
@@ -137,28 +149,58 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		repoPath: string,
 		relativeFilePath: string,
 	): Promise<void> {
-		const config = workspace.getConfiguration("weld");
-		const debounceDelay =
-			config.get<number>("mergeEditor.debounceDelay") ??
-			DEFAULT_DEBOUNCE_DELAY;
-		const syntaxHighlighting =
-			config.get<boolean>("mergeEditor.syntaxHighlighting") ?? true;
-		const baseCompareHighlighting =
-			config.get<boolean>("mergeEditor.baseCompareHighlighting") ?? false;
-		const smoothScrolling =
-			config.get<boolean>("mergeEditor.smoothScrolling") ?? true;
+		const config = this._getWebviewConfig();
+		const docText = document.getText();
+		const { localLabel, baseLabel, remoteLabel } = this._getLabels(docText);
+
+		const initialGitState = await this._getInitialConflictedState(
+			repoPath,
+			relativeFilePath,
+			localLabel,
+			baseLabel,
+			remoteLabel,
+		);
 
 		const payload = (await buildDiffPayload(
 			repoPath,
 			relativeFilePath,
 		)) as WebviewPayload;
 
-		payload.data.config = {
-			debounceDelay,
-			syntaxHighlighting,
-			baseCompareHighlighting,
-			smoothScrolling,
-		};
+		const mergedContent = payload.data.files[1]?.content;
+		const isModified = docText !== initialGitState;
+
+		let shouldReplace = true;
+		if (isModified) {
+			const modAction = await this._checkAndPromptModification(
+				document,
+				initialGitState,
+			);
+			if (modAction === "cancel") {
+				return;
+			}
+			if (modAction === "keep") {
+				shouldReplace = false;
+				if (payload.data.files[1]) {
+					payload.data.files[1].content = docText;
+				}
+			}
+		}
+
+		if (
+			shouldReplace &&
+			mergedContent !== undefined &&
+			mergedContent !== docText
+		) {
+			const edit = new WorkspaceEdit();
+			const fullRange = new Range(
+				document.positionAt(0),
+				document.positionAt(docText.length),
+			);
+			edit.replace(document.uri, fullRange, mergedContent);
+			await workspace.applyEdit(edit);
+		}
+
+		payload.data.config = config;
 
 		let isUpdatingFromWebview = false;
 
@@ -182,11 +224,131 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			isUpdatingFromWebview: () => isUpdatingFromWebview,
 			repoPath,
 			relativeFilePath,
-			debounceDelay,
-			syntaxHighlighting,
-			baseCompareHighlighting,
-			smoothScrolling,
+			debounceDelay: config.debounceDelay,
+			syntaxHighlighting: config.syntaxHighlighting,
+			baseCompareHighlighting: config.baseCompareHighlighting,
+			smoothScrolling: config.smoothScrolling,
 		});
+	}
+
+	private _getWebviewConfig() {
+		const config = workspace.getConfiguration("weld");
+		return {
+			debounceDelay:
+				config.get<number>("mergeEditor.debounceDelay") ??
+				DEFAULT_DEBOUNCE_DELAY,
+			syntaxHighlighting:
+				config.get<boolean>("mergeEditor.syntaxHighlighting") ?? true,
+			baseCompareHighlighting:
+				config.get<boolean>("mergeEditor.baseCompareHighlighting") ??
+				false,
+			smoothScrolling:
+				config.get<boolean>("mergeEditor.smoothScrolling") ?? true,
+		};
+	}
+
+	private _getLabels(docText: string) {
+		const localLabel = docText.match(LOCAL_LABEL_REGEX)?.[1] ?? "HEAD";
+		const baseLabel =
+			docText.match(BASE_LABEL_REGEX)?.[1] ?? "merged common ancestors";
+		const remoteLabel = docText.match(REMOTE_LABEL_REGEX)?.[1] ?? "remote";
+		return { localLabel, baseLabel, remoteLabel };
+	}
+
+	private async _getInitialConflictedState(
+		repoPath: string,
+		relativeFilePath: string,
+		localLabel: string,
+		baseLabel: string,
+		remoteLabel: string,
+	): Promise<string> {
+		const tempDir = await mkdtemp(join(tmpdir(), "weld-"));
+		const localPath = join(tempDir, "local");
+		const basePath = join(tempDir, "base");
+		const remotePath = join(tempDir, "remote");
+
+		try {
+			await writeFile(
+				localPath,
+				await getGitState(repoPath, relativeFilePath, GIT_STAGE_LOCAL),
+			);
+			await writeFile(
+				basePath,
+				await getGitState(repoPath, relativeFilePath, GIT_STAGE_BASE),
+			);
+			await writeFile(
+				remotePath,
+				await getGitState(repoPath, relativeFilePath, GIT_STAGE_REMOTE),
+			);
+
+			const gitCmd = await getGitExecutable();
+
+			return await new Promise<string>((resolve) => {
+				execFile(
+					gitCmd,
+					[
+						"merge-file",
+						"-p",
+						"-L",
+						localLabel,
+						"-L",
+						baseLabel,
+						"-L",
+						remoteLabel,
+						localPath,
+						basePath,
+						remotePath,
+					],
+					{ cwd: repoPath },
+					(_err, stdout) => {
+						resolve(stdout);
+					},
+				);
+			});
+		} finally {
+			await rm(tempDir, { recursive: true, force: true });
+		}
+	}
+
+	private async _checkAndPromptModification(
+		document: TextDocument,
+		initialGitState: string,
+	): Promise<"replace" | "keep" | "cancel"> {
+		const result = await window.showWarningMessage(
+			"This file has been modified since the conflict was generated. Continuing will replace your changes with the auto-merged result.",
+			{ modal: true },
+			"Continue (Replace)",
+			"Open Existing",
+			"Compare",
+		);
+		if (result === "Compare") {
+			const tempComparePath = Uri.file(
+				join(
+					tmpdir(),
+					`weld-original-${basename(document.uri.fsPath)}`,
+				),
+			);
+			await workspace.fs.writeFile(
+				tempComparePath,
+				Buffer.from(initialGitState, "utf-8"),
+			);
+			await commands.executeCommand("workbench.action.closeActiveEditor");
+			await commands.executeCommand(
+				"vscode.diff",
+				tempComparePath,
+				document.uri,
+				"Original Conflict vs Current",
+			);
+			return "cancel";
+		}
+		if (result === "Open Existing") {
+			return "keep";
+		}
+		if (result === "Continue (Replace)") {
+			return "replace";
+		}
+		await commands.executeCommand("workbench.action.closeActiveEditor");
+		return "cancel";
 	}
 
 	private _setupSubscriptions(

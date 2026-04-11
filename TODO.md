@@ -1,5 +1,18 @@
 # Future Improvements & Known Issues
 
+## Partially edited files
+
+When opening a conflicted files, we follow Meld's behaviour of clobbering the
+contents with the auto-merged result, with a warning of course.
+
+Possible idea: instead of completely overwriting the file, we can parse the
+document for typical Git conflict markers (`<<<<<<<` ... `=======` ...
+`>>>>>>>`) and selectively inject the Meld auto-merged chunks *only* where those
+markers exist using the VS Code WorkspaceEdit API. This way, any manual
+resolutions or unrelated modifications the user has made outside of the
+remaining conflict zones are perfectly preserved without the need for a warning
+popup or diffing the original git state.
+
 ## Funcional breakages
 
 Check auto-reload works if there are no pending changes - need to reload base, local, remote panes and re-run auto-merge.
