@@ -110,6 +110,12 @@ save individual panels. Low !/$.
 
 ## Assorted Polish
 
+- **Architectural Debt**:
+  - Resolve **"State vs. Ref"** duplication: Data is mirrored in `useState` and `useRef` for high-frequency coordinate sync (e.g., in `App.tsx` and `useSynchronizedScrolling`).
+  - Decompose **"God Hook"** `useAppState` in `App.tsx`: Break orchestration into domain-specific hooks (Messaging, Scrolling, Navigation).
+  - Remove **`biome-ignore`** suppressions (e.g., `App.tsx:438`) and fix underlying lint/performance violations.
+  - Decouple **Global Styles** from component templates: Move string-injected CSS in `App.tsx` to a structured CSS file.
+  - Refactor **`scrollMapping.ts`**: Remove floating-point epsilon hacks (`1e-10`) and "fighting" the coordinate system in favor of discrete boundary validation.
 - **Scroll Perf**: Throttle `setRenderTrigger` or move curtain drawing out of React; use `React.memo` for `CodePane`; cache line positions to avoid synchronous `getTopForLineNumber` calls during scroll.
 - **Maintainability**: Replace magic indices (0-4) with an `enum`/`const` mapping or just use arrays.
 - **Fix Returns**: Handle failures properly, e.g. from `getGitState`, without silently passing empty strings.
