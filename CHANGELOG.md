@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.9] - 2026-04-11
+
+### Fixed
+- **Diff Curtains**: Fixed an off-by-one error by using Monaco's `getBottomForLineNumber` API for precise boundary alignment.
+- **Merge Engine**: Improved safety when simulating Meld's auto-merge clobber behavior.
+
+### Changed
+- **Documentation**: Consolidated and restructured AI agent guidelines and coding standards into a more maintainable hierarchy.
+
 ## [0.0.8]
 
 ### Added

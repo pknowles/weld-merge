@@ -52,8 +52,11 @@ const getY = (
 	line: number,
 	offset: number,
 	scrollOffset: number,
+	isBottom = false,
 ) => {
-	const top = ed.getTopForLineNumber(line);
+	const top = isBottom
+		? ed.getBottomForLineNumber(line)
+		: ed.getTopForLineNumber(line);
 	return top + offset - scrollOffset;
 };
 
@@ -188,10 +191,16 @@ const ChunkRenderer: FC<{
 	const y2T = getY(p.rightEditor, b.rS, p.rightOffset, p.activeTops.right);
 	const y1B = b.lEmp
 		? y1T
-		: getY(p.leftEditor, b.lE, p.leftOffset, p.activeTops.left);
+		: getY(p.leftEditor, b.lE - 1, p.leftOffset, p.activeTops.left, true);
 	const y2B = b.rEmp
 		? y2T
-		: getY(p.rightEditor, b.rE, p.rightOffset, p.activeTops.right);
+		: getY(
+				p.rightEditor,
+				b.rE - 1,
+				p.rightOffset,
+				p.activeTops.right,
+				true,
+			);
 	const w = DIFF_WIDTH;
 	const c = CURVE_OFFSET;
 	const main = `M 0,${y1T} C ${c},${y1T} ${w - c},${y2T} ${w},${y2T} L ${w},${y2B} C ${w - c},${y2B} ${c},${y1B} 0,${y1B} Z`;
@@ -279,18 +288,12 @@ const isChunkInView = (
 	if (Math.min(y1, y2) > p.curtainHeight + m) {
 		return false;
 	}
-	const y1B = getY(
-		leftEditor,
-		b.lEmp ? b.lS : b.lE,
-		p.leftOffset,
-		p.activeTops.left,
-	);
-	const y2B = getY(
-		rightEditor,
-		b.rEmp ? b.rS : b.rE,
-		p.rightOffset,
-		p.activeTops.right,
-	);
+	const y1B = b.lEmp
+		? y1
+		: getY(leftEditor, b.lE - 1, p.leftOffset, p.activeTops.left, true);
+	const y2B = b.rEmp
+		? y2
+		: getY(rightEditor, b.rE - 1, p.rightOffset, p.activeTops.right, true);
 	return Math.max(y1B, y2B) >= -m;
 };
 

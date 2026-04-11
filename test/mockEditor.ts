@@ -159,6 +159,7 @@ export const createMockEditor = (content: string) => {
 			}),
 		})),
 		getTopForLineNumber: jest.fn((l: number) => (l - 1) * 20),
+		getBottomForLineNumber: jest.fn((l: number) => l * 20),
 		getOption: jest.fn(() => 20),
 		executeEdits: jest.fn(
 			(

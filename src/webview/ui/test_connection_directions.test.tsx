@@ -36,6 +36,7 @@ const mockEditor = (lineCount: number, scrollTop: number) =>
 			getLineCount: jest.fn(() => lineCount),
 		})),
 		getTopForLineNumber: jest.fn((l: number) => (l - 1) * 20),
+		getBottomForLineNumber: jest.fn((l: number) => l * 20),
 		getOption: jest.fn(() => 20),
 		onDidScrollChange: jest.fn(() => ({
 			dispose: jest.fn(),
