@@ -161,15 +161,10 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			remoteLabel,
 		);
 
-		const payload = (await buildDiffPayload(
-			repoPath,
-			relativeFilePath,
-		)) as WebviewPayload;
-
-		const mergedContent = payload.data.files[1]?.content;
 		const isModified = docText !== initialGitState;
-
 		let shouldReplace = true;
+		let overrideContent: string | undefined;
+
 		if (isModified) {
 			const modAction = await this._checkAndPromptModification(
 				document,
@@ -180,11 +175,17 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			}
 			if (modAction === "keep") {
 				shouldReplace = false;
-				if (payload.data.files[1]) {
-					payload.data.files[1].content = docText;
-				}
+				overrideContent = docText;
 			}
 		}
+
+		const payload = (await buildDiffPayload(
+			repoPath,
+			relativeFilePath,
+			overrideContent,
+		)) as WebviewPayload;
+
+		const mergedContent = payload.data.files[1]?.content;
 
 		if (
 			shouldReplace &&

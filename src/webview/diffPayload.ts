@@ -221,6 +221,7 @@ const runDiff = (
 async function buildDiffPayload(
 	repoPath: string,
 	relativeFilePath: string,
+	overrideMergedContent?: string,
 ): Promise<WebviewPayload> {
 	const [base, local, incoming] = await Promise.all([
 		getGitState(repoPath, relativeFilePath, GIT_STAGE_BASE),
@@ -238,7 +239,8 @@ async function buildDiffPayload(
 	const baseLines = splitLines(base);
 	const incomingLines = splitLines(incoming);
 
-	const mergedContent = runMerge(localLines, baseLines, incomingLines);
+	const mergedContent =
+		overrideMergedContent ?? runMerge(localLines, baseLines, incomingLines);
 	const mergedLines = splitLines(mergedContent);
 
 	const { leftDiffs, rightDiffs } = runDiff(
