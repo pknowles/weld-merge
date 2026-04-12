@@ -158,6 +158,11 @@ interface MeldUIActionsProps {
 	commitModelUpdate: (v: string) => void;
 	setRenderTrigger: (p: (p: number) => number) => void;
 	debounceDelay: number;
+	lastExternalSync: {
+		version: number;
+		changes?: editor.IModelContentChange[];
+		fullText?: string;
+	};
 }
 
 const useMeldUIActions = (p: MeldUIActionsProps) =>
@@ -205,14 +210,19 @@ const useMeldUIActions = (p: MeldUIActionsProps) =>
 			onEdit: debounce((v: string | undefined, i: number) => {
 				if (v !== undefined && i === 2) {
 					p.commitModelUpdate(v);
-					// Removed the debounced postMessage because onEditSync handles it instantly
 				}
 			}, p.debounceDelay),
-			onEditSync: (changes: unknown[], fullText: string) => {
+			sendContentChanged: (changes: editor.IModelContentChange[]) => {
 				p.vscodeApi?.postMessage({
-					command: "contentChangedDelta",
+					command: "contentChanged",
 					changes,
-					fullText,
+					lastExternalChangeVersion: p.lastExternalSync.version,
+				});
+			},
+			sendSave: () => {
+				p.vscodeApi?.postMessage({
+					command: "save",
+					lastExternalChangeVersion: p.lastExternalSync.version,
 				});
 			},
 		}),
@@ -234,6 +244,7 @@ const useMeldUIActions = (p: MeldUIActionsProps) =>
 			p.commitModelUpdate,
 			p.debounceDelay,
 			p.setRenderTrigger,
+			p.lastExternalSync.version,
 		],
 	);
 
@@ -249,7 +260,11 @@ const useAppCoreData = () => {
 	const [diffs, setDiffs] = useState<PaneDiffs>([null, null, null, null]);
 	const diffsRef = useRef<PaneDiffs>([null, null, null, null]);
 	const differRef = useRef(null);
-	const [externalSyncId, setExternalSyncId] = useState(0);
+	const [lastExternalSync, setLastExternalSync] = useState<{
+		version: number;
+		changes?: editor.IModelContentChange[];
+		fullText?: string;
+	}>({ version: 0 });
 	const [debounceDelay, setDebounceDelay] = useState(DEFAULT_DEBOUNCE_DELAY);
 	const [syntaxHighlighting, setSyntaxHighlighting] = useState(true);
 	const [baseCompareHighlighting, setBaseCompareHighlighting] =
@@ -265,8 +280,8 @@ const useAppCoreData = () => {
 		setDiffs,
 		diffsRef,
 		differRef,
-		externalSyncId,
-		setExternalSyncId,
+		lastExternalSync,
+		setLastExternalSync,
 		debounceDelay,
 		setDebounceDelay,
 		syntaxHighlighting,
@@ -298,7 +313,7 @@ const useAppStateMessageHandlers = (
 		diffsRef: d.diffsRef,
 		setFiles: d.setFiles,
 		setDiffs: d.setDiffs,
-		setExternalSyncId: d.setExternalSyncId,
+		setLastExternalSync: d.setLastExternalSync,
 		setDebounceDelay: d.setDebounceDelay,
 		setSyntaxHighlighting: d.setSyntaxHighlighting,
 		setBaseCompareHighlighting: d.setBaseCompareHighlighting,
@@ -332,7 +347,7 @@ const useUIState = (p: {
 			baseCompareHighlighting: p.d.baseCompareHighlighting,
 			renderTrigger: p.d.renderTrigger,
 			syntaxHighlighting: p.d.syntaxHighlighting,
-			externalSyncId: p.d.externalSyncId,
+			lastExternalSync: p.d.lastExternalSync,
 			editorRefArray: p.d.editorRefArray,
 		}),
 		[
@@ -347,7 +362,7 @@ const useUIState = (p: {
 			p.d.baseCompareHighlighting,
 			p.d.renderTrigger,
 			p.d.syntaxHighlighting,
-			p.d.externalSyncId,
+			p.d.lastExternalSync,
 			p.d.editorRefArray,
 		],
 	);
@@ -414,6 +429,7 @@ const useAppState = () => {
 		commitModelUpdate,
 		setRenderTrigger: d.setRenderTrigger,
 		debounceDelay: d.debounceDelay,
+		lastExternalSync: d.lastExternalSync,
 	});
 
 	return { files: d.files, uiState, uiActions };

@@ -5,12 +5,12 @@ import {
 	type FC,
 	type FocusEvent,
 	type MouseEvent,
+	useCallback,
 	useEffect,
 	useMemo,
 	useRef,
 	useState,
 } from "react";
-import { computeMinimalEdits } from "./editorUtil.ts";
 import type { MeldUIActions, MeldUIState } from "./meldPaneTypes.ts";
 import type { Commit, FileState, Highlight } from "./types.ts";
 
@@ -429,6 +429,17 @@ const setupActions = (ed: editor.IStandaloneCodeEditor, p: CodePaneProps) => {
 				.requestClipboardText?.()
 				.then((t) => e.trigger("keyboard", "paste", { text: t })),
 	});
+	ed.addAction({
+		id: "custom-save",
+		label: "Save",
+		keybindings: [KeyMod.CtrlCmd | KeyCode.KeyS],
+		precondition: "!editorReadonly",
+		run: () => {
+			if (p.isMiddle) {
+				p.actions.sendSave();
+			}
+		},
+	});
 };
 
 const getHighlightOptions = (h: Highlight) => ({
@@ -441,7 +452,9 @@ const getHighlightOptions = (h: Highlight) => ({
 
 const useCodePaneLogic = (p: CodePaneProps) => {
 	const [ed, setEd] = useState<editor.IStandaloneCodeEditor | null>(null);
-	const [lastSyncId, setLastSyncId] = useState(p.ui.externalSyncId);
+	const [lastSyncVersion, setLastSyncVersion] = useState(
+		p.ui.lastExternalSync.version,
+	);
 	const isApplyingSync = useRef(false);
 	const [isFlashing, setIsFlashing] = useState(false);
 	const decRef = useRef<string[]>([]);
@@ -463,18 +476,28 @@ const useCodePaneLogic = (p: CodePaneProps) => {
 		}
 	}, [ed, p.highlights]);
 
+	const applyIncrementalChanges = useCallback(
+		(m: editor.ITextModel) => {
+			if (p.ui.lastExternalSync.fullText !== undefined) {
+				m.setValue(p.ui.lastExternalSync.fullText);
+			} else if (
+				p.ui.lastExternalSync.changes &&
+				p.ui.lastExternalSync.changes.length > 0
+			) {
+				const ops = p.ui.lastExternalSync
+					.changes as unknown as editor.IIdentifiedSingleEditOperation[];
+				m.pushEditOperations(
+					ed?.getSelections() || [],
+					ops,
+					() => ed?.getSelections() || [],
+				);
+			}
+		},
+		[ed, p.ui.lastExternalSync],
+	);
+
 	useEffect(() => {
-		if (
-			!ed ||
-			p.file.content == null ||
-			p.ui.externalSyncId === lastSyncId
-		) {
-			return;
-		}
-
-		setLastSyncId(p.ui.externalSyncId);
-
-		if (p.file.content === ed.getValue()) {
+		if (!ed) {
 			return;
 		}
 
@@ -483,20 +506,31 @@ const useCodePaneLogic = (p: CodePaneProps) => {
 			return;
 		}
 
-		isApplyingSync.current = true;
-		try {
-			const e = computeMinimalEdits(m, p.file.content);
-			if (e.length > 0) {
-				m.pushEditOperations(
-					ed.getSelections() || [],
-					e,
-					() => ed.getSelections() || [],
-				);
+		if (p.isMiddle) {
+			// Center pane handles incremental external changes via lastExternalSync (Issue 5/12/16)
+			if (p.ui.lastExternalSync.version === lastSyncVersion) {
+				return;
 			}
-		} finally {
-			isApplyingSync.current = false;
+			setLastSyncVersion(p.ui.lastExternalSync.version);
+
+			isApplyingSync.current = true;
+			try {
+				applyIncrementalChanges(m);
+			} finally {
+				isApplyingSync.current = false;
+			}
+		} else if (p.file.content !== ed.getValue()) {
+			// Base panes just sync entirely when content changes (readonly, no optimistic updates)
+			m.setValue(p.file.content || "");
 		}
-	}, [ed, p.file.content, p.ui.externalSyncId, lastSyncId]);
+	}, [
+		ed,
+		p.file.content,
+		p.ui.lastExternalSync,
+		lastSyncVersion,
+		p.isMiddle,
+		applyIncrementalChanges,
+	]);
 
 	const onSubmit = () => {
 		if (!ed) {
@@ -614,17 +648,9 @@ export const CodePane: FC<CodePaneProps> = (p) => {
 						}
 					}}
 					onChange={(v, ev) => {
-						if (!isApplyingSync.current) {
-							if (
-								p.actions.onEditSync &&
-								typeof p.index === "number" &&
-								p.index === 2
-							) {
-								p.actions.onEditSync(
-									ev?.changes || [],
-									v || "",
-								);
-							}
+						if (!isApplyingSync.current && p.isMiddle) {
+							// Local optimistic edit — immediately send to extension (Issue 6)
+							p.actions.sendContentChanged(ev?.changes || []);
 							if (v !== p.file.content) {
 								p.actions.onEditImmediate(p.index);
 							}
