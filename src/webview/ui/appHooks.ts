@@ -265,8 +265,10 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 			switch (m.command) {
 				case "loadDiff":
 					handleLoadDiff(
-						m as unknown as LoadDiffData & {
-							lastExternalChangeVersion: number;
+						{
+							...m.data,
+							lastExternalChangeVersion:
+								m.lastExternalChangeVersion,
 						},
 						{
 							setFiles,
