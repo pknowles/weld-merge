@@ -40,6 +40,22 @@ const REMOTE_LABEL_REGEX = /^>>>>>>> (.*)$/m;
 
 interface ContentChangedMessage {
 	command: "contentChanged";
+	changes: MonacoContentChange[];
+	lastExternalChangeVersion: number;
+}
+
+interface SaveMessage {
+	command: "save";
+	lastExternalChangeVersion: number;
+}
+
+interface MonacoContentChange {
+	range: {
+		startLineNumber: number;
+		startColumn: number;
+		endLineNumber: number;
+		endColumn: number;
+	};
 	text: string;
 }
 
@@ -84,7 +100,8 @@ type WebviewMessage =
 	| WriteClipboardMessage
 	| ShowDiffMessage
 	| ReadyMessage
-	| CompleteMergeMessage;
+	| CompleteMergeMessage
+	| SaveMessage;
 
 /**
  * Custom text editor provider for the Weld 3-way merge view.
@@ -161,15 +178,10 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			remoteLabel,
 		);
 
-		const payload = (await buildDiffPayload(
-			repoPath,
-			relativeFilePath,
-		)) as WebviewPayload;
-
-		const mergedContent = payload.data.files[1]?.content;
 		const isModified = docText !== initialGitState;
-
 		let shouldReplace = true;
+		let overrideContent: string | undefined;
+
 		if (isModified) {
 			const modAction = await this._checkAndPromptModification(
 				document,
@@ -180,11 +192,17 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			}
 			if (modAction === "keep") {
 				shouldReplace = false;
-				if (payload.data.files[1]) {
-					payload.data.files[1].content = docText;
-				}
+				overrideContent = docText;
 			}
 		}
+
+		const payload = (await buildDiffPayload(
+			repoPath,
+			relativeFilePath,
+			overrideContent,
+		)) as WebviewPayload;
+
+		const mergedContent = payload.data.files[1]?.content;
 
 		if (
 			shouldReplace &&
@@ -202,7 +220,14 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 
 		payload.data.config = config;
 
-		let isUpdatingFromWebview = false;
+		// Phase 1 (before webview is ready): Setup per-editor sync state (Issue 4, 10, 11)
+		const editState = {
+			editQueue: Promise.resolve(),
+			isApplyingEdit: false,
+			versionBeforeEdit: document.version,
+			lastExternalChangeVersion: document.version,
+		};
+		const disposables: Disposable[] = [];
 
 		const messageListener = webviewPanel.webview.onDidReceiveMessage(
 			async (msg: WebviewMessage) => {
@@ -212,22 +237,17 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 					repoPath,
 					relativeFilePath,
 					payload,
-					updateState: (val) => {
-						isUpdatingFromWebview = val;
-					},
+					editState,
+					disposables,
 				});
 			},
 		);
+		disposables.push(messageListener);
 
-		this._setupSubscriptions(document, webviewPanel, {
-			messageListener,
-			isUpdatingFromWebview: () => isUpdatingFromWebview,
-			repoPath,
-			relativeFilePath,
-			debounceDelay: config.debounceDelay,
-			syntaxHighlighting: config.syntaxHighlighting,
-			baseCompareHighlighting: config.baseCompareHighlighting,
-			smoothScrolling: config.smoothScrolling,
+		webviewPanel.onDidDispose(() => {
+			for (const d of disposables) {
+				d.dispose();
+			}
 		});
 	}
 
@@ -351,99 +371,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		return "cancel";
 	}
 
-	private _setupSubscriptions(
-		document: TextDocument,
-		webviewPanel: WebviewPanel,
-		ctx: {
-			messageListener: Disposable;
-			isUpdatingFromWebview: () => boolean;
-			repoPath: string;
-			relativeFilePath: string;
-			debounceDelay: number;
-			syntaxHighlighting: boolean;
-			baseCompareHighlighting: boolean;
-			smoothScrolling: boolean;
-		},
-	) {
-		const changeDocumentSubscription = workspace.onDidChangeTextDocument(
-			(e) => {
-				if (
-					e.document.uri.toString() === document.uri.toString() &&
-					!ctx.isUpdatingFromWebview()
-				) {
-					webviewPanel.webview.postMessage({
-						command: "updateContent",
-						text: e.document.getText(),
-					});
-				}
-			},
-		);
-
-		const changeConfigurationSubscription =
-			workspace.onDidChangeConfiguration((e) => {
-				this._handleConfigChange(e, webviewPanel);
-			});
-
-		const refreshSubscription =
-			MeldCustomEditorProvider.onRequestRefresh.event(async (uri) => {
-				if (uri.toString() === document.uri.toString()) {
-					const newPayload = (await buildDiffPayload(
-						ctx.repoPath,
-						ctx.relativeFilePath,
-					)) as WebviewPayload;
-					newPayload.data.config = {
-						debounceDelay: ctx.debounceDelay,
-						syntaxHighlighting: ctx.syntaxHighlighting,
-						baseCompareHighlighting: ctx.baseCompareHighlighting,
-						smoothScrolling: ctx.smoothScrolling,
-					};
-					webviewPanel.webview.postMessage(newPayload);
-				}
-			});
-
-		webviewPanel.onDidDispose(() => {
-			ctx.messageListener.dispose();
-			changeDocumentSubscription.dispose();
-			changeConfigurationSubscription.dispose();
-			refreshSubscription.dispose();
-		});
-	}
-
-	private _handleConfigChange(
-		e: ConfigurationChangeEvent,
-		webviewPanel: WebviewPanel,
-	) {
-		if (
-			e.affectsConfiguration("weld.mergeEditor.debounceDelay") ||
-			e.affectsConfiguration("weld.mergeEditor.syntaxHighlighting") ||
-			e.affectsConfiguration(
-				"weld.mergeEditor.baseCompareHighlighting",
-			) ||
-			e.affectsConfiguration("weld.mergeEditor.smoothScrolling")
-		) {
-			const newConfig = workspace.getConfiguration("weld");
-			const config = {
-				debounceDelay:
-					newConfig.get<number>("mergeEditor.debounceDelay") ??
-					DEFAULT_DEBOUNCE_DELAY,
-				syntaxHighlighting:
-					newConfig.get<boolean>("mergeEditor.syntaxHighlighting") ??
-					true,
-				baseCompareHighlighting:
-					newConfig.get<boolean>(
-						"mergeEditor.baseCompareHighlighting",
-					) ?? false,
-				smoothScrolling:
-					newConfig.get<boolean>("mergeEditor.smoothScrolling") ??
-					true,
-			};
-			webviewPanel.webview.postMessage({
-				command: "updateConfig",
-				config,
-			});
-		}
-	}
-
+	// biome-ignore lint/complexity/noExcessiveLinesPerFunction: Required inline bootstrap
 	private async _handleMessage(
 		msg: WebviewMessage,
 		ctx: {
@@ -452,20 +380,207 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			repoPath: string;
 			relativeFilePath: string;
 			payload: WebviewPayload;
-			updateState: (val: boolean) => void;
+			editState: {
+				editQueue: Promise<void>;
+				isApplyingEdit: boolean;
+				versionBeforeEdit: number;
+				lastExternalChangeVersion: number;
+			};
+			disposables: Disposable[];
 		},
 	): Promise<void> {
 		switch (msg.command) {
-			case "ready":
-				ctx.webviewPanel.webview.postMessage(ctx.payload);
+			case "ready": {
+				// Phase 2: Inside the "ready" message handler (Issue 7)
+				// All of this is synchronous — no other code can interleave.
+				// This guarantees the content we send matches exactly what the listener tracks.
+
+				const changeDocumentSubscription =
+					workspace.onDidChangeTextDocument((e) => {
+						if (
+							e.document.uri.toString() !==
+							ctx.document.uri.toString()
+						) {
+							return;
+						}
+
+						if (ctx.editState.isApplyingEdit) {
+							// This event fired during our await applyEdit() — likely our echo.
+							// Check that version incremented by exactly 1 (Issue 5).
+							if (
+								e.document.version ===
+								ctx.editState.versionBeforeEdit + 1
+							) {
+								// Our echo only — suppress. Do not forward to webview.
+								return;
+							}
+							// If it jumped by ≥2, an external edit interleaved during the await (Issue 8).
+							// The webview's cache is now stale — send full document.
+							ctx.editState.lastExternalChangeVersion =
+								e.document.version;
+							ctx.webviewPanel.webview.postMessage({
+								command: "fullSync",
+								content: ctx.document.getText(),
+								lastExternalChangeVersion:
+									ctx.editState.lastExternalChangeVersion,
+							});
+							return;
+						}
+
+						// Not our edit — something external changed the document.
+						// Convert TextDocumentContentChangeEvent to MonacoContentChange (1-based)
+						const monacoChanges: MonacoContentChange[] =
+							e.contentChanges.map((c) => ({
+								range: {
+									startLineNumber: c.range.start.line + 1,
+									startColumn: c.range.start.character + 1,
+									endLineNumber: c.range.end.line + 1,
+									endColumn: c.range.end.character + 1,
+								},
+								text: c.text,
+							}));
+
+						// Send incremental changes to the webview.
+						ctx.editState.lastExternalChangeVersion =
+							e.document.version;
+						ctx.webviewPanel.webview.postMessage({
+							command: "externalEdit",
+							changes: monacoChanges,
+							lastExternalChangeVersion:
+								ctx.editState.lastExternalChangeVersion,
+						});
+					});
+
+				const willSaveSubscription = workspace.onWillSaveTextDocument(
+					(e) => {
+						if (
+							e.document.uri.toString() ===
+							ctx.document.uri.toString()
+						) {
+							// Fallback for saves not routed through postMessage
+							e.waitUntil(ctx.editState.editQueue);
+						}
+					},
+				);
+
+				const changeConfigurationSubscription =
+					workspace.onDidChangeConfiguration((e) => {
+						this._handleConfigChange(e, ctx.webviewPanel);
+					});
+
+				const refreshSubscription =
+					MeldCustomEditorProvider.onRequestRefresh.event(
+						async (uri) => {
+							if (
+								uri.toString() === ctx.document.uri.toString()
+							) {
+								const newPayload = (await buildDiffPayload(
+									ctx.repoPath,
+									ctx.relativeFilePath,
+								)) as WebviewPayload;
+								newPayload.data.config =
+									this._getWebviewConfig();
+								if (newPayload.data.files[1]) {
+									newPayload.data.files[1].content =
+										ctx.document.getText();
+								}
+								// Re-sync with current state
+								ctx.editState.lastExternalChangeVersion =
+									ctx.document.version;
+								ctx.webviewPanel.webview.postMessage({
+									...newPayload,
+									command: "loadDiff",
+									lastExternalChangeVersion:
+										ctx.editState.lastExternalChangeVersion,
+								});
+							}
+						},
+					);
+
+				// Track all lifecycle bounds
+				ctx.disposables.push(
+					changeDocumentSubscription,
+					willSaveSubscription,
+					changeConfigurationSubscription,
+					refreshSubscription,
+				);
+
+				const content = ctx.document.getText();
+				ctx.editState.lastExternalChangeVersion = ctx.document.version;
+
+				// Assure the loadDiff matches exactly what is running
+				if (ctx.payload.data.files[1]) {
+					ctx.payload.data.files[1].content = content;
+				}
+
+				ctx.webviewPanel.webview.postMessage({
+					...ctx.payload,
+					command: "loadDiff",
+					lastExternalChangeVersion:
+						ctx.editState.lastExternalChangeVersion,
+				});
 				break;
-			case "contentChanged":
-				await this._applyContentEdit(
-					ctx.document,
-					msg.text,
-					ctx.updateState,
+			}
+			case "contentChanged": {
+				ctx.editState.editQueue = ctx.editState.editQueue.then(
+					async () => {
+						// 1. Stale check: has an external edit happened since the webview last synced? (Issue 11)
+						if (
+							msg.lastExternalChangeVersion <
+							ctx.editState.lastExternalChangeVersion
+						) {
+							ctx.webviewPanel.webview.postMessage({
+								command: "fullSync",
+								content: ctx.document.getText(),
+								lastExternalChangeVersion:
+									ctx.editState.lastExternalChangeVersion,
+							});
+							return;
+						}
+
+						// 2. Record version before edit for echo detection (Issue 5).
+						ctx.editState.versionBeforeEdit = ctx.document.version;
+
+						// 3. Set flag so onDidChangeTextDocument knows this change is ours (Issue 16).
+						ctx.editState.isApplyingEdit = true;
+						try {
+							const edit = new WorkspaceEdit();
+							for (const change of msg.changes) {
+								const vsRange = new Range(
+									change.range.startLineNumber - 1,
+									change.range.startColumn - 1,
+									change.range.endLineNumber - 1,
+									change.range.endColumn - 1,
+								);
+								edit.replace(
+									ctx.document.uri,
+									vsRange,
+									change.text,
+								);
+							}
+							await workspace.applyEdit(edit);
+						} finally {
+							ctx.editState.isApplyingEdit = false;
+						}
+					},
 				);
 				break;
+			}
+			case "save": {
+				ctx.editState.editQueue = ctx.editState.editQueue.then(
+					async () => {
+						// FIFO ordering logic: save intercepts ordered with edits (Issue 6)
+						if (
+							msg.lastExternalChangeVersion <
+							ctx.editState.lastExternalChangeVersion
+						) {
+							return;
+						}
+						await ctx.document.save();
+					},
+				);
+				break;
+			}
 			case "copyHash":
 				await env.clipboard.writeText(msg.hash);
 				window.showInformationMessage(`Copied hash: ${msg.hash}`);
@@ -493,22 +608,23 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		}
 	}
 
-	private async _applyContentEdit(
-		document: TextDocument,
-		text: string,
-		updateState: (val: boolean) => void,
+	private _handleConfigChange(
+		e: ConfigurationChangeEvent,
+		webviewPanel: WebviewPanel,
 	) {
-		updateState(true);
-		try {
-			const fullRange = new Range(
-				document.positionAt(0),
-				document.positionAt(document.getText().length),
-			);
-			const edit = new WorkspaceEdit();
-			edit.replace(document.uri, fullRange, text);
-			await workspace.applyEdit(edit);
-		} finally {
-			updateState(false);
+		if (
+			e.affectsConfiguration("weld.mergeEditor.debounceDelay") ||
+			e.affectsConfiguration("weld.mergeEditor.syntaxHighlighting") ||
+			e.affectsConfiguration(
+				"weld.mergeEditor.baseCompareHighlighting",
+			) ||
+			e.affectsConfiguration("weld.mergeEditor.smoothScrolling")
+		) {
+			const config = this._getWebviewConfig();
+			webviewPanel.webview.postMessage({
+				command: "updateConfig",
+				config,
+			});
 		}
 	}
 

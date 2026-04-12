@@ -27,7 +27,11 @@ interface MessageHandlersDeps {
 	diffsRef: React.MutableRefObject<PaneDiffs>;
 	setFiles: (f: PaneFiles) => void;
 	setDiffs: (d: PaneDiffs) => void;
-	setExternalSyncId: (p: (id: number) => number) => void;
+	setLastExternalSync: (v: {
+		version: number;
+		changes?: editor.IModelContentChange[];
+		fullText?: string;
+	}) => void;
 	setDebounceDelay: (d: number) => void;
 	setSyntaxHighlighting: (s: boolean) => void;
 	setBaseCompareHighlighting: (b: boolean) => void;
@@ -46,6 +50,7 @@ interface LoadDiffData {
 		syntaxHighlighting?: boolean;
 		baseCompareHighlighting?: boolean;
 	};
+	lastExternalChangeVersion?: number;
 }
 
 function handleConfig(config: LoadDiffData["config"], p: MessageHandlersDeps) {
@@ -81,7 +86,9 @@ function handleLoadDiff(data: LoadDiffData, p: MessageHandlersDeps) {
 	p.setFiles(iF);
 	p.setDiffs(iD);
 	p.diffsRef.current = iD;
-	p.setExternalSyncId((id) => id + 1);
+	if (data.lastExternalChangeVersion !== undefined) {
+		p.setLastExternalSync({ version: data.lastExternalChangeVersion });
+	}
 
 	handleConfig(data.config, p);
 
@@ -185,21 +192,19 @@ export function useCommitModelUpdate(deps: CommitDeps) {
 			if (!(cF[1] && cF[2] && cF[3])) {
 				return;
 			}
-			const oldM = splitLines(cF[2].content);
 			const newM = splitLines(value);
 			let nD: PaneDiffs | null = null;
 			const d = differRef.current;
 			if (d) {
-				let sIdx = 0;
-				const mLen = Math.min(oldM.length, newM.length);
-				while (sIdx < mLen && oldM[sIdx] === newM[sIdx]) {
-					sIdx++;
-				}
-				d.changeSequence(1, sIdx, newM.length - oldM.length, [
+				const dI = d.setSequencesIter([
 					splitLines(cF[1].content),
 					newM,
 					splitLines(cF[3].content),
 				]);
+				let dS = dI.next();
+				while (!dS.done) {
+					dS = dI.next();
+				}
 				const dedupe = (chunks: DiffChunk[]) => {
 					const seen = new Set<string>();
 					return chunks.filter((c) => {
@@ -242,7 +247,7 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 	const {
 		setFiles,
 		setDiffs,
-		setExternalSyncId,
+		setLastExternalSync,
 		setDebounceDelay,
 		setSyntaxHighlighting,
 		setBaseCompareHighlighting,
@@ -259,59 +264,47 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 			const m = event.data;
 			switch (m.command) {
 				case "loadDiff":
-					handleLoadDiff(m.data, {
-						setFiles,
-						setDiffs,
-						setExternalSyncId,
-						setDebounceDelay,
-						setSyntaxHighlighting,
-						setBaseCompareHighlighting,
-						setRenderTrigger,
-						commitModelUpdate,
-						resolveClipboardRead,
-						vscodeApi,
-						differRef,
-						filesRef,
-						diffsRef,
-					});
+					handleLoadDiff(
+						{
+							...m.data,
+							lastExternalChangeVersion:
+								m.lastExternalChangeVersion,
+						},
+						{
+							setFiles,
+							setDiffs,
+							setLastExternalSync,
+							setDebounceDelay,
+							setSyntaxHighlighting,
+							setBaseCompareHighlighting,
+							setRenderTrigger,
+							commitModelUpdate,
+							resolveClipboardRead,
+							vscodeApi,
+							differRef,
+							filesRef,
+							diffsRef,
+						},
+					);
 					break;
 				case "loadBaseDiff":
-					handleLoadBaseDiff(m.data, {
-						setFiles,
-						setDiffs,
-						setExternalSyncId,
-						setDebounceDelay,
-						setSyntaxHighlighting,
-						setBaseCompareHighlighting,
-						setRenderTrigger,
-						commitModelUpdate,
-						resolveClipboardRead,
-						vscodeApi,
-						differRef,
-						filesRef,
-						diffsRef,
+					handleLoadBaseDiff(m.data, p);
+					break;
+				case "externalEdit":
+					setLastExternalSync({
+						version: m.lastExternalChangeVersion,
+						changes: m.changes,
 					});
 					break;
-				case "updateContent":
-					setExternalSyncId((id) => id + 1);
-					commitModelUpdate(m.text);
+				case "fullSync":
+					setLastExternalSync({
+						version: m.lastExternalChangeVersion,
+						fullText: m.content,
+					});
+					commitModelUpdate(m.content);
 					break;
 				case "updateConfig":
-					handleConfig(m.config, {
-						setFiles,
-						setDiffs,
-						setExternalSyncId,
-						setDebounceDelay,
-						setSyntaxHighlighting,
-						setBaseCompareHighlighting,
-						setRenderTrigger,
-						commitModelUpdate,
-						resolveClipboardRead,
-						vscodeApi,
-						differRef,
-						filesRef,
-						diffsRef,
-					});
+					handleConfig(m.config, p);
 					break;
 				case "clipboardText":
 					resolveClipboardRead(Number(m.requestId), m.text as string);
@@ -326,9 +319,10 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 		}
 		return () => window.removeEventListener("message", handleMessage);
 	}, [
+		p,
 		setFiles,
 		setDiffs,
-		setExternalSyncId,
+		setLastExternalSync,
 		setDebounceDelay,
 		setSyntaxHighlighting,
 		setBaseCompareHighlighting,
