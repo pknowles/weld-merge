@@ -52,6 +52,51 @@ import type {
 	WebviewPayload,
 } from "./ui/types.ts";
 
+/*
+ * ============================================================================
+ * EDITOR SYNCHRONIZATION ARCHITECTURE
+ * ============================================================================
+ *
+ * This module implements bidirectional sync between VS Code's TextDocument and
+ * the Monaco editor in our webview. The design follows these core principles:
+ *
+ * 1. TEXTDOCUMENT IS THE SOURCE OF TRUTH
+ *    Monaco is a local cache that can be rebuilt from the TextDocument at any
+ *    time. Edits flow: Monaco → TextDocument → persisted. If anything goes
+ *    wrong, we send a "fullSync" to replace Monaco's content entirely.
+ *
+ * 2. OPTIMISTIC UPDATES WITH LAZY CORRECTION
+ *    The webview applies edits immediately (optimistic) and sends them to us.
+ *    If we detect the edit was based on stale content, we reject it and send
+ *    fullSync. The webview doesn't wait for acknowledgment — it only receives
+ *    correction when needed. This keeps typing responsive.
+ *
+ * 3. NO ACKNOWLEDGMENT MESSAGES
+ *    The protocol is deliberately simple. The webview sends edits tagged with
+ *    "lastExternalChangeVersion". We compare against our version to detect
+ *    staleness. No explicit acks, no message IDs, no complex handshakes.
+ *
+ * 4. FIFO ORDERING THROUGH SHARED QUEUE
+ *    The webview sends edits AND saves through the same postMessage channel.
+ *    We process them through a serialized editQueue. This guarantees:
+ *    - Type "abc" → Ctrl+S saves "abc", not partial content
+ *    - Multiple rapid edits apply in order, not interleaved
+ *
+ * 5. ECHO SUPPRESSION VIA VERSION CHECK
+ *    When we apply a webview edit, VS Code fires onDidChangeTextDocument.
+ *    We must NOT forward this back (it's our own echo). We detect echoes by
+ *    checking if the version incremented by exactly 1. If it jumped more,
+ *    an external edit interleaved and we need fullSync.
+ *
+ * The protocol handles files of 100k+ lines by using incremental updates
+ * (externalEdit) rather than full content (fullSync) whenever possible.
+ * fullSync is only triggered on conflicts or staleness detection.
+ *
+ * See docs/editor_sync_implementation_plan.md for the full design rationale
+ * and editorSync.ts for the pure sync logic implementation.
+ * ============================================================================
+ */
+
 const DEFAULT_DEBOUNCE_DELAY = 300;
 
 interface ConflictStateChangeEvent {
@@ -225,6 +270,11 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		const config = this._getWebviewConfig();
 
 		// Phase 1 (before webview is ready): Setup per-editor sync state.
+		// See editorSync.ts for detailed documentation of each field.
+		// Key points:
+		// - editQueue serializes all document mutations (edits + saves)
+		// - lastExternalChangeVersion tracks when external changes occurred
+		// - versionBeforeEdit enables echo suppression during applyEdit()
 		const editState: EditState = {
 			editQueue: Promise.resolve(),
 			lastExternalChangeVersion: document.version,
@@ -552,40 +602,61 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 				// Handled in the outer listener closure.
 				break;
 			case "contentChanged": {
-				ctx.editState.editQueue = processContentChanged({
-					changes: msg.changes,
-					msgVersion: msg.lastExternalChangeVersion,
-					editState: ctx.editState,
-					currentDocumentVersion: ctx.document.version,
-					applyEdit: async (changes) => {
-						const edit = new WorkspaceEdit();
-						for (const change of changes) {
-							const vsRange = new Range(
-								change.range.startLineNumber - 1,
-								change.range.startColumn - 1,
-								change.range.endLineNumber - 1,
-								change.range.endColumn - 1,
-							);
-							edit.replace(
-								ctx.document.uri,
-								vsRange,
-								change.text,
-							);
-						}
-						await workspace.applyEdit(edit);
-					},
-					postFullSync: () => {
-						ctx.webviewPanel.webview.postMessage({
-							command: "fullSync",
-							content: ctx.document.getText(),
-							lastExternalChangeVersion:
-								ctx.editState.lastExternalChangeVersion,
-						});
-					},
-				});
+				// Chain onto editQueue to serialize with other edits and saves.
+				// The .then() callback is crucial: it ensures:
+				// 1. Previous edits complete before this one starts
+				// 2. ctx.document.version is read at EXECUTION time (after queue drains),
+				//    not at CALL time (when message arrives). This matters because if
+				//    multiple messages queue up, each needs the version AFTER the
+				//    previous edit applied, not the version when the message arrived.
+				ctx.editState.editQueue = ctx.editState.editQueue.then(() =>
+					processContentChanged({
+						changes: msg.changes,
+						msgVersion: msg.lastExternalChangeVersion,
+						editState: ctx.editState,
+						// Read document.version HERE, inside the callback, so it reflects
+						// any edits that completed earlier in the queue.
+						currentDocumentVersion: ctx.document.version,
+						applyEdit: async (changes) => {
+							// Convert Monaco 1-based ranges to VS Code 0-based ranges.
+							const edit = new WorkspaceEdit();
+							for (const change of changes) {
+								const vsRange = new Range(
+									change.range.startLineNumber - 1,
+									change.range.startColumn - 1,
+									change.range.endLineNumber - 1,
+									change.range.endColumn - 1,
+								);
+								edit.replace(
+									ctx.document.uri,
+									vsRange,
+									change.text,
+								);
+							}
+							// This fires onDidChangeTextDocument during the await.
+							// classifyDocumentChange will suppress it as our echo.
+							await workspace.applyEdit(edit);
+						},
+						postFullSync: () => {
+							// Called when the webview's message was stale (based on
+							// outdated content). Send full document to resync.
+							ctx.webviewPanel.webview.postMessage({
+								command: "fullSync",
+								content: ctx.document.getText(),
+								lastExternalChangeVersion:
+									ctx.editState.lastExternalChangeVersion,
+							});
+						},
+					}),
+				);
 				break;
 			}
 			case "save":
+				// Save goes through the same queue as edits. This ensures:
+				// - Pending edits complete before save writes to disk
+				// - User typing "abc" then Ctrl+S saves "abc", not partial content
+				// The webview intercepts Ctrl+S and sends this message, ensuring
+				// save is ordered with edits in the same FIFO channel.
 				ctx.editState.editQueue = ctx.editState.editQueue.then(
 					async () => {
 						await ctx.document.save();
@@ -619,6 +690,31 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		}
 	}
 
+	/**
+	 * Sets up per-editor event listeners. Called from the "ready" message handler.
+	 *
+	 * IMPORTANT: This is Phase 2 of the bootstrap protocol. The sequence matters:
+	 *
+	 * Phase 1 (_initializeWebview, before webview ready):
+	 * - Create editState with initial lastExternalChangeVersion
+	 * - Apply initial auto-merge edit if needed (no listener yet, so echo is ignored)
+	 *
+	 * Phase 2 (this function, after webview sends "ready"):
+	 * - Set up onDidChangeTextDocument listener
+	 * - Read document.getText() for initial content
+	 * - Record lastExternalChangeVersion = document.version
+	 * - Send loadDiff to webview
+	 *
+	 * Why this order? The listener must be set up BEFORE we read the document content,
+	 * and both must happen synchronously (no await between them). Otherwise:
+	 * - If we read content, then await something, then set up listener: we might
+	 *   miss changes that happened during the await.
+	 * - If we set up listener, then await, then read: we might get stale content
+	 *   that doesn't match what the listener will track.
+	 *
+	 * By doing everything synchronously, the content we send to the webview is
+	 * guaranteed to match exactly what the listener will track going forward.
+	 */
 	private _setupPerEditorListeners(ctx: {
 		document: TextDocument;
 		webviewPanel: WebviewPanel;
@@ -632,8 +728,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		editState: EditState;
 		disposables: Disposable[];
 	}): void {
-		// Phase 2: inside the ready message handler.
-		// All of this is synchronous — no other code can interleave.
+		// All of this is synchronous — no await, no other code can interleave.
 		// This guarantees the content we send matches exactly what the listener tracks.
 
 		const changeDocumentSubscription = workspace.onDidChangeTextDocument(
@@ -738,6 +833,20 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		);
 	}
 
+	/**
+	 * Handles VS Code's onDidChangeTextDocument event for our tracked document.
+	 *
+	 * This is the core of extension→webview sync. Every document change flows
+	 * through here, whether it's our own edit echo or an external change.
+	 *
+	 * The key insight: we must distinguish our own echoes from external edits.
+	 * - Our echo: The webview sent an edit, we applied it, VS Code fired this event.
+	 *   The webview already has this content — forwarding would cause cursor jumps.
+	 * - External edit: Another extension, split editor, Find & Replace, etc.
+	 *   The webview must receive this to stay in sync.
+	 *
+	 * We use versionBeforeEdit + version increment check (see classifyDocumentChange).
+	 */
 	private _handleTrackedDocumentChange(
 		ctx: {
 			document: TextDocument;
@@ -759,15 +868,22 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		);
 
 		if (action === "suppress") {
-			// Our own echo — no ack needed, webview already applied optimistically.
-			// Do NOT update lastExternalChangeVersion (Issue 11, 14).
+			// Our own echo from applyEdit(). The webview already has this change
+			// (it sent it to us), so we must NOT forward it back.
+			// Also: do NOT update lastExternalChangeVersion. Multiple webview edits
+			// can be in-flight, all with the same lastExternalChangeVersion. Updating
+			// here would make subsequent in-flight edits appear "stale".
 			return;
 		}
 
-		// External change — update version and notify webview.
+		// External change (or interleaved during our edit). Update the version
+		// marker so we can detect stale webview messages going forward.
 		ctx.editState.lastExternalChangeVersion = e.document.version;
 
 		if (action === "fullSync") {
+			// An external edit interleaved with our applyEdit(). We can't send
+			// incremental changes because we don't know what the webview has.
+			// Send full content to resync safely.
 			ctx.webviewPanel.webview.postMessage({
 				command: "fullSync",
 				content: ctx.document.getText(),
@@ -777,6 +893,8 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			return;
 		}
 
+		// Pure external edit (we weren't mid-applyEdit). Send incremental changes.
+		// For large files, this is much cheaper than fullSync.
 		ctx.webviewPanel.webview.postMessage({
 			command: "externalEdit",
 			changes: this._toMonacoChanges(e.contentChanges),
