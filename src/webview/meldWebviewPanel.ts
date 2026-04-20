@@ -228,7 +228,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		const editState: EditState = {
 			editQueue: Promise.resolve(),
 			lastExternalChangeVersion: document.version,
-			pendingVersionEcho: -1,
+			versionBeforeEdit: undefined,
 		};
 		const disposables: Disposable[] = [];
 
@@ -552,11 +552,12 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 				// Handled in the outer listener closure.
 				break;
 			case "contentChanged": {
-				ctx.editState.editQueue = processContentChanged(
-					msg.changes,
-					msg.lastExternalChangeVersion,
-					ctx.editState,
-					async (changes) => {
+				ctx.editState.editQueue = processContentChanged({
+					changes: msg.changes,
+					msgVersion: msg.lastExternalChangeVersion,
+					editState: ctx.editState,
+					currentDocumentVersion: ctx.document.version,
+					applyEdit: async (changes) => {
 						const edit = new WorkspaceEdit();
 						for (const change of changes) {
 							const vsRange = new Range(
@@ -573,7 +574,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 						}
 						await workspace.applyEdit(edit);
 					},
-					() => {
+					postFullSync: () => {
 						ctx.webviewPanel.webview.postMessage({
 							command: "fullSync",
 							content: ctx.document.getText(),
@@ -581,7 +582,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 								ctx.editState.lastExternalChangeVersion,
 						});
 					},
-				);
+				});
 				break;
 			}
 			case "save":
@@ -756,16 +757,15 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			e.document.version,
 			ctx.editState,
 		);
-		ctx.editState.lastExternalChangeVersion = e.document.version;
+
 		if (action === "suppress") {
-			ctx.webviewPanel.webview.postMessage({
-				command: "externalEdit",
-				changes: [],
-				lastExternalChangeVersion:
-					ctx.editState.lastExternalChangeVersion,
-			});
+			// Our own echo — no ack needed, webview already applied optimistically.
+			// Do NOT update lastExternalChangeVersion (Issue 11, 14).
 			return;
 		}
+
+		// External change — update version and notify webview.
+		ctx.editState.lastExternalChangeVersion = e.document.version;
 
 		if (action === "fullSync") {
 			ctx.webviewPanel.webview.postMessage({

@@ -2,58 +2,75 @@
 
 import type { MonacoContentChange } from "./ui/types.ts";
 
-export interface EditState {
+interface EditState {
 	editQueue: Promise<void>;
 	lastExternalChangeVersion: number;
-	pendingVersionEcho: number;
+	// Set to document.version right before applyEdit(), cleared after.
+	// undefined = not applying; number = applying, this was version before.
+	versionBeforeEdit: number | undefined;
+}
+
+interface ProcessContentChangedArgs {
+	changes: MonacoContentChange[];
+	msgVersion: number;
+	editState: EditState;
+	currentDocumentVersion: number;
+	applyEdit: (changes: MonacoContentChange[]) => Promise<void>;
+	postFullSync: () => void;
 }
 
 /**
- * Determines what to do when an external document change is detected.
+ * Determines what to do when a document change is detected.
+ * Called from onDidChangeTextDocument handler.
  */
-export function classifyDocumentChange(
+function classifyDocumentChange(
 	newVersion: number,
 	editState: EditState,
 ): "suppress" | "fullSync" | "externalEdit" {
-	if (newVersion === editState.pendingVersionEcho) {
-		editState.pendingVersionEcho = -1;
+	if (editState.versionBeforeEdit === undefined) {
+		// Not applying our own edit — this is an external change.
+		return "externalEdit";
+	}
+
+	// We're mid-applyEdit(). Check if this is our echo or something interleaved.
+	if (newVersion === editState.versionBeforeEdit + 1) {
+		// Version incremented by exactly 1 — our echo. Suppress.
 		return "suppress";
 	}
-	// If it jumped significantly while we weren't expecting an echo, sync.
-	if (
-		editState.pendingVersionEcho !== -1 &&
-		newVersion > editState.pendingVersionEcho
-	) {
-		editState.pendingVersionEcho = -1;
-		return "fullSync";
-	}
-	return "externalEdit";
+
+	// Version jumped by ≥2: an external edit interleaved during our applyEdit().
+	return "fullSync";
 }
 
 /**
  * Handles incoming content changes from the webview.
  */
-export async function processContentChanged(
-	changes: MonacoContentChange[],
-	msgVersion: number,
-	editState: EditState,
-	applyEdit: (changes: MonacoContentChange[]) => Promise<void>,
-	postFullSync: () => void,
+async function processContentChanged(
+	args: ProcessContentChangedArgs,
 ): Promise<void> {
+	const {
+		changes,
+		msgVersion,
+		editState,
+		currentDocumentVersion,
+		applyEdit,
+		postFullSync,
+	} = args;
+
 	// Stale check: has an external edit happened since the webview last synced?
 	if (msgVersion < editState.lastExternalChangeVersion) {
 		postFullSync();
 		return;
 	}
 
-	// Expect an echo at next version. This relies on the VS Code document-change
-	// event firing before applyEdit resolves.
-	editState.pendingVersionEcho = editState.lastExternalChangeVersion + 1;
-
+	// Record version before edit for echo detection (Issue 5 in plan).
+	editState.versionBeforeEdit = currentDocumentVersion;
 	try {
 		await applyEdit(changes);
-	} catch (e) {
-		editState.pendingVersionEcho = -1;
-		throw e;
+	} finally {
+		editState.versionBeforeEdit = undefined;
 	}
 }
+
+export type { EditState };
+export { classifyDocumentChange, processContentChanged };

@@ -18,23 +18,22 @@ describe("classifyDocumentChange", () => {
 		editState = {
 			editQueue: Promise.resolve(),
 			lastExternalChangeVersion: 10,
-			pendingVersionEcho: -1,
+			versionBeforeEdit: undefined,
 		};
 	});
 
-	it("returns 'suppress' when newVersion matches pendingVersionEcho", () => {
-		editState.pendingVersionEcho = 11;
+	it("returns 'suppress' when version increments by exactly 1 during edit", () => {
+		editState.versionBeforeEdit = 10;
 		expect(classifyDocumentChange(11, editState)).toBe("suppress");
-		expect(editState.pendingVersionEcho).toBe(-1);
 	});
 
-	it("returns 'fullSync' when version jumps past pendingVersionEcho", () => {
-		editState.pendingVersionEcho = 11;
+	it("returns 'fullSync' when version jumps by more than 1 during edit", () => {
+		editState.versionBeforeEdit = 10;
 		expect(classifyDocumentChange(12, editState)).toBe("fullSync");
-		expect(editState.pendingVersionEcho).toBe(-1);
 	});
 
-	it("returns 'externalEdit' when no pending echo matches", () => {
+	it("returns 'externalEdit' when not mid-edit", () => {
+		editState.versionBeforeEdit = undefined;
 		expect(classifyDocumentChange(11, editState)).toBe("externalEdit");
 	});
 });
@@ -48,23 +47,48 @@ describe("processContentChanged", () => {
 		editState = {
 			editQueue: Promise.resolve(),
 			lastExternalChangeVersion: 10,
-			pendingVersionEcho: -1,
+			versionBeforeEdit: undefined,
 		};
 		applyEdit = jest.fn(() => Promise.resolve());
 		postFullSync = jest.fn();
 	});
 
 	it("calls postFullSync and skips applyEdit when msg version is stale", async () => {
-		await processContentChanged([], 8, editState, applyEdit, postFullSync);
+		await processContentChanged({
+			changes: [],
+			msgVersion: 8,
+			editState,
+			currentDocumentVersion: 10,
+			applyEdit,
+			postFullSync,
+		});
 		expect(applyEdit).not.toHaveBeenCalled();
 		expect(postFullSync).toHaveBeenCalled();
 	});
 
-	it("calls applyEdit and sets pendingVersionEcho when msg version matches", async () => {
-		await processContentChanged([], 10, editState, applyEdit, postFullSync);
+	it("calls applyEdit when msg version matches", async () => {
+		await processContentChanged({
+			changes: [],
+			msgVersion: 10,
+			editState,
+			currentDocumentVersion: 10,
+			applyEdit,
+			postFullSync,
+		});
 		expect(applyEdit).toHaveBeenCalled();
 		expect(postFullSync).not.toHaveBeenCalled();
-		expect(editState.pendingVersionEcho).toBe(11);
+	});
+
+	it("clears versionBeforeEdit after applyEdit completes", async () => {
+		await processContentChanged({
+			changes: [],
+			msgVersion: 10,
+			editState,
+			currentDocumentVersion: 10,
+			applyEdit,
+			postFullSync,
+		});
+		expect(editState.versionBeforeEdit).toBeUndefined();
 	});
 
 	it("serializes concurrent edits — all applied in order", async () => {
@@ -79,33 +103,38 @@ describe("processContentChanged", () => {
 				}, delays[i]);
 			});
 
-		// Manually chain the promises to simulate how it's used in the provider
+		// Manually chain the promises to simulate how it's used in the provider.
+		// Document version increments with each edit in real usage.
+		let docVersion = 10;
 		editState.editQueue = editState.editQueue.then(() =>
-			processContentChanged(
-				[],
-				10,
+			processContentChanged({
+				changes: [],
+				msgVersion: 10,
 				editState,
-				() => mockApply(0),
+				currentDocumentVersion: docVersion++,
+				applyEdit: () => mockApply(0),
 				postFullSync,
-			),
+			}),
 		);
 		editState.editQueue = editState.editQueue.then(() =>
-			processContentChanged(
-				[],
-				10,
+			processContentChanged({
+				changes: [],
+				msgVersion: 10,
 				editState,
-				() => mockApply(1),
+				currentDocumentVersion: docVersion++,
+				applyEdit: () => mockApply(1),
 				postFullSync,
-			),
+			}),
 		);
 		editState.editQueue = editState.editQueue.then(() =>
-			processContentChanged(
-				[],
-				10,
+			processContentChanged({
+				changes: [],
+				msgVersion: 10,
 				editState,
-				() => mockApply(2),
+				currentDocumentVersion: docVersion++,
+				applyEdit: () => mockApply(2),
 				postFullSync,
-			),
+			}),
 		);
 
 		await editState.editQueue;
@@ -118,7 +147,7 @@ describe("race condition stress", () => {
 		const editState: EditState = {
 			editQueue: Promise.resolve(),
 			lastExternalChangeVersion: 0,
-			pendingVersionEcho: -1,
+			versionBeforeEdit: undefined,
 		};
 
 		const applied: string[] = [];
