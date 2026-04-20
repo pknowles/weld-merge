@@ -100,7 +100,16 @@ const createMockModel = (
 				setContent(applyEdit(getContent(), edit));
 			}
 			for (const listener of listeners) {
-				listener({} as editor.IModelContentChangedEvent);
+				listener({
+					changes: edits.map((e) => ({
+						range: e.range,
+						text: e.text,
+						rangeLength: 0,
+						rangeOffset: 0,
+					})),
+					isFlush: false,
+					versionId: 0,
+				} as unknown as editor.IModelContentChangedEvent);
 			}
 			return null;
 		},
@@ -115,6 +124,16 @@ const createMockModel = (
 			};
 		},
 	),
+	setValue: jest.fn((val: string) => {
+		setContent(val);
+		for (const listener of listeners) {
+			listener({
+				changes: [],
+				isFlush: true,
+				versionId: 0,
+			} as unknown as editor.IModelContentChangedEvent);
+		}
+	}),
 });
 
 export const createMockEditor = (content: string) => {
@@ -222,6 +241,14 @@ export const createMockEditor = (content: string) => {
 				newDecorations.map((_, i) => `id-${i}`),
 		),
 		getSelection: jest.fn(() => ({ isEmpty: () => true })),
+		getSelections: jest.fn(() => [
+			{
+				startLineNumber: 1,
+				startColumn: 1,
+				endLineNumber: 1,
+				endColumn: 1,
+			},
+		]),
 		getActions: jest.fn(() => []),
 		updateOptions: jest.fn(() => {
 			/* mock */

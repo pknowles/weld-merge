@@ -1,6 +1,11 @@
 import type { editor } from "monaco-editor";
 import type { PaneDiffs, PaneFiles } from "./appHooks.ts";
-import type { DiffChunk, FileState, Highlight } from "./types.ts";
+import type {
+	DiffChunk,
+	FileState,
+	Highlight,
+	MonacoContentChange,
+} from "./types.ts";
 
 export const INITIAL_SYNC_DELAY = 50;
 
@@ -14,9 +19,10 @@ export interface MeldUIState {
 	renderBaseLeft: boolean;
 	renderBaseRight: boolean;
 	baseCompareHighlighting: boolean;
+	isConflicted: boolean;
 	renderTrigger: number;
 	syntaxHighlighting: boolean;
-	externalSyncId: number;
+	lastExternalChangeVersion: number;
 	editorRefArray: React.MutableRefObject<editor.IStandaloneCodeEditor[]>;
 }
 
@@ -36,6 +42,8 @@ export interface MeldUIActions {
 	requestClipboardText: () => Promise<string>;
 	writeClipboardText: (text: string) => Promise<void>;
 	onEdit: (v: string | undefined, i: number) => void;
+	sendContentChanged: (changes: editor.IModelContentChange[]) => void;
+	sendSave: () => void;
 	onEditImmediate: (i: number) => void;
 	setRenderTrigger: (p: (prev: number) => number) => void;
 }
@@ -44,4 +52,10 @@ export interface MeldPaneProps {
 	idx: number;
 	ui: MeldUIState;
 	actions: MeldUIActions;
+	applyExternalEditsRef?:
+		| React.RefObject<{
+				applyIncrementalEdits: (changes: MonacoContentChange[]) => void;
+				applyFullSync: (content: string) => void;
+		  } | null>
+		| undefined;
 }

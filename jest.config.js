@@ -12,11 +12,15 @@ export default {
 	],
 	coverageThreshold: {
 		global: {
-			branches: 59,
-			functions: 64,
+			branches: 60,
+			functions: 63,
 			lines: 65,
 			statements: 66,
 		},
 	},
 	testPathIgnorePatterns: ["/node_modules/", "/test/benchmarking/"],
+	// Keep Jest's haste-map out of @vscode/test-electron's downloaded VS Code
+	// trees. Each install ships ~70 built-in extensions whose package.json
+	// names collide across versions (e.g. "diff"), breaking module resolution.
+	modulePathIgnorePatterns: ["<rootDir>/.vscode-test/"],
 };

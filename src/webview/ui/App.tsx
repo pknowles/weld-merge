@@ -16,6 +16,7 @@ import type {
 	DiffChunk,
 	FileState,
 	Highlight as MeldHighlight,
+	MonacoContentChange,
 } from "./types.ts";
 import { ANIMATION_DURATION, DIFF_WIDTH } from "./types.ts";
 import { useClipboardOverrides } from "./useClipboardOverrides.ts";
@@ -91,7 +92,10 @@ const GlobalStyles: FC = () => (
 	</style>
 );
 
-const MeldRoot: FC<{ children: React.ReactNode }> = ({ children }) => (
+const MeldRoot: FC<{ children: React.ReactNode; isConflicted: boolean }> = ({
+	children,
+	isConflicted,
+}) => (
 	<div
 		style={
 			{
@@ -100,6 +104,7 @@ const MeldRoot: FC<{ children: React.ReactNode }> = ({ children }) => (
 				height: "100vh",
 				overflow: "hidden",
 				position: "relative",
+				backgroundColor: isConflicted ? "#1e1e1e" : "#4b1f1f",
 				"--weld-diff-width": `${DIFF_WIDTH}px`,
 			} as React.CSSProperties
 		}
@@ -158,7 +163,20 @@ interface MeldUIActionsProps {
 	commitModelUpdate: (v: string) => void;
 	setRenderTrigger: (p: (p: number) => number) => void;
 	debounceDelay: number;
+	lastExternalChangeVersionRef: React.MutableRefObject<number>;
 }
+
+const monacoChangeToProtocol = (
+	c: editor.IModelContentChange,
+): MonacoContentChange => ({
+	range: {
+		startLineNumber: c.range.startLineNumber,
+		startColumn: c.range.startColumn,
+		endLineNumber: c.range.endLineNumber,
+		endColumn: c.range.endColumn,
+	},
+	text: c.text,
+});
 
 const useMeldUIActions = (p: MeldUIActionsProps) =>
 	useMemo(
@@ -205,12 +223,23 @@ const useMeldUIActions = (p: MeldUIActionsProps) =>
 			onEdit: debounce((v: string | undefined, i: number) => {
 				if (v !== undefined && i === 2) {
 					p.commitModelUpdate(v);
-					p.vscodeApi?.postMessage({
-						command: "contentChanged",
-						text: v,
-					});
 				}
 			}, p.debounceDelay),
+			sendContentChanged: (changes: editor.IModelContentChange[]) => {
+				p.vscodeApi?.postMessage({
+					command: "contentChanged",
+					changes: changes.map(monacoChangeToProtocol),
+					lastExternalChangeVersion:
+						p.lastExternalChangeVersionRef.current,
+				});
+			},
+			sendSave: () => {
+				p.vscodeApi?.postMessage({
+					command: "save",
+					lastExternalChangeVersion:
+						p.lastExternalChangeVersionRef.current,
+				});
+			},
 		}),
 		[
 			p.attachScrollListener,
@@ -230,6 +259,7 @@ const useMeldUIActions = (p: MeldUIActionsProps) =>
 			p.commitModelUpdate,
 			p.debounceDelay,
 			p.setRenderTrigger,
+			p.lastExternalChangeVersionRef,
 		],
 	);
 
@@ -245,11 +275,18 @@ const useAppCoreData = () => {
 	const [diffs, setDiffs] = useState<PaneDiffs>([null, null, null, null]);
 	const diffsRef = useRef<PaneDiffs>([null, null, null, null]);
 	const differRef = useRef(null);
-	const [externalSyncId, setExternalSyncId] = useState(0);
+	const [lastExternalChangeVersion, setLastExternalChangeVersion] =
+		useState(0);
+	const lastExternalChangeVersionRef = useRef(0);
+	const applyExternalEditsRef = useRef<{
+		applyIncrementalEdits: (changes: MonacoContentChange[]) => void;
+		applyFullSync: (content: string) => void;
+	} | null>(null);
 	const [debounceDelay, setDebounceDelay] = useState(DEFAULT_DEBOUNCE_DELAY);
 	const [syntaxHighlighting, setSyntaxHighlighting] = useState(true);
 	const [baseCompareHighlighting, setBaseCompareHighlighting] =
 		useState(false);
+	const [isConflicted, setIsConflicted] = useState(true);
 	const [renderTrigger, setRenderTrigger] = useState(0);
 	const editorRefArray = useRef<editor.IStandaloneCodeEditor[]>([]);
 	const diffsAreReversedRef = useRef<boolean[]>([false, true, false, false]);
@@ -261,14 +298,18 @@ const useAppCoreData = () => {
 		setDiffs,
 		diffsRef,
 		differRef,
-		externalSyncId,
-		setExternalSyncId,
+		lastExternalChangeVersion,
+		setLastExternalChangeVersion,
+		lastExternalChangeVersionRef,
+		applyExternalEditsRef,
 		debounceDelay,
 		setDebounceDelay,
 		syntaxHighlighting,
 		setSyntaxHighlighting,
 		baseCompareHighlighting,
 		setBaseCompareHighlighting,
+		isConflicted,
+		setIsConflicted,
 		renderTrigger,
 		setRenderTrigger,
 		editorRefArray,
@@ -294,15 +335,18 @@ const useAppStateMessageHandlers = (
 		diffsRef: d.diffsRef,
 		setFiles: d.setFiles,
 		setDiffs: d.setDiffs,
-		setExternalSyncId: d.setExternalSyncId,
+		setLastExternalChangeVersion: d.setLastExternalChangeVersion,
 		setDebounceDelay: d.setDebounceDelay,
 		setSyntaxHighlighting: d.setSyntaxHighlighting,
 		setBaseCompareHighlighting: d.setBaseCompareHighlighting,
+		setIsConflicted: d.setIsConflicted,
 		setRenderTrigger: d.setRenderTrigger,
 		commitModelUpdate,
 		resolveClipboardRead: s.resolveClipboardRead,
 		vscodeApi: s.vscodeApi,
 		differRef: d.differRef,
+		lastExternalChangeVersionRef: d.lastExternalChangeVersionRef,
+		applyExternalEditsRef: d.applyExternalEditsRef,
 	});
 };
 
@@ -326,9 +370,10 @@ const useUIState = (p: {
 			renderBaseLeft: p.renderBL,
 			renderBaseRight: p.renderBR,
 			baseCompareHighlighting: p.d.baseCompareHighlighting,
+			isConflicted: p.d.isConflicted,
 			renderTrigger: p.d.renderTrigger,
 			syntaxHighlighting: p.d.syntaxHighlighting,
-			externalSyncId: p.d.externalSyncId,
+			lastExternalChangeVersion: p.d.lastExternalChangeVersion,
 			editorRefArray: p.d.editorRefArray,
 		}),
 		[
@@ -341,9 +386,10 @@ const useUIState = (p: {
 			p.renderBL,
 			p.renderBR,
 			p.d.baseCompareHighlighting,
+			p.d.isConflicted,
 			p.d.renderTrigger,
 			p.d.syntaxHighlighting,
-			p.d.externalSyncId,
+			p.d.lastExternalChangeVersion,
 			p.d.editorRefArray,
 		],
 	);
@@ -410,13 +456,19 @@ const useAppState = () => {
 		commitModelUpdate,
 		setRenderTrigger: d.setRenderTrigger,
 		debounceDelay: d.debounceDelay,
+		lastExternalChangeVersionRef: d.lastExternalChangeVersionRef,
 	});
 
-	return { files: d.files, uiState, uiActions };
+	return {
+		files: d.files,
+		uiState,
+		uiActions,
+		applyExternalEditsRef: d.applyExternalEditsRef,
+	};
 };
 
 export const App: FC = () => {
-	const { files, uiState, uiActions } = useAppState();
+	const { files, uiState, uiActions, applyExternalEditsRef } = useAppState();
 
 	if (files[1] === null) {
 		return (
@@ -434,7 +486,7 @@ export const App: FC = () => {
 
 	return (
 		<ErrorBoundary>
-			<MeldRoot>
+			<MeldRoot isConflicted={uiState.isConflicted}>
 				{/* biome-ignore lint/performance: This is React, not Solid */}
 				{[0, 1, 2, 3, 4].map((idx) => (
 					<MeldPane
@@ -442,6 +494,9 @@ export const App: FC = () => {
 						idx={idx}
 						ui={uiState}
 						actions={uiActions}
+						applyExternalEditsRef={
+							idx === 2 ? applyExternalEditsRef : undefined
+						}
 					/>
 				))}
 			</MeldRoot>

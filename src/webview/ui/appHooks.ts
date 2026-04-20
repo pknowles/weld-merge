@@ -9,7 +9,14 @@ import {
 	getChunkText,
 } from "./editorActions.ts";
 import { getPaneHighlights } from "./highlightUtil.ts";
-import type { BaseDiffPayload, DiffChunk, FileState } from "./types.ts";
+import type {
+	BaseDiffPayload,
+	DiffChunk,
+	FileState,
+	MonacoContentChange,
+	PayloadDiffs,
+	PayloadFiles,
+} from "./types.ts";
 import type { useVscodeMessageBus } from "./useVSCodeMessageBus.ts";
 
 const splitLines = (text: string) => {
@@ -20,6 +27,46 @@ const splitLines = (text: string) => {
 	return lines;
 };
 
+const compareChunkOrder = (left: DiffChunk, right: DiffChunk): number => {
+	if (left.startA !== right.startA) {
+		return left.startA - right.startA;
+	}
+	if (left.endA !== right.endA) {
+		return left.endA - right.endA;
+	}
+	if (left.startB !== right.startB) {
+		return left.startB - right.startB;
+	}
+	if (left.endB !== right.endB) {
+		return left.endB - right.endB;
+	}
+	return left.tag.localeCompare(right.tag);
+};
+
+const assertDiffChunksWellFormed = (chunks: DiffChunk[], label: string) => {
+	let prev: DiffChunk | null = null;
+	for (const chunk of chunks) {
+		const lenA = chunk.endA - chunk.startA;
+		const lenB = chunk.endB - chunk.startB;
+		if (lenA < 0 || lenB < 0) {
+			throw new Error(
+				`${label}: invalid diff range ${chunk.startA}:${chunk.endA} -> ${chunk.startB}:${chunk.endB}`,
+			);
+		}
+		if (lenA === 0 && lenB === 0) {
+			throw new Error(
+				`${label}: empty diff chunk ${chunk.startA}:${chunk.endA} -> ${chunk.startB}:${chunk.endB}`,
+			);
+		}
+		if (prev && compareChunkOrder(prev, chunk) >= 0) {
+			throw new Error(
+				`${label}: chunk sequence must be strictly increasing; previous ${prev.startA}:${prev.endA}:${prev.startB}:${prev.endB}:${prev.tag}`,
+			);
+		}
+		prev = chunk;
+	}
+};
+
 const HACK_SYNC_DELAY = 100;
 
 interface MessageHandlersDeps {
@@ -27,25 +74,33 @@ interface MessageHandlersDeps {
 	diffsRef: React.MutableRefObject<PaneDiffs>;
 	setFiles: (f: PaneFiles) => void;
 	setDiffs: (d: PaneDiffs) => void;
-	setExternalSyncId: (p: (id: number) => number) => void;
+	setLastExternalChangeVersion: (v: number) => void;
 	setDebounceDelay: (d: number) => void;
 	setSyntaxHighlighting: (s: boolean) => void;
 	setBaseCompareHighlighting: (b: boolean) => void;
+	setIsConflicted: (isConflicted: boolean) => void;
 	setRenderTrigger: (p: (p: number) => number) => void;
 	commitModelUpdate: (v: string) => void;
 	resolveClipboardRead: (id: number, text: string) => void;
 	vscodeApi: ReturnType<typeof useVscodeMessageBus>;
 	differRef: React.MutableRefObject<Differ | null>;
+	lastExternalChangeVersionRef: React.MutableRefObject<number>;
+	applyExternalEditsRef: React.RefObject<{
+		applyIncrementalEdits: (changes: MonacoContentChange[]) => void;
+		applyFullSync: (content: string) => void;
+	} | null>;
 }
 
 interface LoadDiffData {
-	files: FileState[];
-	diffs: DiffChunk[][];
+	files: PayloadFiles;
+	diffs: PayloadDiffs;
+	isConflicted?: boolean;
 	config: {
 		debounceDelay?: number;
 		syntaxHighlighting?: boolean;
 		baseCompareHighlighting?: boolean;
 	};
+	lastExternalChangeVersion: number;
 }
 
 function handleConfig(config: LoadDiffData["config"], p: MessageHandlersDeps) {
@@ -64,32 +119,31 @@ function handleConfig(config: LoadDiffData["config"], p: MessageHandlersDeps) {
 }
 
 function handleLoadDiff(data: LoadDiffData, p: MessageHandlersDeps) {
-	const iF: PaneFiles = [
-		null,
-		data.files[0] ?? null,
-		data.files[1] ?? null,
-		data.files[2] ?? null,
-		null,
-	];
-	const iD: PaneDiffs = [
-		null,
-		data.diffs[0] ?? null,
-		data.diffs[1] ?? null,
-		null,
-	];
+	const [localFile, mergedFile, remoteFile] = data.files;
+	const [leftDiffs, rightDiffs] = data.diffs;
+	assertDiffChunksWellFormed(leftDiffs, "loadDiff left");
+	assertDiffChunksWellFormed(rightDiffs, "loadDiff right");
+
+	// PaneFiles still has the 5-slot shape (baseLeft, local, merged, remote,
+	// baseRight). The base-compare slots are filled lazily via loadBaseDiff,
+	// so they start as null here. See TODO.md "PaneFiles / PaneDiffs".
+	const iF: PaneFiles = [null, localFile, mergedFile, remoteFile, null];
+	const iD: PaneDiffs = [null, leftDiffs, rightDiffs, null];
 	p.filesRef.current = iF;
 	p.setFiles(iF);
 	p.setDiffs(iD);
 	p.diffsRef.current = iD;
-	p.setExternalSyncId((id) => id + 1);
+	p.setLastExternalChangeVersion(data.lastExternalChangeVersion);
+	p.lastExternalChangeVersionRef.current = data.lastExternalChangeVersion;
+	p.setIsConflicted(data.isConflicted ?? true);
 
 	handleConfig(data.config, p);
 
 	const differ = new Differ();
 	const dI = differ.setSequencesIter([
-		splitLines(data.files[0]?.content ?? ""),
-		splitLines(data.files[1]?.content ?? ""),
-		splitLines(data.files[2]?.content ?? ""),
+		splitLines(localFile.content),
+		splitLines(mergedFile.content),
+		splitLines(remoteFile.content),
 	]);
 	let s = dI.next();
 	while (!s.done) {
@@ -101,6 +155,10 @@ function handleLoadDiff(data: LoadDiffData, p: MessageHandlersDeps) {
 
 function handleLoadBaseDiff(data: BaseDiffPayload, p: MessageHandlersDeps) {
 	const { side, file, diffs: pD } = data;
+	assertDiffChunksWellFormed(
+		pD,
+		side === "left" ? "loadBaseDiff left" : "loadBaseDiff right",
+	);
 	const nF = [...p.filesRef.current] as PaneFiles;
 	nF[side === "left" ? 0 : 4] = file;
 	p.filesRef.current = nF;
@@ -111,6 +169,43 @@ function handleLoadBaseDiff(data: BaseDiffPayload, p: MessageHandlersDeps) {
 	p.diffsRef.current = nD;
 	p.setDiffs(nD);
 	setTimeout(() => p.setRenderTrigger((prev) => prev + 1), HACK_SYNC_DELAY);
+}
+
+function handleExternalEdit(
+	m: { changes: MonacoContentChange[]; lastExternalChangeVersion: number },
+	p: MessageHandlersDeps,
+) {
+	if (m.lastExternalChangeVersion > p.lastExternalChangeVersionRef.current) {
+		p.lastExternalChangeVersionRef.current = m.lastExternalChangeVersion;
+		p.setLastExternalChangeVersion(m.lastExternalChangeVersion);
+		p.applyExternalEditsRef.current?.applyIncrementalEdits(m.changes);
+	}
+}
+
+function handleFullSync(
+	m: { content: string; lastExternalChangeVersion: number },
+	p: MessageHandlersDeps,
+) {
+	if (m.lastExternalChangeVersion >= p.lastExternalChangeVersionRef.current) {
+		p.lastExternalChangeVersionRef.current = m.lastExternalChangeVersion;
+		p.setLastExternalChangeVersion(m.lastExternalChangeVersion);
+		p.applyExternalEditsRef.current?.applyFullSync(m.content);
+
+		const nF = [...p.filesRef.current] as PaneFiles;
+		if (nF[2]) {
+			nF[2] = { ...nF[2], content: m.content };
+			p.filesRef.current = nF;
+			p.setFiles(nF);
+		}
+		p.commitModelUpdate(m.content);
+	}
+}
+
+function handleUpdateConfig(
+	config: LoadDiffData["config"],
+	p: MessageHandlersDeps,
+) {
+	handleConfig(config, p);
 }
 
 function findTargetChunk(
@@ -185,11 +280,11 @@ export function useCommitModelUpdate(deps: CommitDeps) {
 			if (!(cF[1] && cF[2] && cF[3])) {
 				return;
 			}
-			const oldM = splitLines(cF[2].content);
 			const newM = splitLines(value);
 			let nD: PaneDiffs | null = null;
 			const d = differRef.current;
 			if (d) {
+				const oldM = splitLines(cF[2].content);
 				let sIdx = 0;
 				const mLen = Math.min(oldM.length, newM.length);
 				while (sIdx < mLen && oldM[sIdx] === newM[sIdx]) {
@@ -200,29 +295,21 @@ export function useCommitModelUpdate(deps: CommitDeps) {
 					newM,
 					splitLines(cF[3].content),
 				]);
-				const dedupe = (chunks: DiffChunk[]) => {
-					const seen = new Set<string>();
-					return chunks.filter((c) => {
-						const key = `${c.startA}-${c.endA}-${c.startB}-${c.endB}`;
-						if (seen.has(key)) {
-							return false;
-						}
-						seen.add(key);
-						return true;
-					});
-				};
 
 				nD = [...diffsRef.current];
-				nD[1] = dedupe(
-					d._mergeCache
-						.map((p) => p[0])
-						.filter((c): c is DiffChunk => c !== null),
+				const leftDiffs = d._mergeCache
+					.map((p) => p[0])
+					.filter((c): c is DiffChunk => c !== null);
+				const rightDiffs = d._mergeCache
+					.map((p) => p[1])
+					.filter((c): c is DiffChunk => c !== null);
+				assertDiffChunksWellFormed(leftDiffs, "commitModelUpdate left");
+				assertDiffChunksWellFormed(
+					rightDiffs,
+					"commitModelUpdate right",
 				);
-				nD[2] = dedupe(
-					d._mergeCache
-						.map((p) => p[1])
-						.filter((c): c is DiffChunk => c !== null),
-				);
+				nD[1] = leftDiffs;
+				nD[2] = rightDiffs;
 				diffsRef.current = nD;
 			}
 			const nF = [...cF] as PaneFiles;
@@ -240,78 +327,70 @@ export function useCommitModelUpdate(deps: CommitDeps) {
 
 export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 	const {
+		filesRef,
+		diffsRef,
 		setFiles,
 		setDiffs,
-		setExternalSyncId,
+		setLastExternalChangeVersion,
 		setDebounceDelay,
 		setSyntaxHighlighting,
 		setBaseCompareHighlighting,
+		setIsConflicted,
 		setRenderTrigger,
 		commitModelUpdate,
 		resolveClipboardRead,
 		vscodeApi,
 		differRef,
-		filesRef,
-		diffsRef,
+		lastExternalChangeVersionRef,
+		applyExternalEditsRef,
 	} = p;
+
 	useEffect(() => {
+		const messageDeps: MessageHandlersDeps = {
+			filesRef,
+			diffsRef,
+			setFiles,
+			setDiffs,
+			setLastExternalChangeVersion,
+			setDebounceDelay,
+			setSyntaxHighlighting,
+			setBaseCompareHighlighting,
+			setIsConflicted,
+			setRenderTrigger,
+			commitModelUpdate,
+			resolveClipboardRead,
+			vscodeApi,
+			differRef,
+			lastExternalChangeVersionRef,
+			applyExternalEditsRef,
+		};
 		const handleMessage = (event: MessageEvent) => {
 			const m = event.data;
 			switch (m.command) {
 				case "loadDiff":
-					handleLoadDiff(m.data, {
-						setFiles,
-						setDiffs,
-						setExternalSyncId,
-						setDebounceDelay,
-						setSyntaxHighlighting,
-						setBaseCompareHighlighting,
-						setRenderTrigger,
-						commitModelUpdate,
-						resolveClipboardRead,
-						vscodeApi,
-						differRef,
-						filesRef,
-						diffsRef,
-					});
+					handleLoadDiff(
+						{
+							...m.data,
+							lastExternalChangeVersion:
+								m.lastExternalChangeVersion,
+						},
+						messageDeps,
+					);
 					break;
 				case "loadBaseDiff":
-					handleLoadBaseDiff(m.data, {
-						setFiles,
-						setDiffs,
-						setExternalSyncId,
-						setDebounceDelay,
-						setSyntaxHighlighting,
-						setBaseCompareHighlighting,
-						setRenderTrigger,
-						commitModelUpdate,
-						resolveClipboardRead,
-						vscodeApi,
-						differRef,
-						filesRef,
-						diffsRef,
-					});
+					handleLoadBaseDiff(m.data, messageDeps);
 					break;
-				case "updateContent":
-					setExternalSyncId((id) => id + 1);
-					commitModelUpdate(m.text);
+				case "externalEdit":
+					handleExternalEdit(m, messageDeps);
+					break;
+				case "fullSync":
+					handleFullSync(m, messageDeps);
 					break;
 				case "updateConfig":
-					handleConfig(m.config, {
-						setFiles,
-						setDiffs,
-						setExternalSyncId,
-						setDebounceDelay,
-						setSyntaxHighlighting,
-						setBaseCompareHighlighting,
-						setRenderTrigger,
-						commitModelUpdate,
-						resolveClipboardRead,
-						vscodeApi,
-						differRef,
-						filesRef,
-						diffsRef,
-					});
+					handleUpdateConfig(m.config, messageDeps);
+					break;
+				case "conflictStateLost":
+					setIsConflicted(false);
 					break;
 				case "clipboardText":
 					resolveClipboardRead(Number(m.requestId), m.text as string);
@@ -321,25 +400,31 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 			}
 		};
 		window.addEventListener("message", handleMessage);
+		return () => window.removeEventListener("message", handleMessage);
+	}, [
+		applyExternalEditsRef,
+		commitModelUpdate,
+		differRef,
+		diffsRef,
+		filesRef,
+		lastExternalChangeVersionRef,
+		resolveClipboardRead,
+		setBaseCompareHighlighting,
+		setIsConflicted,
+		setDebounceDelay,
+		setDiffs,
+		setFiles,
+		setLastExternalChangeVersion,
+		setRenderTrigger,
+		setSyntaxHighlighting,
+		vscodeApi,
+	]);
+
+	useEffect(() => {
 		if (vscodeApi) {
 			vscodeApi.postMessage({ command: "ready" });
 		}
-		return () => window.removeEventListener("message", handleMessage);
-	}, [
-		setFiles,
-		setDiffs,
-		setExternalSyncId,
-		setDebounceDelay,
-		setSyntaxHighlighting,
-		setBaseCompareHighlighting,
-		setRenderTrigger,
-		commitModelUpdate,
-		resolveClipboardRead,
-		vscodeApi,
-		differRef,
-		filesRef,
-		diffsRef,
-	]);
+	}, [vscodeApi]);
 };
 
 export const useAppHighlights = (

@@ -33,11 +33,30 @@ export interface Highlight {
 	tag: string;
 }
 
+export interface MonacoContentChange {
+	range: {
+		startLineNumber: number;
+		startColumn: number;
+		endLineNumber: number;
+		endColumn: number;
+	};
+	text: string;
+}
+
+// The transport payload has a fixed shape: three file panes (local, merged,
+// remote) and two diff lanes (local<->merged, merged<->remote). Using tuples
+// keeps this contract in the type system so consumers cannot accidentally
+// widen to `T | undefined` and reach for `?? []` fallbacks.
+export type PayloadFiles = [FileState, FileState, FileState];
+export type PayloadDiffs = [DiffChunk[], DiffChunk[]];
+
 export interface WebviewPayload {
-	command: "loadDiff" | "updateConfig";
+	command: "loadDiff";
+	lastExternalChangeVersion: number;
 	data: {
-		files: FileState[];
-		diffs: DiffChunk[][];
+		files: PayloadFiles;
+		diffs: PayloadDiffs;
+		isConflicted: boolean;
 		config?: {
 			debounceDelay: number;
 			syntaxHighlighting: boolean;

@@ -91,6 +91,7 @@ const renderMeldCodePane = (
 	active: FileState,
 	ui: MeldUIState,
 	actions: MeldUIActions,
+	applyExternalEditsRef: MeldPaneProps["applyExternalEditsRef"],
 ) => (
 	<CodePane
 		file={active}
@@ -99,6 +100,7 @@ const renderMeldCodePane = (
 		actions={actions}
 		isMiddle={idx === 2}
 		highlights={actions.getHighlights(idx)}
+		applyExternalEditsRef={applyExternalEditsRef}
 		onToggleBase={
 			idx === 1
 				? () => actions.toggleBaseDiff("left")
@@ -219,7 +221,13 @@ export const MeldPane: FC<MeldPaneProps> = (p) => {
 
 	const diffState = getDiffStateInternal(p.idx, p.ui);
 	const peerCount = getPeerCount(idx, ui);
-	const codePane = renderMeldCodePane(p.idx, active, p.ui, p.actions);
+	const codePane = renderMeldCodePane(
+		p.idx,
+		active,
+		p.ui,
+		p.actions,
+		p.applyExternalEditsRef,
+	);
 	const curtain = renderCurtain(idx, ui, p.actions, diffState);
 
 	if (p.idx === 0 || p.idx === 4) {

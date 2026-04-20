@@ -14,3 +14,8 @@
 - Do not create spurious `.md` analysis files; keep history in commits.
 - Update project documentation if your change affects architecture, flow, or object names.
 - Report anything you skipped or new architectural smells to the user.
+
+## Tools
+
+- Use internal tools to edit files. If you ask users to approve running
+  cat/sed/grep you waste valuable time and slow down development.

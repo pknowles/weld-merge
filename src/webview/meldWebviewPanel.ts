@@ -1,19 +1,18 @@
-import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, join, relative } from "node:path";
+import { basename, relative } from "node:path";
 import {
 	type CancellationToken,
 	type ConfigurationChangeEvent,
 	type CustomTextEditorProvider,
 	commands,
-	type Disposable,
+	Disposable,
 	EventEmitter,
 	type ExtensionContext,
 	env,
 	extensions,
 	Range,
 	type TextDocument,
+	type TextDocumentContentChangeEvent,
+	type TextDocumentContentProvider,
 	Uri,
 	type Webview,
 	type WebviewPanel,
@@ -21,26 +20,54 @@ import {
 	window,
 	workspace,
 } from "vscode";
-import { getGitExecutable } from "../gitPath.ts";
-import { getUnresolvedReasons } from "../gitUtils.ts";
+import { getUnresolvedReasons, readConflictState } from "../gitUtils.ts";
+import {
+	type ConflictLabels,
+	extractConflictLabels,
+} from "./conflictLabels.ts";
 import {
 	buildBaseDiffPayload,
 	buildDiffPayload,
-	GIT_STAGE_BASE,
-	GIT_STAGE_LOCAL,
-	GIT_STAGE_REMOTE,
-	getGitState,
+	buildInitialConflictedState,
+	fetchConflictStages,
 } from "./diffPayload.ts";
-import type { BaseDiffPayload, WebviewPayload } from "./ui/types.ts";
+import {
+	classifyDocumentChange,
+	type EditState,
+	processContentChanged,
+} from "./editorSync.ts";
+import {
+	clearInitialConflictContent as clearInitialConflictStoreEntry,
+	getInitialConflictContent,
+	INITIAL_CONFLICT_SCHEME,
+	setInitialConflictContent as setInitialConflictStoreEntry,
+} from "./initialConflictContentStore.ts";
+import {
+	assertReadyMessageIsFirst,
+	type ReadyState,
+} from "./readyStateGuard.ts";
+import type {
+	BaseDiffPayload,
+	MonacoContentChange,
+	WebviewPayload,
+} from "./ui/types.ts";
 
 const DEFAULT_DEBOUNCE_DELAY = 300;
-const LOCAL_LABEL_REGEX = /^<<<<<<< (.*)$/m;
-const BASE_LABEL_REGEX = /^\|\|\|\|\|\|\| (.*)$/m;
-const REMOTE_LABEL_REGEX = /^>>>>>>> (.*)$/m;
+
+interface ConflictStateChangeEvent {
+	repoPath: string;
+	stateKey: string | undefined;
+}
 
 interface ContentChangedMessage {
 	command: "contentChanged";
-	text: string;
+	changes: MonacoContentChange[];
+	lastExternalChangeVersion: number;
+}
+
+interface SaveMessage {
+	command: "save";
+	lastExternalChangeVersion: number;
 }
 
 interface RequestBaseDiffMessage {
@@ -84,7 +111,8 @@ type WebviewMessage =
 	| WriteClipboardMessage
 	| ShowDiffMessage
 	| ReadyMessage
-	| CompleteMergeMessage;
+	| CompleteMergeMessage
+	| SaveMessage;
 
 /**
  * Custom text editor provider for the Weld 3-way merge view.
@@ -92,6 +120,8 @@ type WebviewMessage =
 export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 	static readonly viewType = "weld.mergeEditor";
 	static readonly onRequestRefresh = new EventEmitter<Uri>();
+	static readonly onConflictStateChanged =
+		new EventEmitter<ConflictStateChangeEvent>();
 
 	private readonly extensionUri: Uri;
 
@@ -99,26 +129,69 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		this.extensionUri = extensionUri;
 	}
 
+	static setInitialConflictContent(documentUri: Uri, content: string): Uri {
+		const key = setInitialConflictStoreEntry(
+			documentUri.toString(),
+			content,
+		);
+		return Uri.parse(`${INITIAL_CONFLICT_SCHEME}:${key}`);
+	}
+
+	static clearInitialConflictContent(documentUri: Uri): void {
+		clearInitialConflictStoreEntry(documentUri.toString());
+	}
+
+	static getCurrentConflictStateKey(repoPath: string): string | undefined {
+		const state = readConflictState(repoPath);
+		if (!state) {
+			return;
+		}
+		return `${state.operation}:${state.otherRef}`;
+	}
+
+	private static _createInitialConflictContentProvider(): TextDocumentContentProvider {
+		return {
+			provideTextDocumentContent: (uri: Uri) => {
+				const key = uri.path.startsWith("/")
+					? uri.path.slice(1)
+					: uri.path;
+				return getInitialConflictContent(key);
+			},
+		};
+	}
+
 	static register(context: ExtensionContext): Disposable {
 		const provider = new MeldCustomEditorProvider(context.extensionUri);
-		return window.registerCustomEditorProvider(
+		const editorRegistration = window.registerCustomEditorProvider(
 			MeldCustomEditorProvider.viewType,
 			provider,
 			{
 				webviewOptions: { retainContextWhenHidden: true },
 			},
 		);
+		const contentProviderRegistration =
+			workspace.registerTextDocumentContentProvider(
+				INITIAL_CONFLICT_SCHEME,
+				MeldCustomEditorProvider._createInitialConflictContentProvider(),
+			);
+		return Disposable.from(editorRegistration, contentProviderRegistration);
 	}
 
-	async resolveCustomTextEditor(
+	resolveCustomTextEditor(
 		document: TextDocument,
 		webviewPanel: WebviewPanel,
 		_token: CancellationToken,
 	): Promise<void> {
+		if (document.uri.scheme !== "file") {
+			webviewPanel.webview.html =
+				"<p>Cannot open: Weld only supports local files.</p>";
+			return Promise.resolve();
+		}
+
 		const workspaceFolder = workspace.getWorkspaceFolder(document.uri);
 		if (!workspaceFolder) {
 			webviewPanel.webview.html = "<p>File is not in a workspace.</p>";
-			return;
+			return Promise.resolve();
 		}
 
 		const repoPath = workspaceFolder.uri.fsPath;
@@ -131,104 +204,321 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			enableScripts: true,
 			localResourceRoots: [Uri.joinPath(this.extensionUri, "out")],
 		};
-		webviewPanel.webview.html = this._getHtmlForWebview(
-			webviewPanel.webview,
-		);
 
-		await this._initializeWebview(
+		// Listener attached BEFORE setting html so "ready" is never missed
+		// regardless of how fast the webview boots (especially over SSH).
+		this._initializeWebview(
 			document,
 			webviewPanel,
 			repoPath,
 			relativeFilePath,
 		);
+		return Promise.resolve();
 	}
 
-	private async _initializeWebview(
+	private _initializeWebview(
 		document: TextDocument,
 		webviewPanel: WebviewPanel,
 		repoPath: string,
 		relativeFilePath: string,
-	): Promise<void> {
+	): void {
 		const config = this._getWebviewConfig();
-		const docText = document.getText();
-		const { localLabel, baseLabel, remoteLabel } = this._getLabels(docText);
 
-		const initialGitState = await this._getInitialConflictedState(
-			repoPath,
-			relativeFilePath,
-			localLabel,
-			baseLabel,
-			remoteLabel,
-		);
+		// Phase 1 (before webview is ready): Setup per-editor sync state.
+		const editState: EditState = {
+			editQueue: Promise.resolve(),
+			lastExternalChangeVersion: document.version,
+			pendingVersionEcho: -1,
+		};
+		const disposables: Disposable[] = [];
 
-		const payload = (await buildDiffPayload(
-			repoPath,
-			relativeFilePath,
-		)) as WebviewPayload;
-
-		const mergedContent = payload.data.files[1]?.content;
-		const isModified = docText !== initialGitState;
-
-		let shouldReplace = true;
-		if (isModified) {
-			const modAction = await this._checkAndPromptModification(
-				document,
-				initialGitState,
-			);
-			if (modAction === "cancel") {
-				return;
-			}
-			if (modAction === "keep") {
-				shouldReplace = false;
-				if (payload.data.files[1]) {
-					payload.data.files[1].content = docText;
-				}
-			}
-		}
-
-		if (
-			shouldReplace &&
-			mergedContent !== undefined &&
-			mergedContent !== docText
-		) {
-			const edit = new WorkspaceEdit();
-			const fullRange = new Range(
-				document.positionAt(0),
-				document.positionAt(docText.length),
-			);
-			edit.replace(document.uri, fullRange, mergedContent);
-			await workspace.applyEdit(edit);
-		}
-
-		payload.data.config = config;
-
-		let isUpdatingFromWebview = false;
+		const readyState: ReadyState = {
+			snapshot: null,
+			handled: false,
+			handling: false,
+		};
 
 		const messageListener = webviewPanel.webview.onDidReceiveMessage(
 			async (msg: WebviewMessage) => {
+				if (msg.command === "ready") {
+					await this._handleReadyMessage(
+						readyState,
+						{
+							document,
+							webviewPanel,
+							repoPath,
+							relativeFilePath,
+							editState,
+							disposables,
+						},
+						config,
+					);
+					return;
+				}
+
+				if (!readyState.snapshot) {
+					// Non-ready messages before the snapshot is computed are dropped.
+					return;
+				}
+
 				await this._handleMessage(msg, {
 					document,
 					webviewPanel,
 					repoPath,
 					relativeFilePath,
-					payload,
-					updateState: (val) => {
-						isUpdatingFromWebview = val;
-					},
+					editState,
 				});
 			},
 		);
+		disposables.push(messageListener);
 
-		this._setupSubscriptions(document, webviewPanel, {
-			messageListener,
-			isUpdatingFromWebview: () => isUpdatingFromWebview,
-			repoPath,
-			relativeFilePath,
-			debounceDelay: config.debounceDelay,
-			syntaxHighlighting: config.syntaxHighlighting,
-			baseCompareHighlighting: config.baseCompareHighlighting,
-			smoothScrolling: config.smoothScrolling,
+		webviewPanel.onDidDispose(() => {
+			MeldCustomEditorProvider.clearInitialConflictContent(document.uri);
+			for (const d of disposables) {
+				d.dispose();
+			}
 		});
+
+		// Html is set after the listener is registered.
+		webviewPanel.webview.html = this._getHtmlForWebview(
+			webviewPanel.webview,
+		);
+	}
+
+	private async _handleReadyMessage(
+		readyState: ReadyState,
+		ctx: {
+			document: TextDocument;
+			webviewPanel: WebviewPanel;
+			repoPath: string;
+			relativeFilePath: string;
+			editState: EditState;
+			disposables: Disposable[];
+		},
+		config: ReturnType<MeldCustomEditorProvider["_getWebviewConfig"]>,
+	): Promise<void> {
+		assertReadyMessageIsFirst(readyState, ctx.document.uri.toString());
+
+		readyState.handling = true;
+		try {
+			const snapshot = await this._loadInitialSnapshot(ctx, config);
+			if (!snapshot) {
+				return;
+			}
+			readyState.snapshot = snapshot;
+			readyState.handled = true;
+			// Phase 2: setup listeners and send initial snapshot.
+			// All of this is synchronous — no other code can interleave.
+			this._setupPerEditorListeners({
+				document: ctx.document,
+				webviewPanel: ctx.webviewPanel,
+				repoPath: ctx.repoPath,
+				relativeFilePath: ctx.relativeFilePath,
+				readyState,
+				editState: ctx.editState,
+				disposables: ctx.disposables,
+			});
+		} finally {
+			readyState.handling = false;
+		}
+	}
+
+	private async _applyAutoMergedContent(
+		document: TextDocument,
+		mergedContent: string | undefined,
+	): Promise<void> {
+		const docText = document.getText();
+		if (mergedContent === undefined || mergedContent === docText) {
+			return;
+		}
+
+		const edit = new WorkspaceEdit();
+		const fullRange = new Range(
+			document.positionAt(0),
+			document.positionAt(docText.length),
+		);
+		edit.replace(document.uri, fullRange, mergedContent);
+		await workspace.applyEdit(edit);
+	}
+
+	private async _loadInitialSnapshot(
+		ctx: {
+			document: TextDocument;
+			repoPath: string;
+			relativeFilePath: string;
+		},
+		config: ReturnType<MeldCustomEditorProvider["_getWebviewConfig"]>,
+	): Promise<WebviewPayload["data"] | null> {
+		const docText = ctx.document.getText();
+		const stages = await fetchConflictStages(
+			ctx.repoPath,
+			ctx.relativeFilePath,
+		);
+		// Labels come from file markers, because git does not persist label text
+		// in .git metadata and we need byte-exact reconstruction for the check.
+		const labels = extractConflictLabels(docText);
+		if (!labels) {
+			this._warnAutoMergeSkipped(
+				ctx.document,
+				"could not read conflict labels from the current file text",
+			);
+			return this._snapshotFromCurrentDocument(
+				ctx,
+				config,
+				stages,
+				docText,
+			);
+		}
+
+		const initialGitState = await this._tryBuildInitialConflictText(
+			ctx,
+			stages,
+			labels,
+		);
+		if (initialGitState === undefined) {
+			return this._snapshotFromCurrentDocument(
+				ctx,
+				config,
+				stages,
+				docText,
+			);
+		}
+		if (docText === initialGitState) {
+			return this._snapshotFromAutoMerge(ctx, config, stages);
+		}
+
+		const modAction = await this._checkAndPromptModification(
+			ctx.document,
+			initialGitState,
+		);
+		if (modAction === "cancel") {
+			return null;
+		}
+		if (modAction === "keep") {
+			return this._snapshotFromCurrentDocument(
+				ctx,
+				config,
+				stages,
+				docText,
+			);
+		}
+		return this._snapshotFromAutoMerge(ctx, config, stages);
+	}
+
+	private async _tryBuildInitialConflictText(
+		ctx: {
+			document: TextDocument;
+			repoPath: string;
+		},
+		stages: Awaited<ReturnType<typeof fetchConflictStages>>,
+		labels: ConflictLabels,
+	): Promise<string | undefined> {
+		try {
+			return await buildInitialConflictedState(
+				ctx.repoPath,
+				stages,
+				labels,
+			);
+		} catch {
+			this._warnAutoMergeSkipped(
+				ctx.document,
+				"failed to reconstruct git's initial conflict text",
+			);
+			return;
+		}
+	}
+
+	private async _snapshotFromCurrentDocument(
+		ctx: {
+			repoPath: string;
+			relativeFilePath: string;
+		},
+		config: ReturnType<MeldCustomEditorProvider["_getWebviewConfig"]>,
+		stages: Awaited<ReturnType<typeof fetchConflictStages>>,
+		docText: string,
+	): Promise<WebviewPayload["data"]> {
+		// Keep path: never rewrite the buffer; render and diff exactly what exists.
+		const snapshot = await buildDiffPayload(
+			ctx.repoPath,
+			ctx.relativeFilePath,
+			{
+				stages,
+				workingContent: docText,
+			},
+		);
+		snapshot.config = config;
+		return snapshot;
+	}
+
+	private async _snapshotFromAutoMerge(
+		ctx: {
+			document: TextDocument;
+			repoPath: string;
+			relativeFilePath: string;
+		},
+		config: ReturnType<MeldCustomEditorProvider["_getWebviewConfig"]>,
+		stages: Awaited<ReturnType<typeof fetchConflictStages>>,
+	): Promise<WebviewPayload["data"]> {
+		// Replace path: compute merged middle content, then apply it in-memory only.
+		const snapshot = await buildDiffPayload(
+			ctx.repoPath,
+			ctx.relativeFilePath,
+			{
+				stages,
+			},
+		);
+		snapshot.config = config;
+		await this._applyAutoMergedContent(
+			ctx.document,
+			snapshot.files[1]?.content,
+		);
+		return snapshot;
+	}
+
+	private async _checkAndPromptModification(
+		document: TextDocument,
+		initialGitState: string,
+	): Promise<"replace" | "keep" | "cancel"> {
+		const result = await window.showWarningMessage(
+			"This file has been modified since the conflict was generated. Continuing will replace your changes with the auto-merged result.",
+			{ modal: true },
+			"Continue (Replace)",
+			"Open Existing",
+			"Compare",
+		);
+		if (result === "Compare") {
+			const initialConflictUri =
+				MeldCustomEditorProvider.setInitialConflictContent(
+					document.uri,
+					initialGitState,
+				);
+			await commands.executeCommand("workbench.action.closeActiveEditor");
+			await commands.executeCommand(
+				"vscode.diff",
+				initialConflictUri,
+				document.uri,
+				"Original Conflict vs Current",
+			);
+			return "cancel";
+		}
+		if (result === "Open Existing") {
+			return "keep";
+		}
+		if (result === "Continue (Replace)") {
+			return "replace";
+		}
+		await commands.executeCommand("workbench.action.closeActiveEditor");
+		return "cancel";
+	}
+
+	private _warnAutoMergeSkipped(
+		document: TextDocument,
+		reason: string,
+	): void {
+		const filePath = workspace.asRelativePath(document.uri, false);
+		window.showWarningMessage(
+			`Weld: auto-merge skipped - ${reason}. Expected conflict markers like "<<<<<<< HEAD", "||||||| merged common ancestors", "=======", and ">>>>>>> remote" in ${filePath}.`,
+		);
 	}
 
 	private _getWebviewConfig() {
@@ -247,203 +537,6 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		};
 	}
 
-	private _getLabels(docText: string) {
-		const localLabel = docText.match(LOCAL_LABEL_REGEX)?.[1] ?? "HEAD";
-		const baseLabel =
-			docText.match(BASE_LABEL_REGEX)?.[1] ?? "merged common ancestors";
-		const remoteLabel = docText.match(REMOTE_LABEL_REGEX)?.[1] ?? "remote";
-		return { localLabel, baseLabel, remoteLabel };
-	}
-
-	private async _getInitialConflictedState(
-		repoPath: string,
-		relativeFilePath: string,
-		localLabel: string,
-		baseLabel: string,
-		remoteLabel: string,
-	): Promise<string> {
-		const tempDir = await mkdtemp(join(tmpdir(), "weld-"));
-		const localPath = join(tempDir, "local");
-		const basePath = join(tempDir, "base");
-		const remotePath = join(tempDir, "remote");
-
-		try {
-			await writeFile(
-				localPath,
-				await getGitState(repoPath, relativeFilePath, GIT_STAGE_LOCAL),
-			);
-			await writeFile(
-				basePath,
-				await getGitState(repoPath, relativeFilePath, GIT_STAGE_BASE),
-			);
-			await writeFile(
-				remotePath,
-				await getGitState(repoPath, relativeFilePath, GIT_STAGE_REMOTE),
-			);
-
-			const gitCmd = await getGitExecutable();
-
-			return await new Promise<string>((resolve) => {
-				execFile(
-					gitCmd,
-					[
-						"merge-file",
-						"-p",
-						"-L",
-						localLabel,
-						"-L",
-						baseLabel,
-						"-L",
-						remoteLabel,
-						localPath,
-						basePath,
-						remotePath,
-					],
-					{ cwd: repoPath },
-					(_err, stdout) => {
-						resolve(stdout);
-					},
-				);
-			});
-		} finally {
-			await rm(tempDir, { recursive: true, force: true });
-		}
-	}
-
-	private async _checkAndPromptModification(
-		document: TextDocument,
-		initialGitState: string,
-	): Promise<"replace" | "keep" | "cancel"> {
-		const result = await window.showWarningMessage(
-			"This file has been modified since the conflict was generated. Continuing will replace your changes with the auto-merged result.",
-			{ modal: true },
-			"Continue (Replace)",
-			"Open Existing",
-			"Compare",
-		);
-		if (result === "Compare") {
-			const tempComparePath = Uri.file(
-				join(
-					tmpdir(),
-					`weld-original-${basename(document.uri.fsPath)}`,
-				),
-			);
-			await workspace.fs.writeFile(
-				tempComparePath,
-				Buffer.from(initialGitState, "utf-8"),
-			);
-			await commands.executeCommand("workbench.action.closeActiveEditor");
-			await commands.executeCommand(
-				"vscode.diff",
-				tempComparePath,
-				document.uri,
-				"Original Conflict vs Current",
-			);
-			return "cancel";
-		}
-		if (result === "Open Existing") {
-			return "keep";
-		}
-		if (result === "Continue (Replace)") {
-			return "replace";
-		}
-		await commands.executeCommand("workbench.action.closeActiveEditor");
-		return "cancel";
-	}
-
-	private _setupSubscriptions(
-		document: TextDocument,
-		webviewPanel: WebviewPanel,
-		ctx: {
-			messageListener: Disposable;
-			isUpdatingFromWebview: () => boolean;
-			repoPath: string;
-			relativeFilePath: string;
-			debounceDelay: number;
-			syntaxHighlighting: boolean;
-			baseCompareHighlighting: boolean;
-			smoothScrolling: boolean;
-		},
-	) {
-		const changeDocumentSubscription = workspace.onDidChangeTextDocument(
-			(e) => {
-				if (
-					e.document.uri.toString() === document.uri.toString() &&
-					!ctx.isUpdatingFromWebview()
-				) {
-					webviewPanel.webview.postMessage({
-						command: "updateContent",
-						text: e.document.getText(),
-					});
-				}
-			},
-		);
-
-		const changeConfigurationSubscription =
-			workspace.onDidChangeConfiguration((e) => {
-				this._handleConfigChange(e, webviewPanel);
-			});
-
-		const refreshSubscription =
-			MeldCustomEditorProvider.onRequestRefresh.event(async (uri) => {
-				if (uri.toString() === document.uri.toString()) {
-					const newPayload = (await buildDiffPayload(
-						ctx.repoPath,
-						ctx.relativeFilePath,
-					)) as WebviewPayload;
-					newPayload.data.config = {
-						debounceDelay: ctx.debounceDelay,
-						syntaxHighlighting: ctx.syntaxHighlighting,
-						baseCompareHighlighting: ctx.baseCompareHighlighting,
-						smoothScrolling: ctx.smoothScrolling,
-					};
-					webviewPanel.webview.postMessage(newPayload);
-				}
-			});
-
-		webviewPanel.onDidDispose(() => {
-			ctx.messageListener.dispose();
-			changeDocumentSubscription.dispose();
-			changeConfigurationSubscription.dispose();
-			refreshSubscription.dispose();
-		});
-	}
-
-	private _handleConfigChange(
-		e: ConfigurationChangeEvent,
-		webviewPanel: WebviewPanel,
-	) {
-		if (
-			e.affectsConfiguration("weld.mergeEditor.debounceDelay") ||
-			e.affectsConfiguration("weld.mergeEditor.syntaxHighlighting") ||
-			e.affectsConfiguration(
-				"weld.mergeEditor.baseCompareHighlighting",
-			) ||
-			e.affectsConfiguration("weld.mergeEditor.smoothScrolling")
-		) {
-			const newConfig = workspace.getConfiguration("weld");
-			const config = {
-				debounceDelay:
-					newConfig.get<number>("mergeEditor.debounceDelay") ??
-					DEFAULT_DEBOUNCE_DELAY,
-				syntaxHighlighting:
-					newConfig.get<boolean>("mergeEditor.syntaxHighlighting") ??
-					true,
-				baseCompareHighlighting:
-					newConfig.get<boolean>(
-						"mergeEditor.baseCompareHighlighting",
-					) ?? false,
-				smoothScrolling:
-					newConfig.get<boolean>("mergeEditor.smoothScrolling") ??
-					true,
-			};
-			webviewPanel.webview.postMessage({
-				command: "updateConfig",
-				config,
-			});
-		}
-	}
-
 	private async _handleMessage(
 		msg: WebviewMessage,
 		ctx: {
@@ -451,19 +544,51 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			webviewPanel: WebviewPanel;
 			repoPath: string;
 			relativeFilePath: string;
-			payload: WebviewPayload;
-			updateState: (val: boolean) => void;
+			editState: EditState;
 		},
 	): Promise<void> {
 		switch (msg.command) {
 			case "ready":
-				ctx.webviewPanel.webview.postMessage(ctx.payload);
+				// Handled in the outer listener closure.
 				break;
-			case "contentChanged":
-				await this._applyContentEdit(
-					ctx.document,
-					msg.text,
-					ctx.updateState,
+			case "contentChanged": {
+				ctx.editState.editQueue = processContentChanged(
+					msg.changes,
+					msg.lastExternalChangeVersion,
+					ctx.editState,
+					async (changes) => {
+						const edit = new WorkspaceEdit();
+						for (const change of changes) {
+							const vsRange = new Range(
+								change.range.startLineNumber - 1,
+								change.range.startColumn - 1,
+								change.range.endLineNumber - 1,
+								change.range.endColumn - 1,
+							);
+							edit.replace(
+								ctx.document.uri,
+								vsRange,
+								change.text,
+							);
+						}
+						await workspace.applyEdit(edit);
+					},
+					() => {
+						ctx.webviewPanel.webview.postMessage({
+							command: "fullSync",
+							content: ctx.document.getText(),
+							lastExternalChangeVersion:
+								ctx.editState.lastExternalChangeVersion,
+						});
+					},
+				);
+				break;
+			}
+			case "save":
+				ctx.editState.editQueue = ctx.editState.editQueue.then(
+					async () => {
+						await ctx.document.save();
+					},
 				);
 				break;
 			case "copyHash":
@@ -493,22 +618,220 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		}
 	}
 
-	private async _applyContentEdit(
-		document: TextDocument,
-		text: string,
-		updateState: (val: boolean) => void,
-	) {
-		updateState(true);
-		try {
-			const fullRange = new Range(
-				document.positionAt(0),
-				document.positionAt(document.getText().length),
+	private _setupPerEditorListeners(ctx: {
+		document: TextDocument;
+		webviewPanel: WebviewPanel;
+		repoPath: string;
+		relativeFilePath: string;
+		readyState: {
+			snapshot: WebviewPayload["data"] | null;
+			handled: boolean;
+			handling: boolean;
+		};
+		editState: EditState;
+		disposables: Disposable[];
+	}): void {
+		// Phase 2: inside the ready message handler.
+		// All of this is synchronous — no other code can interleave.
+		// This guarantees the content we send matches exactly what the listener tracks.
+
+		const changeDocumentSubscription = workspace.onDidChangeTextDocument(
+			(e) => this._handleTrackedDocumentChange(ctx, e),
+		);
+
+		const changeConfigurationSubscription =
+			workspace.onDidChangeConfiguration((e) => {
+				this._handleConfigChange(e, ctx.webviewPanel);
+			});
+
+		const refreshSubscription =
+			MeldCustomEditorProvider.onRequestRefresh.event(async (uri) => {
+				if (uri.toString() !== ctx.document.uri.toString()) {
+					return;
+				}
+				const snapshot = await this._loadInitialSnapshot(
+					{
+						document: ctx.document,
+						repoPath: ctx.repoPath,
+						relativeFilePath: ctx.relativeFilePath,
+					},
+					this._getWebviewConfig(),
+				);
+				if (!snapshot) {
+					return;
+				}
+				ctx.readyState.snapshot = snapshot;
+				this._postCurrentLoadDiff(
+					snapshot,
+					ctx.document,
+					ctx.webviewPanel,
+					ctx.editState,
+				);
+			});
+
+		const closeDocumentSubscription = workspace.onDidCloseTextDocument(
+			(closedDocument) => {
+				if (
+					closedDocument.uri.toString() ===
+					ctx.document.uri.toString()
+				) {
+					MeldCustomEditorProvider.clearInitialConflictContent(
+						ctx.document.uri,
+					);
+				}
+			},
+		);
+
+		const conflictStateSubscription =
+			MeldCustomEditorProvider.onConflictStateChanged.event(
+				async (event) => {
+					if (event.repoPath !== ctx.repoPath) {
+						return;
+					}
+					if (event.stateKey === undefined) {
+						ctx.webviewPanel.webview.postMessage({
+							command: "conflictStateLost",
+						});
+						return;
+					}
+					const snapshot = await this._loadInitialSnapshot(
+						{
+							document: ctx.document,
+							repoPath: ctx.repoPath,
+							relativeFilePath: ctx.relativeFilePath,
+						},
+						this._getWebviewConfig(),
+					);
+					if (!snapshot) {
+						return;
+					}
+					ctx.readyState.snapshot = snapshot;
+					this._postCurrentLoadDiff(
+						snapshot,
+						ctx.document,
+						ctx.webviewPanel,
+						ctx.editState,
+					);
+				},
 			);
-			const edit = new WorkspaceEdit();
-			edit.replace(document.uri, fullRange, text);
-			await workspace.applyEdit(edit);
-		} finally {
-			updateState(false);
+
+		ctx.disposables.push(
+			changeDocumentSubscription,
+			changeConfigurationSubscription,
+			refreshSubscription,
+			closeDocumentSubscription,
+			conflictStateSubscription,
+		);
+
+		const currentSnapshot = ctx.readyState.snapshot;
+		if (!currentSnapshot) {
+			throw new Error(
+				`Expected initial snapshot for ${ctx.document.uri.toString()} before listener setup.`,
+			);
+		}
+		this._postCurrentLoadDiff(
+			currentSnapshot,
+			ctx.document,
+			ctx.webviewPanel,
+			ctx.editState,
+		);
+	}
+
+	private _handleTrackedDocumentChange(
+		ctx: {
+			document: TextDocument;
+			webviewPanel: WebviewPanel;
+			editState: EditState;
+		},
+		e: {
+			document: TextDocument;
+			contentChanges: readonly TextDocumentContentChangeEvent[];
+		},
+	): void {
+		if (e.document.uri.toString() !== ctx.document.uri.toString()) {
+			return;
+		}
+
+		const action = classifyDocumentChange(
+			e.document.version,
+			ctx.editState,
+		);
+		ctx.editState.lastExternalChangeVersion = e.document.version;
+		if (action === "suppress") {
+			ctx.webviewPanel.webview.postMessage({
+				command: "externalEdit",
+				changes: [],
+				lastExternalChangeVersion:
+					ctx.editState.lastExternalChangeVersion,
+			});
+			return;
+		}
+
+		if (action === "fullSync") {
+			ctx.webviewPanel.webview.postMessage({
+				command: "fullSync",
+				content: ctx.document.getText(),
+				lastExternalChangeVersion:
+					ctx.editState.lastExternalChangeVersion,
+			});
+			return;
+		}
+
+		ctx.webviewPanel.webview.postMessage({
+			command: "externalEdit",
+			changes: this._toMonacoChanges(e.contentChanges),
+			lastExternalChangeVersion: ctx.editState.lastExternalChangeVersion,
+		});
+	}
+
+	private _toMonacoChanges(
+		contentChanges: readonly TextDocumentContentChangeEvent[],
+	): MonacoContentChange[] {
+		return contentChanges.map((change) => ({
+			range: {
+				startLineNumber: change.range.start.line + 1,
+				startColumn: change.range.start.character + 1,
+				endLineNumber: change.range.end.line + 1,
+				endColumn: change.range.end.character + 1,
+			},
+			text: change.text,
+		}));
+	}
+
+	private _postCurrentLoadDiff(
+		snapshot: WebviewPayload["data"],
+		document: TextDocument,
+		webviewPanel: WebviewPanel,
+		editState: EditState,
+	): void {
+		editState.lastExternalChangeVersion = document.version;
+		if (snapshot.files[1]) {
+			snapshot.files[1].content = document.getText();
+		}
+		const message: WebviewPayload = {
+			command: "loadDiff",
+			lastExternalChangeVersion: editState.lastExternalChangeVersion,
+			data: snapshot,
+		};
+		webviewPanel.webview.postMessage(message);
+	}
+
+	private _handleConfigChange(
+		e: ConfigurationChangeEvent,
+		webviewPanel: WebviewPanel,
+	) {
+		if (
+			e.affectsConfiguration("weld.mergeEditor.debounceDelay") ||
+			e.affectsConfiguration("weld.mergeEditor.syntaxHighlighting") ||
+			e.affectsConfiguration(
+				"weld.mergeEditor.baseCompareHighlighting",
+			) ||
+			e.affectsConfiguration("weld.mergeEditor.smoothScrolling")
+		) {
+			webviewPanel.webview.postMessage({
+				command: "updateConfig",
+				config: this._getWebviewConfig(),
+			});
 		}
 	}
 
@@ -568,6 +891,10 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		document: TextDocument,
 		paneIndex: number,
 	): Promise<void> {
+		if (document.uri.scheme !== "file") {
+			window.showErrorMessage("Cannot open diff: not a local file.");
+			return;
+		}
 		const gitExt = extensions.getExtension("vscode.git");
 		if (!gitExt) {
 			window.showErrorMessage("Git extension is not available.");

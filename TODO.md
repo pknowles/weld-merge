@@ -108,6 +108,46 @@ all panels editable and maybe default one of the base windows to be open and
 share content. What about saving? Vscode has this for 2-way diff and IIRC can
 save individual panels. Low !/$.
 
+## PaneFiles / PaneDiffs: replace 5/4-slot tuples with named objects
+
+The webview currently models panes as `PaneFiles` (5 slots: `baseLeft, local,
+merged, remote, baseRight`) and `PaneDiffs` (4 slots: `baseLeftDiff, lmDiff,
+mrDiff, baseRightDiff`). Most slots are only populated when the user toggles
+"compare with base". Two of the five file slots carry the same base content,
+just positioned differently for the left/right comparison lanes.
+
+Problems:
+- Magic indices 0..4 scattered across `CodePane.tsx`, `App.tsx`, `meldPane.tsx`,
+  `DiffCurtain.tsx`, `scrollMapping.ts`, `panesMapping.ts`, `highlightUtil.ts`,
+  `editorActions.ts`, `appHooks.ts`, and tests.
+- Nullable slots everywhere to represent "not yet loaded".
+- Duplicated base content across slots 0 and 4.
+- Shape-conversion code in `handleLoadDiff` just to stuff payload data into the
+  5-slot layout.
+
+Desired shape (indicative, finalise during refactor):
+```ts
+interface PaneState {
+  local: FileState;
+  merged: FileState;
+  remote: FileState;
+  base?: FileState;           // fetched once, optional UI toggle
+  lmDiff: DiffChunk[];
+  mrDiff: DiffChunk[];
+  baseLeftDiff?: DiffChunk[]; // computed lazily when base is shown
+  baseRightDiff?: DiffChunk[];
+}
+```
+
+Benefits:
+- Boundary payload can match internal shape; no conversion in `handleLoadDiff`.
+- Base content is sent once, not duplicated.
+- All consumers access named fields, no magic indices.
+- Nullability is localised to the genuinely optional `base*` fields.
+
+Scope: large, touches all the files listed above plus snapshots and tests.
+Track as a dedicated refactor; do not fold into unrelated changes.
+
 ## Assorted Polish
 
 - **Architectural Debt**:
@@ -121,6 +161,15 @@ save individual panels. Low !/$.
 - **Fix Returns**: Handle failures properly, e.g. from `getGitState`, without silently passing empty strings.
 - **UX**: Rethink `Ctrl+K` to avoid interfering with global VS Code chord prefixes.
 - **Refactor `DiffCurtain`**: Split into `CurtainContainer` + `CurtainSVG`. The container should always render to maintain 40px flexbox stability, while the SVG/drawing logic only activates when editors are ready. This will allow removing the `undefined` editor types from the core drawing functions.
+
+## Testing Improvements
+
+- **Upgrade save tests to @vscode/test-electron**: The queue-ordering tests in
+  `test/edit_queue_ordering.test.ts` verify that saves are properly ordered with
+  edits in the promise queue, but they don't test actual `document.save()`
+  integration with VS Code. For full e2e coverage of save behavior (including
+  dirty state, file writes, and error handling), migrate to @vscode/test-electron
+  which runs tests in an actual VS Code instance.
 
 Questionable code in c06d4923:
 

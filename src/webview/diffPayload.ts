@@ -16,11 +16,15 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { getGitExecutable } from "../gitPath.ts";
+import { readConflictState } from "../gitUtils.ts";
 import { Differ } from "../matchers/diffutil.ts";
 import { Merger } from "../matchers/merge.ts";
 import { MyersSequenceMatcher } from "../matchers/myers.ts";
-import type { DiffChunk, FileState, WebviewPayload } from "./ui/types.ts";
+import type { DiffChunk, PayloadFiles, WebviewPayload } from "./ui/types.ts";
 
 const GIT_STAGE_BASE = 1;
 const GIT_STAGE_LOCAL = 2;
@@ -35,23 +39,48 @@ interface CommitInfo {
 	body: string;
 }
 
+interface ConflictStages {
+	base: string;
+	local: string;
+	incoming: string;
+}
+
+interface ConflictLabels {
+	localLabel: string;
+	baseLabel: string;
+	remoteLabel: string;
+}
+
+interface BuildDiffPayloadOptions {
+	stages?: ConflictStages;
+	// The merged pane text that the user will edit and that syncs to the file
+	// on disk. On first open this is seeded by runMerge(); on re-runs (e.g.
+	// after an external .git state change) the caller passes the live
+	// TextDocument text so diffs align with what the user currently sees.
+	workingContent?: string;
+}
+
 const getGitState = async (
 	repoPath: string,
 	relativeFilePath: string,
 	stage: number,
 ): Promise<string> => {
 	const gitCmd = await getGitExecutable();
-	return new Promise<string>((resolve) => {
+	return new Promise<string>((resolve, reject) => {
 		execFile(
 			gitCmd,
 			["show", `:${stage}:${relativeFilePath}`],
 			{ cwd: repoPath },
-			(err, stdout) => {
+			(err, stdout, stderr) => {
 				if (err) {
-					resolve("");
-				} else {
-					resolve(stdout);
+					reject(
+						new Error(
+							`git show :${stage}:${relativeFilePath} failed in ${repoPath}: ${stderr || err.message}`,
+						),
+					);
+					return;
 				}
+				resolve(stdout);
 			},
 		);
 	});
@@ -97,32 +126,32 @@ const getCommitInfo = async (
 	});
 };
 
-const getRemoteRef = (repoPath: string): Promise<string | undefined> => {
-	const refs = [
-		"MERGE_HEAD",
-		"CHERRY_PICK_HEAD",
-		"REVERT_HEAD",
-		"REBASE_HEAD",
-	];
-
-	const checkNext = async (index: number): Promise<string | undefined> => {
-		const ref = refs[index];
-		if (!ref) {
-			return;
-		}
-		const commit = await getCommitInfo(repoPath, ref);
-		if (commit) {
-			return ref;
-		}
-		return checkNext(index + 1);
-	};
-
-	return checkNext(0);
+// Resolve the incoming ("other") ref for the active conflict operation.
+//
+// Returns null only for the two explicitly expected absence cases:
+//   1. The repo is not in an active merge/cherry-pick/rebase (readConflictState
+//      returns null). Callers that should never hit this decide whether to
+//      tolerate or escalate.
+//   2. The otherRef recorded in .git state no longer resolves to a commit
+//      (e.g. the tip was pruned or force-updated). UI can still render the
+//      panel; we just omit incoming commit info.
+//
+// fs failures while reading .git state propagate as thrown errors from
+// readConflictState; this function never conflates "absent" with "failed".
+// Prefer `string | null` over `string | undefined` so the absent case is
+// explicit rather than the accidental product of a missing return.
+const getRemoteRef = async (repoPath: string): Promise<string | null> => {
+	const conflictState = readConflictState(repoPath);
+	if (!conflictState) {
+		return null;
+	}
+	const commit = await getCommitInfo(repoPath, conflictState.otherRef);
+	return commit ? conflictState.otherRef : null;
 };
 
 const getBaseCommitInfo = async (repoPath: string) => {
 	const remoteRef = await getRemoteRef(repoPath);
-	if (!remoteRef) {
+	if (remoteRef === null) {
 		return;
 	}
 
@@ -185,7 +214,7 @@ const runMerge = (
 
 const runDiff = (
 	localLines: string[],
-	mergedLines: string[],
+	workingLines: string[],
 	incomingLines: string[],
 ) => {
 	// Step 2: Initialize the Differ with [Local, Merged, Incoming]
@@ -195,7 +224,7 @@ const runDiff = (
 	// so the Differ diffs Merged(a) vs Local(b) and Merged(a) vs Incoming(b).
 	// The three-way _auto_merge logic naturally produces 'conflict' tags.
 	const differ = new Differ();
-	const diffSequences = [localLines, mergedLines, incomingLines];
+	const diffSequences = [localLines, workingLines, incomingLines];
 	const diffInit = differ.setSequencesIter(diffSequences);
 	let step = diffInit.next();
 	while (!step.done) {
@@ -218,48 +247,123 @@ const runDiff = (
 	return { leftDiffs, rightDiffs };
 };
 
-async function buildDiffPayload(
+async function fetchConflictStages(
 	repoPath: string,
 	relativeFilePath: string,
-): Promise<WebviewPayload> {
+): Promise<ConflictStages> {
 	const [base, local, incoming] = await Promise.all([
 		getGitState(repoPath, relativeFilePath, GIT_STAGE_BASE),
 		getGitState(repoPath, relativeFilePath, GIT_STAGE_LOCAL),
 		getGitState(repoPath, relativeFilePath, GIT_STAGE_REMOTE),
 	]);
+	return { base, local, incoming };
+}
+
+async function buildInitialConflictedState(
+	repoPath: string,
+	stages: ConflictStages,
+	labels: ConflictLabels,
+): Promise<string> {
+	// Re-run git merge-file with the same labels from the working file markers
+	// to reproduce git's original conflicted text for byte-for-byte comparison.
+	// git merge-file requires real files on disk, so this helper creates a
+	// temporary directory and always removes it in the finally block.
+	const tempDir = await mkdtemp(join(tmpdir(), "weld-"));
+	const localPath = join(tempDir, "local");
+	const basePath = join(tempDir, "base");
+	const remotePath = join(tempDir, "remote");
+	const gitCmd = await getGitExecutable();
+
+	try {
+		await writeFile(localPath, stages.local);
+		await writeFile(basePath, stages.base);
+		await writeFile(remotePath, stages.incoming);
+
+		return await new Promise<string>((resolve, reject) => {
+			execFile(
+				gitCmd,
+				[
+					"merge-file",
+					"-p",
+					"-L",
+					labels.localLabel,
+					"-L",
+					labels.baseLabel,
+					"-L",
+					labels.remoteLabel,
+					localPath,
+					basePath,
+					remotePath,
+				],
+				{ cwd: repoPath },
+				(err, stdout, stderr) => {
+					// git-merge-file documents: 0 = clean merge, 1..127 = conflict count,
+					// and negative values indicate errors. In Node callbacks these error
+					// codes are surfaced as unsigned exit codes (>=128), so treat >=128
+					// as real failure and keep 0..127 as valid stdout-producing results.
+					// Source: https://git-scm.com/docs/git-merge-file
+					if (err && ((err as { code?: number }).code ?? 0) >= 128) {
+						reject(
+							new Error(
+								`git merge-file failed for ${repoPath}: ${stderr || err.message}`,
+							),
+						);
+						return;
+					}
+					resolve(stdout);
+				},
+			);
+		});
+	} finally {
+		await rm(tempDir, { recursive: true, force: true });
+	}
+}
+
+async function buildDiffPayload(
+	repoPath: string,
+	relativeFilePath: string,
+	options: BuildDiffPayloadOptions = {},
+): Promise<WebviewPayload["data"]> {
+	const stages =
+		options.stages ??
+		(await fetchConflictStages(repoPath, relativeFilePath));
+	const { base, local, incoming } = stages;
 
 	const localCommit = await getCommitInfo(repoPath, "HEAD");
 	const remoteRef = await getRemoteRef(repoPath);
-	const incomingCommit = remoteRef
-		? await getCommitInfo(repoPath, remoteRef)
-		: undefined;
+	const incomingCommit =
+		remoteRef === null
+			? undefined
+			: await getCommitInfo(repoPath, remoteRef);
 
 	const localLines = splitLines(local);
 	const baseLines = splitLines(base);
 	const incomingLines = splitLines(incoming);
 
-	const mergedContent = runMerge(localLines, baseLines, incomingLines);
-	const mergedLines = splitLines(mergedContent);
+	const workingContent =
+		options.workingContent ??
+		runMerge(localLines, baseLines, incomingLines);
+	// Diffs are computed against the exact working-pane content we will render.
+	// This keeps hunk actions/highlights aligned with what the user sees.
+	const workingLines = splitLines(workingContent);
 
 	const { leftDiffs, rightDiffs } = runDiff(
 		localLines,
-		mergedLines,
+		workingLines,
 		incomingLines,
 	);
 
-	const contents: FileState[] = [
+	const contents: PayloadFiles = [
 		{ label: "Local", content: local, commit: localCommit },
-		{ label: "Merged", content: mergedContent },
+		{ label: "Merged", content: workingContent },
 		{ label: "Remote", content: incoming, commit: incomingCommit },
 	];
 
 	return {
-		command: "loadDiff",
-		data: {
-			files: contents,
-			diffs: [leftDiffs, rightDiffs],
-		},
-	} as WebviewPayload;
+		files: contents,
+		diffs: [leftDiffs, rightDiffs],
+		isConflicted: true,
+	};
 }
 
 async function buildBaseDiffPayload(
@@ -310,11 +414,5 @@ async function buildBaseDiffPayload(
 	};
 }
 
-export {
-	buildDiffPayload,
-	buildBaseDiffPayload,
-	getGitState,
-	GIT_STAGE_BASE,
-	GIT_STAGE_LOCAL,
-	GIT_STAGE_REMOTE,
-};
+export { buildDiffPayload, buildBaseDiffPayload };
+export { buildInitialConflictedState, fetchConflictStages };

@@ -10,9 +10,13 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { computeMinimalEdits } from "./editorUtil.ts";
 import type { MeldUIActions, MeldUIState } from "./meldPaneTypes.ts";
-import type { Commit, FileState, Highlight } from "./types.ts";
+import type {
+	Commit,
+	FileState,
+	Highlight,
+	MonacoContentChange,
+} from "./types.ts";
 
 const NEWLINE_REGEX = /\r?\n/;
 
@@ -28,6 +32,12 @@ interface CodePaneProps {
 	isBaseActive?: boolean | undefined;
 	style?: CSSProperties | undefined;
 	onMount: (ed: editor.IStandaloneCodeEditor, i: number) => void;
+	applyExternalEditsRef?:
+		| React.RefObject<{
+				applyIncrementalEdits: (changes: MonacoContentChange[]) => void;
+				applyFullSync: (content: string) => void;
+		  } | null>
+		| undefined;
 }
 
 const CommitHover: FC<{
@@ -404,7 +414,24 @@ const handleClipboardAction = (
 	}
 };
 
-const setupActions = (ed: editor.IStandaloneCodeEditor, p: CodePaneProps) => {
+const monacoChangesToEditOps = (
+	changes: MonacoContentChange[],
+): editor.IIdentifiedSingleEditOperation[] =>
+	changes.map((c) => ({
+		range: {
+			startLineNumber: c.range.startLineNumber,
+			startColumn: c.range.startColumn,
+			endLineNumber: c.range.endLineNumber,
+			endColumn: c.range.endColumn,
+		},
+		text: c.text,
+	}));
+
+const setupActions = (
+	ed: editor.IStandaloneCodeEditor,
+	p: CodePaneProps,
+	sendSaveRef: React.MutableRefObject<() => void>,
+) => {
 	ed.addAction({
 		id: "custom-copy",
 		label: "Copy",
@@ -429,6 +456,17 @@ const setupActions = (ed: editor.IStandaloneCodeEditor, p: CodePaneProps) => {
 				.requestClipboardText?.()
 				.then((t) => e.trigger("keyboard", "paste", { text: t })),
 	});
+	ed.addAction({
+		id: "custom-save",
+		label: "Save",
+		keybindings: [KeyMod.CtrlCmd | KeyCode.KeyS],
+		precondition: "!editorReadonly",
+		run: () => {
+			if (p.isMiddle) {
+				sendSaveRef.current();
+			}
+		},
+	});
 };
 
 const getHighlightOptions = (h: Highlight) => ({
@@ -439,12 +477,78 @@ const getHighlightOptions = (h: Highlight) => ({
 	marginClassName: h.isWholeLine ? `diff-${h.tag}-margin` : null,
 });
 
+const flashFirstConflictAndComplete = (
+	ed: editor.IStandaloneCodeEditor | null,
+	setIsFlashing: React.Dispatch<React.SetStateAction<boolean>>,
+	handleCompleteMerge: () => void,
+) => {
+	if (!ed) {
+		return;
+	}
+	const markers = ["<<<<<<<", "=======", ">>>>>>>", "|||||||"];
+	const lines = ed.getValue().split(NEWLINE_REGEX);
+	const idx = lines.findIndex(
+		(line) =>
+			markers.some((marker) => line.startsWith(marker)) ||
+			line.startsWith("(??)"),
+	);
+	if (idx !== -1) {
+		setIsFlashing(true);
+		setTimeout(() => {
+			setIsFlashing(false);
+		}, 1000);
+		ed.revealLineInCenter(idx + 1);
+		ed.setPosition({ lineNumber: idx + 1, column: 1 });
+		ed.focus();
+	}
+	handleCompleteMerge();
+};
+
+const useCodePaneSyncRefs = (
+	p: CodePaneProps,
+	sendSaveRef: React.MutableRefObject<() => void>,
+	syncActionsRef: React.MutableRefObject<{
+		sendContentChanged: (changes: editor.IModelContentChange[]) => void;
+		onEditImmediate: (index: number) => void;
+		onEdit: (value: string | undefined, index: number) => void;
+	}>,
+	paneContentRef: React.MutableRefObject<string>,
+) => {
+	useEffect(() => {
+		sendSaveRef.current = p.actions.sendSave;
+	}, [p.actions.sendSave, sendSaveRef]);
+
+	useEffect(() => {
+		syncActionsRef.current = {
+			sendContentChanged: p.actions.sendContentChanged,
+			onEditImmediate: p.actions.onEditImmediate,
+			onEdit: p.actions.onEdit,
+		};
+	}, [
+		p.actions.sendContentChanged,
+		p.actions.onEditImmediate,
+		p.actions.onEdit,
+		syncActionsRef,
+	]);
+
+	useEffect(() => {
+		paneContentRef.current = p.file.content;
+	}, [p.file.content, paneContentRef]);
+};
+
 const useCodePaneLogic = (p: CodePaneProps) => {
 	const [ed, setEd] = useState<editor.IStandaloneCodeEditor | null>(null);
-	const [lastSyncId, setLastSyncId] = useState(p.ui.externalSyncId);
 	const isApplyingSync = useRef(false);
 	const [isFlashing, setIsFlashing] = useState(false);
 	const decRef = useRef<string[]>([]);
+	const sendSaveRef = useRef(p.actions.sendSave);
+	const syncActionsRef = useRef({
+		sendContentChanged: p.actions.sendContentChanged,
+		onEditImmediate: p.actions.onEditImmediate,
+		onEdit: p.actions.onEdit,
+	});
+	const paneContentRef = useRef(p.file.content);
+	useCodePaneSyncRefs(p, sendSaveRef, syncActionsRef, paneContentRef);
 
 	useEffect(() => {
 		if (ed && p.highlights) {
@@ -464,62 +568,96 @@ const useCodePaneLogic = (p: CodePaneProps) => {
 	}, [ed, p.highlights]);
 
 	useEffect(() => {
-		if (
-			!ed ||
-			p.file.content == null ||
-			p.ui.externalSyncId === lastSyncId
-		) {
+		if (!(ed && p.applyExternalEditsRef)) {
 			return;
 		}
+		const ref = p.applyExternalEditsRef;
+		ref.current = {
+			applyIncrementalEdits: (changes) => {
+				const m = ed.getModel();
+				if (!m) {
+					return;
+				}
+				isApplyingSync.current = true;
+				try {
+					m.pushEditOperations(
+						ed.getSelections() || [],
+						monacoChangesToEditOps(changes),
+						() => ed.getSelections() || [],
+					);
+				} finally {
+					isApplyingSync.current = false;
+				}
+			},
+			applyFullSync: (content) => {
+				const m = ed.getModel();
+				if (!m) {
+					return;
+				}
+				isApplyingSync.current = true;
+				try {
+					m.setValue(content);
+				} finally {
+					isApplyingSync.current = false;
+				}
+			},
+		};
+		return () => {
+			ref.current = null;
+		};
+	}, [ed, p.applyExternalEditsRef]);
 
-		setLastSyncId(p.ui.externalSyncId);
-
-		if (p.file.content === ed.getValue()) {
+	// Native Monaco listener for synchronous echo suppression.
+	useEffect(() => {
+		if (!(ed && p.isMiddle)) {
 			return;
 		}
-
 		const m = ed.getModel();
 		if (!m) {
 			return;
 		}
 
+		const disposable = m.onDidChangeContent((ev) => {
+			if (isApplyingSync.current) {
+				return;
+			}
+			syncActionsRef.current.sendContentChanged(ev.changes);
+			const v = m.getValue();
+			if (v !== paneContentRef.current) {
+				syncActionsRef.current.onEditImmediate(p.index);
+			}
+			syncActionsRef.current.onEdit(v, p.index);
+		});
+
+		return () => {
+			disposable.dispose();
+		};
+	}, [ed, p.isMiddle, p.index]);
+
+	useEffect(() => {
+		if (p.isMiddle || !ed) {
+			return;
+		}
+		const m = ed.getModel();
+		if (!m || p.file.content === ed.getValue()) {
+			return;
+		}
 		isApplyingSync.current = true;
 		try {
-			const e = computeMinimalEdits(m, p.file.content);
-			if (e.length > 0) {
-				m.pushEditOperations(
-					ed.getSelections() || [],
-					e,
-					() => ed.getSelections() || [],
-				);
-			}
+			m.setValue(p.file.content || "");
 		} finally {
 			isApplyingSync.current = false;
 		}
-	}, [ed, p.file.content, p.ui.externalSyncId, lastSyncId]);
+	}, [ed, p.file.content, p.isMiddle]);
 
-	const onSubmit = () => {
-		if (!ed) {
-			return;
-		}
-		const markers = ["<<<<<<<", "=======", ">>>>>>>", "|||||||"];
-		const lines = ed.getValue().split(NEWLINE_REGEX);
-		const idx = lines.findIndex(
-			(l) => markers.some((m) => l.startsWith(m)) || l.startsWith("(??)"),
+	const onSubmit = () =>
+		flashFirstConflictAndComplete(
+			ed,
+			setIsFlashing,
+			p.actions.handleCompleteMerge,
 		);
-		if (idx !== -1) {
-			setIsFlashing(true);
-			setTimeout(() => {
-				setIsFlashing(false);
-			}, 1000);
-			ed.revealLineInCenter(idx + 1);
-			ed.setPosition({ lineNumber: idx + 1, column: 1 });
-			ed.focus();
-		}
-		p.actions.handleCompleteMerge();
-	};
 
-	return { ed, setEd, isApplyingSync, isFlashing, onSubmit };
+	return { ed, setEd, isApplyingSync, isFlashing, onSubmit, sendSaveRef };
 };
 const HEADER_STYLE: CSSProperties = {
 	display: "flex",
@@ -537,7 +675,7 @@ const HEADER_STYLE: CSSProperties = {
 };
 
 export const CodePane: FC<CodePaneProps> = (p) => {
-	const { setEd, isApplyingSync, isFlashing, onSubmit } = useCodePaneLogic(p);
+	const { setEd, isFlashing, onSubmit, sendSaveRef } = useCodePaneLogic(p);
 
 	useEffect(
 		() => () => {
@@ -606,19 +744,11 @@ export const CodePane: FC<CodePaneProps> = (p) => {
 					onMount={(e) => {
 						setEd(e);
 						p.onMount(e, p.index);
-						setupActions(e, p);
+						setupActions(e, p, sendSaveRef);
 						if (p.index === 2 && p.ui.files[1] !== null) {
 							setTimeout(() => {
 								p.actions.handleNavigate("next", "conflict");
 							}, 500);
-						}
-					}}
-					onChange={(v) => {
-						if (!isApplyingSync.current) {
-							if (v !== p.file.content) {
-								p.actions.onEditImmediate(p.index);
-							}
-							p.actions.onEdit(v, p.index);
 						}
 					}}
 				/>
@@ -626,7 +756,9 @@ export const CodePane: FC<CodePaneProps> = (p) => {
 			{p.isMiddle && (
 				<div
 					style={{
-						backgroundColor: "#252526",
+						backgroundColor: p.ui.isConflicted
+							? "#252526"
+							: "#4b1f1f",
 						padding: "8px 12px",
 						borderTop: "1px solid #444",
 						display: "flex",
@@ -636,22 +768,33 @@ export const CodePane: FC<CodePaneProps> = (p) => {
 						fontSize: "13px",
 					}}
 				>
-					<button
-						type="button"
-						className={isFlashing ? "button-flash" : ""}
-						onClick={onSubmit}
-						style={{
-							backgroundColor: "#2ea043",
-							color: "white",
-							border: "none",
-							padding: "6px 12px",
-							borderRadius: "4px",
-							cursor: "pointer",
-							fontWeight: 600,
-						}}
-					>
-						Save & Complete Merge
-					</button>
+					{p.ui.isConflicted ? (
+						<button
+							type="button"
+							className={isFlashing ? "button-flash" : ""}
+							onClick={onSubmit}
+							style={{
+								backgroundColor: "#2ea043",
+								color: "white",
+								border: "none",
+								padding: "6px 12px",
+								borderRadius: "4px",
+								cursor: "pointer",
+								fontWeight: 600,
+							}}
+						>
+							Save & Complete Merge
+						</button>
+					) : (
+						<span
+							style={{
+								color: "#ffd6d6",
+								fontWeight: 600,
+							}}
+						>
+							File is no longer conflicted.
+						</span>
+					)}
 				</div>
 			)}
 		</div>

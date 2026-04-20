@@ -192,6 +192,7 @@ const runTestCase = async (config: {
 								]
 							: [],
 					],
+					lastExternalChangeVersion: 1,
 				},
 			},
 			"*",
@@ -254,6 +255,8 @@ const setupApp = async () => {
 							{ label: "Remote", content: "R" },
 						],
 						diffs: [[], []],
+						isConflicted: true,
+						lastExternalChangeVersion: 1,
 					},
 				},
 				origin: "*",
@@ -378,6 +381,70 @@ describe("Webview E2E - Base Comparisons", () => {
 	});
 });
 
+describe("Webview E2E - Conflict State Transitions", () => {
+	beforeEach(() => {
+		jest.useFakeTimers();
+		messagesSent.length = 0;
+		mountedEditors.length = 0;
+	});
+
+	afterEach(() => {
+		(window as unknown as { acquireVsCodeApi: unknown }).acquireVsCodeApi =
+			undefined;
+		jest.useRealTimers();
+	});
+
+	it("shows no-conflict state and restores merge controls when conflicts return", async () => {
+		await setupApp();
+		expect(screen.getByText("Save & Complete Merge")).toBeInTheDocument();
+
+		await act(() => {
+			window.dispatchEvent(
+				new MessageEvent("message", {
+					data: {
+						command: "conflictStateLost",
+					},
+				}),
+			);
+		});
+
+		expect(
+			screen.queryByText("Save & Complete Merge"),
+		).not.toBeInTheDocument();
+		expect(
+			screen.getByText("File is no longer conflicted."),
+		).toBeInTheDocument();
+		expect(screen.getByTestId("weld-root")).toHaveStyle(
+			"background-color: #4b1f1f",
+		);
+
+		await act(() => {
+			window.dispatchEvent(
+				new MessageEvent("message", {
+					data: {
+						command: "loadDiff",
+						data: {
+							files: [
+								{ label: "Local", content: "L2" },
+								{ label: "Merged", content: "M2" },
+								{ label: "Remote", content: "R2" },
+							],
+							diffs: [[], []],
+							isConflicted: true,
+						},
+						lastExternalChangeVersion: 2,
+					},
+				}),
+			);
+		});
+
+		expect(screen.getByText("Save & Complete Merge")).toBeInTheDocument();
+		expect(
+			screen.queryByText("File is no longer conflicted."),
+		).not.toBeInTheDocument();
+	});
+});
+
 describe("Webview E2E - Stress Tests", () => {
 	beforeEach(() => {
 		jest.useFakeTimers();
@@ -408,8 +475,9 @@ describe("Webview E2E - Stress Tests", () => {
 			window.dispatchEvent(
 				new MessageEvent("message", {
 					data: {
-						command: "updateContent",
-						text: newMergedLines.join("\n"),
+						command: "fullSync",
+						content: newMergedLines.join("\n"),
+						lastExternalChangeVersion: 1,
 					},
 					origin: "*",
 				}),

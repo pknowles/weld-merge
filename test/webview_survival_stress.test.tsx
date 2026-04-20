@@ -176,8 +176,16 @@ const createMockModel = (
 			}
 			content = nextContent;
 			onContentChange(content);
+			const ev = {
+				changes: edits.map((e) => ({
+					range: e.range,
+					rangeLength: 0,
+					rangeOffset: 0,
+					text: e.text,
+				})),
+			};
 			for (const l of listeners) {
-				l({});
+				l(ev);
 			}
 		},
 		onDidChangeContent: (cb) => {
@@ -397,18 +405,6 @@ const splitLines = (text: string) => {
 	return lines;
 };
 
-const dedupeChunks = (chunks: DiffChunk[]) => {
-	const seen = new Set<string>();
-	return chunks.filter((c) => {
-		const key = `${c.startA}-${c.endA}-${c.startB}-${c.endB}`;
-		if (seen.has(key)) {
-			return false;
-		}
-		seen.add(key);
-		return true;
-	});
-};
-
 const random = (seed: number) => {
 	const x = Math.sin(seed) * 10_000;
 	return x - Math.floor(x);
@@ -418,6 +414,72 @@ const waitForDebounce = (ms = 1000) => {
 	act(() => {
 		jest.advanceTimersByTime(ms);
 	});
+};
+
+// Replace the entire merged buffer via the real edit path. The production
+// CodePane listens on the Monaco model's onDidChangeContent, not a React
+// onChange prop, so tests must drive edits through executeEdits -> the mock
+// model's pushEditOperations to fire the same listeners.
+const setMergedContent = (newText: string) => {
+	if (!mergedEditorMock) {
+		throw new Error("Merged editor not mounted");
+	}
+	const current = mergedEditorMock.getValue();
+	const lines = current.split("\n");
+	const endLine = Math.max(lines.length, 1);
+	const endCol = (lines[endLine - 1]?.length ?? 0) + 1;
+	mergedEditorMock.executeEdits("test", [
+		{
+			range: {
+				startLineNumber: 1,
+				startColumn: 1,
+				endLineNumber: endLine,
+				endColumn: endCol,
+			},
+			text: newText,
+		},
+	]);
+};
+
+const compareChunkOrder = (left: DiffChunk, right: DiffChunk): number => {
+	if (left.startA !== right.startA) {
+		return left.startA - right.startA;
+	}
+	if (left.endA !== right.endA) {
+		return left.endA - right.endA;
+	}
+	if (left.startB !== right.startB) {
+		return left.startB - right.startB;
+	}
+	if (left.endB !== right.endB) {
+		return left.endB - right.endB;
+	}
+	return left.tag.localeCompare(right.tag);
+};
+
+const assertDiffInvariants = (chunks: DiffChunk[], label: string) => {
+	let prev: DiffChunk | null = null;
+	for (const c of chunks) {
+		if (c.endA < c.startA || c.endB < c.startB) {
+			throw new Error(
+				`${label}: invalid diff range ${c.startA}:${c.endA} -> ${c.startB}:${c.endB}`,
+			);
+		}
+		if (c.endA === c.startA && c.endB === c.startB) {
+			throw new Error(
+				`${label}: empty diff chunk ${c.startA}:${c.endA} -> ${c.startB}:${c.endB}`,
+			);
+		}
+		if (prev && compareChunkOrder(prev, c) >= 0) {
+			throw new Error(
+				`${label}: chunk order must be strictly increasing; previous ${prev.startA}:${prev.endA}:${prev.startB}:${prev.endB}:${prev.tag}`,
+			);
+		}
+		prev = c;
+	}
+	if (chunks.length === 0) {
+		throw new Error(`${label}: expected at least one diff chunk`);
+	}
 };
 
 const dispatchAction = (
@@ -456,7 +518,6 @@ const performRandomModification = (iteration: number, seed: number) => {
 	if (!mergedEditorMock) {
 		return;
 	}
-	const entry = capturedEditors.find((e) => e.mock === mergedEditorMock);
 	const lines = mergedEditorMock.getValue().split("\n");
 	const lineIdx = Math.floor(random(seed) * lines.length);
 
@@ -475,7 +536,7 @@ const performRandomModification = (iteration: number, seed: number) => {
 	}
 
 	act(() => {
-		entry?.props.onChange?.(lines.join("\n"));
+		setMergedContent(lines.join("\n"));
 	});
 	waitForDebounce();
 };
@@ -497,18 +558,16 @@ const loadTestData = (
 	}
 
 	const allChanges = differ.allChanges();
-	const realDiffs = [
-		dedupeChunks(
-			allChanges
-				.map((p: [DiffChunk | null, DiffChunk | null]) => p[0])
-				.filter((x): x is DiffChunk => x !== null),
-		),
-		dedupeChunks(
-			allChanges
-				.map((p: [DiffChunk | null, DiffChunk | null]) => p[1])
-				.filter((x): x is DiffChunk => x !== null),
-		),
+	const realDiffs: [DiffChunk[], DiffChunk[]] = [
+		allChanges
+			.map((p: [DiffChunk | null, DiffChunk | null]) => p[0])
+			.filter((x): x is DiffChunk => x !== null),
+		allChanges
+			.map((p: [DiffChunk | null, DiffChunk | null]) => p[1])
+			.filter((x): x is DiffChunk => x !== null),
 	];
+	assertDiffInvariants(realDiffs[0], "baseline 0-1");
+	assertDiffInvariants(realDiffs[1], "baseline 1-2");
 
 	act(() => {
 		window.dispatchEvent(
@@ -531,22 +590,28 @@ const loadTestData = (
 	return { realDiffs, mergedText: base };
 };
 
-describe("Webview Survival Stress Test", () => {
+const setupStressTest = () => {
+	jest.useFakeTimers();
+	capturedEditors.length = 0;
+	for (const k of Object.keys(capturedDiffsMap)) {
+		delete capturedDiffsMap[k];
+	}
+	mergedEditorMock = null;
+};
+
+const teardownStressTest = () => {
+	jest.useRealTimers();
+};
+
+describe("Webview Survival Stress Test - random actions", () => {
 	let seed = 12_345;
 
 	beforeEach(() => {
-		jest.useFakeTimers();
-		capturedEditors.length = 0;
-		for (const k of Object.keys(capturedDiffsMap)) {
-			delete capturedDiffsMap[k];
-		}
-		mergedEditorMock = null;
+		setupStressTest();
 		seed = 12_345;
 	});
 
-	afterEach(() => {
-		jest.useRealTimers();
-	});
+	afterEach(teardownStressTest);
 
 	it("survives random actions and modifications (Stage 1 & 2)", () => {
 		render(<App />);
@@ -569,11 +634,18 @@ describe("Webview Survival Stress Test", () => {
 			// Survival Assertion: The app must not crash and must produce some diffs
 			expect(capturedDiffsMap["0-1"]).toBeDefined();
 			expect(capturedDiffsMap["1-2"]).toBeDefined();
+			const liveLr = capturedDiffsMap["0-1"];
+			const liveRm = capturedDiffsMap["1-2"];
+			if (!(liveLr && liveRm)) {
+				throw new Error("Expected live diffs after random action");
+			}
+			assertDiffInvariants(liveLr, "random-action 0-1");
+			assertDiffInvariants(liveRm, "random-action 1-2");
 
 			// Catch-and-Restore: Reverting to the origin MUST result in a perfect diff state.
 			// Any drift here indicates a corrupted internal state in the Differ cache.
 			act(() => {
-				entry.props.onChange?.(baselineText);
+				setMergedContent(baselineText);
 			});
 			waitForDebounce();
 			expect(capturedDiffsMap["0-1"]).toEqual(baselineLr);
@@ -588,16 +660,30 @@ describe("Webview Survival Stress Test", () => {
 
 			expect(capturedDiffsMap["0-1"]).toBeDefined();
 			expect(capturedDiffsMap["1-2"]).toBeDefined();
+			const liveLr = capturedDiffsMap["0-1"];
+			const liveRm = capturedDiffsMap["1-2"];
+			if (!(liveLr && liveRm)) {
+				throw new Error(
+					"Expected live diffs after random modification",
+				);
+			}
+			assertDiffInvariants(liveLr, "random-mod 0-1");
+			assertDiffInvariants(liveRm, "random-mod 1-2");
 
 			// Catch-and-Restore: Again, verify that we can return to a perfect state.
 			act(() => {
-				entry.props.onChange?.(baselineText);
+				setMergedContent(baselineText);
 			});
 			waitForDebounce();
 			expect(capturedDiffsMap["0-1"]).toEqual(baselineLr);
 			expect(capturedDiffsMap["1-2"]).toEqual(baselineRm);
 		}
 	});
+});
+
+describe("Webview Survival Stress Test - clearing and restoring", () => {
+	beforeEach(setupStressTest);
+	afterEach(teardownStressTest);
 
 	it("kills mutants by clearing and restoring", () => {
 		render(<App />);
@@ -613,16 +699,25 @@ describe("Webview Survival Stress Test", () => {
 
 		// Clear the document
 		act(() => {
-			entry.props.onChange?.("");
+			setMergedContent("");
 		});
 		waitForDebounce();
 
 		// Verify clearing changed the diffs (mutant killer)
 		expect(capturedDiffsMap["0-1"]).not.toEqual(baselineLr);
+		const clearedLr = capturedDiffsMap["0-1"];
+		const clearedRm = capturedDiffsMap["1-2"];
+		if (!(clearedLr && clearedRm)) {
+			throw new Error(
+				"Expected live diffs after clearing merged content",
+			);
+		}
+		assertDiffInvariants(clearedLr, "cleared 0-1");
+		assertDiffInvariants(clearedRm, "cleared 1-2");
 
 		// Restore and verify
 		act(() => {
-			entry.props.onChange?.(baselineText);
+			setMergedContent(baselineText);
 		});
 		waitForDebounce();
 		expect(capturedDiffsMap["0-1"]).toEqual(baselineLr);

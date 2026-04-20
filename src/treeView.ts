@@ -11,7 +11,7 @@ import {
 	Uri,
 	workspace,
 } from "vscode";
-import { execGit } from "./gitUtils.ts";
+import { execGit, readConflictState } from "./gitUtils.ts";
 
 const CONFLICT_PREFIX_REGEX = /^#?\t/;
 
@@ -153,13 +153,7 @@ class ConflictedFilesProvider implements TreeDataProvider<GitFile> {
 	}
 
 	private _isInConflictState(repoPath: string): boolean {
-		const stateFiles = [
-			"MERGE_HEAD",
-			"rebase-merge",
-			"rebase-apply",
-			"CHERRY_PICK_HEAD",
-		];
-		return stateFiles.some((f) => existsSync(join(repoPath, ".git", f)));
+		return readConflictState(repoPath) !== undefined;
 	}
 
 	private _getOriginallyConflicted(repoPath: string): string[] {

@@ -1,6 +1,5 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-import { readFile } from "node:fs/promises";
 import { relative } from "node:path";
 import {
 	commands,
@@ -23,6 +22,14 @@ import { ConflictedFilesProvider, type GitFile } from "./treeView.ts";
 import { MeldCustomEditorProvider } from "./webview/meldWebviewPanel.ts";
 
 const lastConflictedFilesPerRepo: Map<string, Set<string>> = new Map();
+const GIT_CONFLICT_WATCH_PATTERNS = [
+	".git/index",
+	".git/MERGE_HEAD",
+	".git/CHERRY_PICK_HEAD",
+	".git/REVERT_HEAD",
+	".git/rebase-merge/**",
+	".git/rebase-apply/**",
+];
 
 async function notifyIfNewConflicts(repoPath: string) {
 	const currentConflicts = await getConflictedFiles(repoPath);
@@ -69,23 +76,6 @@ async function getGitFileContent(
 			`Could not get git content for stage ${stage} of ${relativeFilePath}. Is it in conflict?`,
 		);
 	}
-}
-
-async function updateIfOpen(uri: Uri, newContent: string) {
-	const doc = workspace.textDocuments.find(
-		(d) => d.uri.toString() === uri.toString(),
-	);
-	if (!doc) {
-		return;
-	}
-
-	const edit = new WorkspaceEdit();
-	edit.replace(
-		uri,
-		new Range(0, 0, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
-		newContent,
-	);
-	await workspace.applyEdit(edit);
 }
 
 function handleOpenMergeEditor(file?: GitFile) {
@@ -300,8 +290,6 @@ async function handleCheckoutConflicted(
 
 	try {
 		await execGit(["checkout", "-m", "--", relativeFilePath], repoPath);
-		const newContent = await readFile(documentUri.fsPath, "utf8");
-		await updateIfOpen(documentUri, newContent);
 		MeldCustomEditorProvider.onRequestRefresh.fire(documentUri);
 		window.showInformationMessage(
 			`Checked out conflicted version of ${relativeFilePath}`,
@@ -477,18 +465,54 @@ function setupWatchers(
 	if (workspaceFolders) {
 		for (const workspaceFolder of workspaceFolders) {
 			const repoPath = workspaceFolder.uri.fsPath;
-			const watcher = workspace.createFileSystemWatcher(
-				new RelativePattern(repoPath, ".git/index"),
-			);
-			context.subscriptions.push(watcher);
-			const refresh = () => {
+			const doRefresh = () => {
 				conflictedFilesProvider.refresh();
 				notifyIfNewConflicts(repoPath);
+				MeldCustomEditorProvider.onConflictStateChanged.fire({
+					repoPath,
+					stateKey:
+						MeldCustomEditorProvider.getCurrentConflictStateKey(
+							repoPath,
+						),
+				});
 			};
-			watcher.onDidChange(refresh);
-			watcher.onDidCreate(refresh);
-			watcher.onDidDelete(refresh);
-			notifyIfNewConflicts(repoPath);
+
+			// Git operations write multiple files in quick succession (e.g. a
+			// merge --abort rewrites .git/index and removes MERGE_HEAD). Debounce
+			// so we consolidate the resulting watcher bursts into a single
+			// refresh pass rather than re-reading .git state once per event.
+			const RefreshDebounceMs = 50;
+			let refreshTimer: NodeJS.Timeout | null = null;
+			const refresh = () => {
+				if (refreshTimer !== null) {
+					clearTimeout(refreshTimer);
+				}
+				refreshTimer = setTimeout(() => {
+					refreshTimer = null;
+					doRefresh();
+				}, RefreshDebounceMs);
+			};
+			context.subscriptions.push({
+				dispose: () => {
+					if (refreshTimer !== null) {
+						clearTimeout(refreshTimer);
+						refreshTimer = null;
+					}
+				},
+			});
+
+			for (const pattern of GIT_CONFLICT_WATCH_PATTERNS) {
+				const watcher = workspace.createFileSystemWatcher(
+					new RelativePattern(repoPath, pattern),
+				);
+				context.subscriptions.push(watcher);
+				watcher.onDidChange(refresh);
+				watcher.onDidCreate(refresh);
+				watcher.onDidDelete(refresh);
+			}
+
+			// Initial refresh runs immediately (no burst to consolidate).
+			doRefresh();
 		}
 	}
 

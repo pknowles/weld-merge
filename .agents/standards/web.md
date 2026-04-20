@@ -11,8 +11,13 @@
   - Always return cleanup functions from `useEffect` for subscriptions, timers, or event listeners. Unmounting must tear down resources strictly.
 - **No Defensive Plumbing:**
   - Do not silently handle invalid input with fallbacks or `console.log()` traps. Throw errors instead.
+  - Do not paper over unexpected `undefined` / `null` with `??` defaults on fields that are required by the caller. Validate once at the boundary and throw; treat the value as non-null thereafter.
+  - `Promise<T | undefined>` is a smell. Prefer `Promise<T>` + throw on failure. Use `Promise<T | null>` only when "absent" is a distinct, expected outcome (not "maybe it failed"). Never conflate the two.
   - Avoid `yield` loops as async patterns can easily confuse LLMs.
   - Do not map or re-shape arrays solely for internal component border passing if the raw object works fine.
+- **Fixed-Shape Data Uses Named Fields:**
+  - When a payload or internal structure has a fixed, known shape, model it as an object with named fields or a fixed-length tuple. Avoid open-ended arrays indexed by position (`data[0]`, `data[1]`), which force `noUncheckedIndexedAccess` to widen the type to `T | undefined` and invite `?? []` band-aids at every call site.
+  - Prefer tuple types (e.g. `[T, T]`) over `T[]` when the count is part of the contract. Prefer named objects over tuples when the count is small and fields have distinct meanings.
 - **Boundaries & Dependencies:**
   - If Knip or Dependency-Cruiser flag unused/illegal code, you must remove or fix the code. Do not add exceptions to `knip.json` or `.dependency-cruiser.js`.
   - Add new constraint rules when creating new architectural domains to enforce strict separation.
