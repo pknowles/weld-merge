@@ -10,3 +10,7 @@ These principles apply across all languages and frameworks in this repository.
 - **Zero-Friction Plumbing:** Build and pass configuration objects directly if underling libraries need them. Do not create wrappers around standard library APIs unless adding significant, documented value.
 - **Never Silence Quality Tools:** Linter exceptions, type ignores, and rule weakening are **forbidden**. Fix the underlying design instead.
 - **Comprehensive Implementation:** If a feature applies to multiple modes, formats, or variants, implement it for all of them. Do not default to only handling the most common case.
+- **Fail Fast:** If you see unhandled bugs or invalid inputs, crash and report. Do NOT write defensive/fallback code or suppress errors just to "keep things running."
+- **No Fake Success Values:** Never convert an operational failure into a valid-looking result such as `[]`, `""`, `0`, `false`, `null`, or `undefined`. Propagate the error to code that can show the user a real error message, and only return empty/default values for genuinely expected absence.
+- Prefer exceptions for truly exceptional failures as the happy path is short. Only use std::expected/std::optional/null/None returns when the missing value is a common occurance.
+- Never discard error details such as exception values. Never write catch-all except statements that discard the exception.

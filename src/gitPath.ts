@@ -4,12 +4,8 @@ import { workspace } from "vscode";
 import { getGitApi } from "./repoContext.ts";
 
 async function getExtensionPath(): Promise<string | undefined> {
-	try {
-		const api = await getGitApi();
-		return api.git.path || undefined;
-	} catch {
-		return;
-	}
+	const api = await getGitApi();
+	return api.git.path || undefined;
 }
 
 // TODO: code smell returning undefined. Fail fast.
@@ -37,5 +33,10 @@ export async function getGitExecutable(): Promise<string> {
 	}
 	const configPath = getConfigPath();
 	// TODO: fallback are a violation o the coding standards.
-	return configPath || "git";
+	if (configPath) {
+		return configPath;
+	}
+	throw new Error(
+		"Cannot determine git executable: the VS Code git extension exposed no path and no 'git.path' setting is configured.",
+	);
 }

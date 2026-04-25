@@ -21,7 +21,12 @@ import {
 	workspace,
 } from "vscode";
 import { getUnresolvedReasons, readConflictState } from "../gitUtils.ts";
-import { resolveRepoContext } from "../repoContext.ts";
+import {
+	type GitApiRepository,
+	isSupportedScheme,
+	type RepoContext,
+	resolveRepoContext,
+} from "../repoContext.ts";
 import {
 	type ConflictLabels,
 	extractConflictLabels,
@@ -189,9 +194,9 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 	}
 
 	static async getCurrentConflictStateKey(
-		repoPath: string,
+		repository: GitApiRepository,
 	): Promise<string | undefined> {
-		const state = await readConflictState(repoPath);
+		const state = await readConflictState(repository);
 		if (!state) {
 			return;
 		}
@@ -240,9 +245,8 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		webviewPanel: WebviewPanel,
 		_token: CancellationToken,
 	): Promise<void> {
-		if (document.uri.scheme !== "file") {
-			webviewPanel.webview.html =
-				"<p>Cannot open: Weld only supports local files.</p>";
+		if (!isSupportedScheme(document.uri)) {
+			webviewPanel.webview.html = `<p>Cannot open: unsupported URI scheme "${document.uri.scheme}".</p>`;
 			return;
 		}
 
@@ -253,9 +257,6 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			return;
 		}
 
-		const repoPath = repoContext.rootFsPath;
-		const relativeFilePath = repoContext.relativePath;
-
 		webviewPanel.webview.options = {
 			enableScripts: true,
 			localResourceRoots: [Uri.joinPath(this.extensionUri, "out")],
@@ -263,19 +264,13 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 
 		// Listener attached BEFORE setting html so "ready" is never missed
 		// regardless of how fast the webview boots (especially over SSH).
-		this._initializeWebview(
-			document,
-			webviewPanel,
-			repoPath,
-			relativeFilePath,
-		);
+		this._initializeWebview(document, webviewPanel, repoContext);
 	}
 
 	private _initializeWebview(
 		document: TextDocument,
 		webviewPanel: WebviewPanel,
-		repoPath: string,
-		relativeFilePath: string,
+		repoContext: RepoContext,
 	): void {
 		const config = this._getWebviewConfig();
 
@@ -306,8 +301,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 						{
 							document,
 							webviewPanel,
-							repoPath,
-							relativeFilePath,
+							repoContext,
 							editState,
 							disposables,
 						},
@@ -324,8 +318,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 				await this._handleMessage(msg, {
 					document,
 					webviewPanel,
-					repoPath,
-					relativeFilePath,
+					repoContext,
 					editState,
 				});
 			},
@@ -349,8 +342,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		ctx: {
 			document: TextDocument;
 			webviewPanel: WebviewPanel;
-			repoPath: string;
-			relativeFilePath: string;
+			repoContext: RepoContext;
 			editState: EditState;
 			disposables: Disposable[];
 		},
@@ -371,8 +363,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			this._setupPerEditorListeners({
 				document: ctx.document,
 				webviewPanel: ctx.webviewPanel,
-				repoPath: ctx.repoPath,
-				relativeFilePath: ctx.relativeFilePath,
+				repoContext: ctx.repoContext,
 				readyState,
 				editState: ctx.editState,
 				disposables: ctx.disposables,
@@ -403,15 +394,14 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 	private async _loadInitialSnapshot(
 		ctx: {
 			document: TextDocument;
-			repoPath: string;
-			relativeFilePath: string;
+			repoContext: RepoContext;
 		},
 		config: ReturnType<MeldCustomEditorProvider["_getWebviewConfig"]>,
 	): Promise<WebviewPayload["data"] | null> {
 		const docText = ctx.document.getText();
 		const stages = await fetchConflictStages(
-			ctx.repoPath,
-			ctx.relativeFilePath,
+			ctx.repoContext.repository,
+			ctx.repoContext.relativePath,
 		);
 		// Labels come from file markers, because git does not persist label text
 		// in .git metadata and we need byte-exact reconstruction for the check.
@@ -434,14 +424,6 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			stages,
 			labels,
 		);
-		if (initialGitState === undefined) {
-			return this._snapshotFromCurrentDocument(
-				ctx,
-				config,
-				stages,
-				docText,
-			);
-		}
 		if (docText === initialGitState) {
 			return this._snapshotFromAutoMerge(ctx, config, stages);
 		}
@@ -464,33 +446,23 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		return this._snapshotFromAutoMerge(ctx, config, stages);
 	}
 
-	private async _tryBuildInitialConflictText(
+	private _tryBuildInitialConflictText(
 		ctx: {
-			document: TextDocument;
-			repoPath: string;
+			repoContext: RepoContext;
 		},
 		stages: Awaited<ReturnType<typeof fetchConflictStages>>,
 		labels: ConflictLabels,
-	): Promise<string | undefined> {
-		try {
-			return await buildInitialConflictedState(
-				ctx.repoPath,
-				stages,
-				labels,
-			);
-		} catch {
-			this._warnAutoMergeSkipped(
-				ctx.document,
-				"failed to reconstruct git's initial conflict text",
-			);
-			return;
-		}
+	): Promise<string> {
+		return buildInitialConflictedState(
+			ctx.repoContext.rootFsPath,
+			stages,
+			labels,
+		);
 	}
 
 	private async _snapshotFromCurrentDocument(
 		ctx: {
-			repoPath: string;
-			relativeFilePath: string;
+			repoContext: RepoContext;
 		},
 		config: ReturnType<MeldCustomEditorProvider["_getWebviewConfig"]>,
 		stages: Awaited<ReturnType<typeof fetchConflictStages>>,
@@ -498,8 +470,8 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 	): Promise<WebviewPayload["data"]> {
 		// Keep path: never rewrite the buffer; render and diff exactly what exists.
 		const snapshot = await buildDiffPayload(
-			ctx.repoPath,
-			ctx.relativeFilePath,
+			ctx.repoContext,
+			ctx.repoContext.relativePath,
 			{
 				stages,
 				workingContent: docText,
@@ -512,16 +484,15 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 	private async _snapshotFromAutoMerge(
 		ctx: {
 			document: TextDocument;
-			repoPath: string;
-			relativeFilePath: string;
+			repoContext: RepoContext;
 		},
 		config: ReturnType<MeldCustomEditorProvider["_getWebviewConfig"]>,
 		stages: Awaited<ReturnType<typeof fetchConflictStages>>,
 	): Promise<WebviewPayload["data"]> {
 		// Replace path: compute merged middle content, then apply it in-memory only.
 		const snapshot = await buildDiffPayload(
-			ctx.repoPath,
-			ctx.relativeFilePath,
+			ctx.repoContext,
+			ctx.repoContext.relativePath,
 			{
 				stages,
 			},
@@ -601,8 +572,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		ctx: {
 			document: TextDocument;
 			webviewPanel: WebviewPanel;
-			repoPath: string;
-			relativeFilePath: string;
+			repoContext: RepoContext;
 			editState: EditState;
 		},
 	): Promise<void> {
@@ -727,8 +697,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 	private _setupPerEditorListeners(ctx: {
 		document: TextDocument;
 		webviewPanel: WebviewPanel;
-		repoPath: string;
-		relativeFilePath: string;
+		repoContext: RepoContext;
 		readyState: {
 			snapshot: WebviewPayload["data"] | null;
 			handled: boolean;
@@ -757,8 +726,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 				const snapshot = await this._loadInitialSnapshot(
 					{
 						document: ctx.document,
-						repoPath: ctx.repoPath,
-						relativeFilePath: ctx.relativeFilePath,
+						repoContext: ctx.repoContext,
 					},
 					this._getWebviewConfig(),
 				);
@@ -777,7 +745,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		const conflictStateSubscription =
 			MeldCustomEditorProvider.onConflictStateChanged.event(
 				async (event) => {
-					if (event.repoPath !== ctx.repoPath) {
+					if (event.repoPath !== ctx.repoContext.rootFsPath) {
 						return;
 					}
 					if (event.stateKey === undefined) {
@@ -789,8 +757,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 					const snapshot = await this._loadInitialSnapshot(
 						{
 							document: ctx.document,
-							repoPath: ctx.repoPath,
-							relativeFilePath: ctx.relativeFilePath,
+							repoContext: ctx.repoContext,
 						},
 						this._getWebviewConfig(),
 					);
@@ -962,15 +929,14 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 
 	private async _handleRequestBaseDiff(
 		ctx: {
-			repoPath: string;
-			relativeFilePath: string;
+			repoContext: RepoContext;
 			webviewPanel: WebviewPanel;
 		},
 		msg: RequestBaseDiffMessage,
 	) {
 		const basePayload = (await buildBaseDiffPayload(
-			ctx.repoPath,
-			ctx.relativeFilePath,
+			ctx.repoContext,
+			ctx.repoContext.relativePath,
 			msg.side,
 		)) as {
 			command: string;
@@ -1004,8 +970,10 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		document: TextDocument,
 		paneIndex: number,
 	): Promise<void> {
-		if (document.uri.scheme !== "file") {
-			window.showErrorMessage("Cannot open diff: not a local file.");
+		if (!isSupportedScheme(document.uri)) {
+			window.showErrorMessage(
+				`Cannot open diff: unsupported URI scheme "${document.uri.scheme}".`,
+			);
 			return;
 		}
 		const gitExt = extensions.getExtension("vscode.git");

@@ -1,20 +1,45 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import {
 	type Event,
 	EventEmitter,
+	ThemeIcon,
 	type TreeDataProvider,
 	TreeItem,
 	TreeItemCollapsibleState,
 	Uri,
 	workspace,
 } from "vscode";
-import { execGit, getGitDir, readConflictState } from "./gitUtils.ts";
-import { getGitApi, isSupportedScheme } from "./repoContext.ts";
+import {
+	getConflictedFiles,
+	getGitDirUri,
+	readConflictState,
+} from "./gitUtils.ts";
+import {
+	type GitApiRepository,
+	getGitApi,
+	isSupportedScheme,
+} from "./repoContext.ts";
 
 const CONFLICT_PREFIX_REGEX = /^#?\t/;
+
+function getTreeErrorMessage(error: unknown): string {
+	if (error instanceof Error) {
+		const messages: string[] = [];
+		const seen = new Set<unknown>();
+		let current: unknown = error;
+		while (current instanceof Error && !seen.has(current)) {
+			seen.add(current);
+			messages.push(current.message);
+			current = (current as Error & { cause?: unknown }).cause;
+		}
+		if (current !== undefined && !seen.has(current)) {
+			messages.push(String(current));
+		}
+		return messages.join(" -> caused by: ");
+	}
+	return String(error);
+}
 
 interface GitFileOptions {
 	label: string;
@@ -64,76 +89,121 @@ class ResolvedFile extends GitFile {
 	}
 }
 
-class ConflictedFilesProvider implements TreeDataProvider<GitFile> {
+// Persistent, in-tree surface for a failure while building the conflict list.
+// Takes the slot where the real list (or a subtree of it) would have gone, so
+// users always have the error visible in the UI rather than in a transient
+// popup. Carries no command / uri: clicking it does nothing, hovering shows
+// the full error message.
+class ErrorTreeItem extends TreeItem {
+	override readonly contextValue = "weldError";
+
+	constructor(label: string, error: unknown) {
+		super(label, TreeItemCollapsibleState.None);
+		this.iconPath = new ThemeIcon("error");
+		this.tooltip = getTreeErrorMessage(error);
+		this.description = getTreeErrorMessage(error);
+	}
+}
+
+type ConflictedTreeItem = GitFile | ErrorTreeItem;
+
+class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 	private readonly _onDidChangeTreeData: EventEmitter<
-		GitFile | undefined | null
-	> = new EventEmitter<GitFile | undefined | null>();
-	readonly onDidChangeTreeData: Event<GitFile | undefined | null> =
+		ConflictedTreeItem | undefined | null
+	> = new EventEmitter<ConflictedTreeItem | undefined | null>();
+	readonly onDidChangeTreeData: Event<ConflictedTreeItem | undefined | null> =
 		this._onDidChangeTreeData.event;
 
 	refresh(): void {
 		this._onDidChangeTreeData.fire(undefined);
 	}
 
-	getTreeItem(element: GitFile): TreeItem {
+	getTreeItem(element: ConflictedTreeItem): TreeItem {
 		return element;
 	}
 
-	async getChildren(element?: GitFile): Promise<GitFile[]> {
+	// Top-level failures replace the entire list with an ErrorTreeItem so the
+	// user sees persistent UI feedback rather than a silent empty list.
+	async getChildren(
+		element?: ConflictedTreeItem,
+	): Promise<ConflictedTreeItem[]> {
 		if (element) {
 			return [];
 		}
+		try {
+			return await this._getRootChildren();
+		} catch (error: unknown) {
+			return [new ErrorTreeItem("Failed to list conflicts", error)];
+		}
+	}
 
+	private async _getRootChildren(): Promise<ConflictedTreeItem[]> {
 		const workspaceFolders = workspace.workspaceFolders;
 		if (!workspaceFolders || workspaceFolders.length === 0) {
 			return [];
 		}
 
-		try {
-			const gitApi = await getGitApi();
-			const repositoriesByRootUri = new Map<string, Uri>();
-			for (const workspaceFolder of workspaceFolders) {
-				if (!isSupportedScheme(workspaceFolder.uri)) {
-					continue;
-				}
-				const repository = gitApi.getRepository(workspaceFolder.uri);
-				if (!repository) {
-					continue;
-				}
-				repositoriesByRootUri.set(
-					repository.rootUri.toString(),
-					repository.rootUri,
-				);
+		const gitApi = await getGitApi();
+		const repositoriesByRootUri = new Map<string, GitApiRepository>();
+		for (const workspaceFolder of workspaceFolders) {
+			if (!isSupportedScheme(workspaceFolder.uri)) {
+				continue;
 			}
-			if (repositoriesByRootUri.size === 0) {
-				return [];
+			const repository = gitApi.getRepository(workspaceFolder.uri);
+			if (!repository) {
+				continue;
 			}
-			const perRepositoryItems = await Promise.all(
-				[...repositoriesByRootUri.values()].map(async (rootUri) => {
-					const repoPath = rootUri.fsPath;
-					const unmergedFiles =
-						await this._getUnmergedFiles(repoPath);
-					const conflictedItems = this._createConflictedItems(
-						unmergedFiles,
-						rootUri,
-						repoPath,
-					);
-					const originallyConflicted =
-						await this._getOriginallyConflicted(repoPath);
-					const resolvedFiles = originallyConflicted.filter(
-						(f) => !unmergedFiles.includes(f),
-					);
-					const resolvedItems = this._createResolvedItems(
-						resolvedFiles,
-						rootUri,
-						repoPath,
-					);
-					return [...conflictedItems, ...resolvedItems];
-				}),
+			repositoriesByRootUri.set(
+				repository.rootUri.toString(),
+				repository,
 			);
-			return perRepositoryItems.flat();
-		} catch {
+		}
+		if (repositoriesByRootUri.size === 0) {
 			return [];
+		}
+		const perRepositoryItems = await Promise.all(
+			[...repositoriesByRootUri.values()].map((repository) =>
+				this._buildItemsForRepository(repository),
+			),
+		);
+		return perRepositoryItems.flat();
+	}
+
+	// Builds conflict + resolved items for a single repository. Any failure is
+	// caught and replaced with a single error item in that repository's slot,
+	// so an unrelated repo's problem cannot wipe out the rest of the tree.
+	// Per-repository failures show an ErrorTreeItem for that repo only, allowing
+	// other repositories to still display their conflicts normally.
+	private async _buildItemsForRepository(
+		repository: GitApiRepository,
+	): Promise<ConflictedTreeItem[]> {
+		const repoPath = repository.rootUri.fsPath;
+		try {
+			const rootUri = repository.rootUri;
+			const unmergedFiles = await this._getUnmergedFiles(repository);
+			const conflictedItems = this._createConflictedItems(
+				unmergedFiles,
+				rootUri,
+				repoPath,
+			);
+			const originallyConflicted =
+				await this._getOriginallyConflicted(repository);
+			const resolvedFiles = originallyConflicted.filter(
+				(f) => !unmergedFiles.includes(f),
+			);
+			const resolvedItems = this._createResolvedItems(
+				resolvedFiles,
+				rootUri,
+				repoPath,
+			);
+			return [...conflictedItems, ...resolvedItems];
+		} catch (error: unknown) {
+			return [
+				new ErrorTreeItem(
+					`Failed to list conflicts for ${repoPath}`,
+					error,
+				),
+			];
 		}
 	}
 
@@ -174,37 +244,30 @@ class ConflictedFilesProvider implements TreeDataProvider<GitFile> {
 		);
 	}
 
-	private async _getUnmergedFiles(repoPath: string): Promise<string[]> {
-		const unmergedOutput = await execGit(
-			["diff", "--name-only", "--diff-filter=U", "--"],
-			repoPath,
-		);
-		return unmergedOutput
-			.trim()
-			.split("\n")
-			.filter((f) => f);
+	private _getUnmergedFiles(repository: GitApiRepository): Promise<string[]> {
+		return getConflictedFiles(repository);
 	}
 
-	private async _isInConflictState(repoPath: string): Promise<boolean> {
-		return (await readConflictState(repoPath)) !== undefined;
+	private async _isInConflictState(
+		repository: GitApiRepository,
+	): Promise<boolean> {
+		return (await readConflictState(repository)) !== undefined;
 	}
 
 	private async _getOriginallyConflicted(
-		repoPath: string,
+		repository: GitApiRepository,
 	): Promise<string[]> {
-		if (!(await this._isInConflictState(repoPath))) {
+		if (!(await this._isInConflictState(repository))) {
 			return [];
 		}
 
-		const mergeMsgPath = join(await getGitDir(repoPath), "MERGE_MSG");
-		if (!existsSync(mergeMsgPath)) {
-			return [];
-		}
-
-		const msg = readFileSync(mergeMsgPath, "utf8");
-		const lines = msg.split("\n");
-
-		return this._parseMergeMsgConflicts(lines);
+		const mergeMsgPath = Uri.joinPath(
+			await getGitDirUri(repository),
+			"MERGE_MSG",
+		);
+		const mergeMsgBytes = await workspace.fs.readFile(mergeMsgPath);
+		const msg = new TextDecoder("utf-8").decode(mergeMsgBytes);
+		return this._parseMergeMsgConflicts(msg.split("\n"));
 	}
 
 	private _parseMergeMsgConflicts(lines: string[]): string[] {
@@ -243,4 +306,4 @@ class ConflictedFilesProvider implements TreeDataProvider<GitFile> {
 	}
 }
 
-export { GitFile, ConflictedFilesProvider };
+export { GitFile, ErrorTreeItem, ConflictedFilesProvider };

@@ -3,7 +3,10 @@
 ## Communication & Planning
 - **Discuss First:** If there are design conflicts, unknown unknowns, or risky shortcuts, present pros/cons and a recommendation. Wait for user approval before implementing.
 - **Answer Directly:** If the user asks a question, answer it and wait. Do not start implementing immediately.
-- **Fail Fast:** If you see unhandled bugs or invalid inputs, crash and report. Do NOT write defensive/fallback code or suppress errors just to "keep things running."
+
+## Coding
+
+See ./standards/core.md and ./standards/*.
 
 ## Git Etiquette
 - **Surgical Commits:** Prefer `git add -u` or manually staging specific files. NEVER `git add -A` or `git add .` as this WILL stage files we don't want.

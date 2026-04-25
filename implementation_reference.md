@@ -10,10 +10,10 @@ Found in `src/matchers/`. High-performance, side-effect-free TypeScript logic.
 ## Extension Host (VS Code Plumbing)
 Entry point and Git integration.
 - **`extension.ts`**: Extension lifecycle, command registrations, and workspace event handling.
-- **`repoContext.ts`**: Resolves per-file Git repository context via `vscode.git` (`rootUri`, `rootFsPath`, and repo-relative path).
-- **`gitUtils.ts`**: Git command utilities, conflict-state detection via resolved gitdir (worktree-safe), and conflicted-file queries.
+- **`repoContext.ts`**: Resolves per-file Git repository context via `vscode.git` (`repository`, `rootUri`, `rootFsPath`, and repo-relative path).
+- **`gitUtils.ts`**: Shared git helpers for subprocess-backed commands plus URI-safe `.git` resolution and conflict-state detection via `workspace.fs`.
 - **`log.ts`**: Shared `LogOutputChannel` initialization/access for extension-host diagnostics.
-- **`treeView.ts`**: Implementation of the "Conflicted Files" view in the SCM panel.
+- **`treeView.ts`**: Implementation of the "Conflicted Files" view in the SCM panel, including resolved-file parsing from `MERGE_MSG` through `workspace.fs`.
 - **`webview/meldWebviewPanel.ts`**: Manages the custom editor lifecycle, lifecycle of the Webview, and message passing.
 
 ## Webview UI (React Frontend)

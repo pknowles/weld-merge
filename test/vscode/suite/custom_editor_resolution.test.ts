@@ -3,6 +3,7 @@ import { rm } from "node:fs/promises";
 import { describe, it } from "mocha";
 import type { TextDocument, WebviewPanel } from "vscode";
 import { Uri } from "vscode";
+import type { RepoContext } from "../../../src/repoContext.ts";
 import { MeldCustomEditorProvider } from "../../../src/webview/meldWebviewPanel.ts";
 import {
 	makeRepo,
@@ -12,8 +13,7 @@ import {
 } from "./helpers.ts";
 
 interface CapturedInitArgs {
-	repoPath: string;
-	relativeFilePath: string;
+	repoContext: RepoContext;
 }
 
 interface FakeWebview {
@@ -31,8 +31,7 @@ interface FakePanel {
 type InitializeWebviewFn = (
 	document: TextDocument,
 	webviewPanel: WebviewPanel,
-	repoPath: string,
-	relativeFilePath: string,
+	repoContext: RepoContext,
 ) => void;
 
 function makeFakePanel(): FakePanel {
@@ -48,6 +47,17 @@ function makeDocument(uri: Uri): TextDocument {
 	return { uri } as TextDocument;
 }
 
+async function resolveEditorHtml(documentUri: Uri): Promise<string> {
+	const provider = new MeldCustomEditorProvider(Uri.file("/tmp"));
+	const panel = makeFakePanel();
+	await provider.resolveCustomTextEditor(
+		makeDocument(documentUri),
+		panel as unknown as WebviewPanel,
+		{} as never,
+	);
+	return panel.webview.html;
+}
+
 function stubInitializeWebview(
 	provider: MeldCustomEditorProvider,
 	sink: CapturedInitArgs[],
@@ -58,49 +68,53 @@ function stubInitializeWebview(
 	// without depending on unrelated webview HTML/setup details.
 	(
 		provider as unknown as { _initializeWebview: InitializeWebviewFn }
-	)._initializeWebview = (
-		_document,
-		_webviewPanel,
-		repoPath,
-		relativeFilePath,
-	) => {
-		sink.push({ repoPath, relativeFilePath });
+	)._initializeWebview = (_document, _webviewPanel, repoContext) => {
+		sink.push({ repoContext });
 	};
+}
+
+async function assertRepoContextResolution(
+	repoPath: string,
+	relativeFilePath: string,
+): Promise<CapturedInitArgs[]> {
+	await openRepoInGitExtension(repoPath);
+	const provider = new MeldCustomEditorProvider(Uri.file("/tmp"));
+	const panel = makeFakePanel();
+	const captured: CapturedInitArgs[] = [];
+	stubInitializeWebview(provider, captured);
+	const fileUri = await makeRepoFile(repoPath, relativeFilePath);
+	await provider.resolveCustomTextEditor(
+		makeDocument(fileUri),
+		panel as unknown as WebviewPanel,
+		{} as never,
+	);
+	return captured;
 }
 
 describe("MeldCustomEditorProvider.resolveCustomTextEditor", () => {
 	it("shows unsupported-scheme message for non-file URIs", async () => {
-		const provider = new MeldCustomEditorProvider(Uri.file("/tmp"));
-		const panel = makeFakePanel();
-		const document = makeDocument(Uri.parse("untitled:weld"));
-
-		await provider.resolveCustomTextEditor(
-			document,
-			panel as unknown as WebviewPanel,
-			{} as never,
-		);
-
 		assert.equal(
-			panel.webview.html,
-			"<p>Cannot open: Weld only supports local files.</p>",
+			await resolveEditorHtml(Uri.parse("untitled:weld")),
+			'<p>Cannot open: unsupported URI scheme "untitled".</p>',
+		);
+	});
+
+	it("does not reject vscode-remote URIs at the scheme gate", async () => {
+		assert.equal(
+			await resolveEditorHtml(
+				Uri.parse(
+					"vscode-remote://ssh-remote%2Bexample-host/home/example/repo/file.ts",
+				),
+			),
+			"<p>Cannot open: file is not in a git repository.</p>",
 		);
 	});
 
 	it("shows not-a-git-repository message for files outside repositories", async () => {
-		const provider = new MeldCustomEditorProvider(Uri.file("/tmp"));
-		const panel = makeFakePanel();
-		const document = makeDocument(
-			Uri.file(`/tmp/weld-outside-${Date.now()}.txt`),
-		);
-
-		await provider.resolveCustomTextEditor(
-			document,
-			panel as unknown as WebviewPanel,
-			{} as never,
-		);
-
 		assert.equal(
-			panel.webview.html,
+			await resolveEditorHtml(
+				Uri.file(`/tmp/weld-outside-${Date.now()}.txt`),
+			),
 			"<p>Cannot open: file is not in a git repository.</p>",
 		);
 	});
@@ -108,29 +122,18 @@ describe("MeldCustomEditorProvider.resolveCustomTextEditor", () => {
 	it("resolves repo and relative path for a subdirectory file", async () => {
 		const repoPath = await makeRepo("weld-vscode-editor-subdir-");
 		try {
-			await openRepoInGitExtension(repoPath);
-			const provider = new MeldCustomEditorProvider(Uri.file("/tmp"));
-			const panel = makeFakePanel();
-			const captured: CapturedInitArgs[] = [];
-			stubInitializeWebview(provider, captured);
-			const fileUri = await makeRepoFile(
+			const captured = await assertRepoContextResolution(
 				repoPath,
 				"src/deep/path/file.ts",
 			);
-			await provider.resolveCustomTextEditor(
-				makeDocument(fileUri),
-				panel as unknown as WebviewPanel,
-				{} as never,
-			);
-			assert.equal(
-				captured.length,
-				1,
-				`_initializeWebview should be called once; got HTML: ${panel.webview.html}`,
-			);
+			assert.equal(captured.length, 1);
 			const first = captured[0];
 			assert.ok(first);
-			assert.equal(first.repoPath, repoPath);
-			assert.equal(first.relativeFilePath, "src/deep/path/file.ts");
+			assert.equal(first.repoContext.rootFsPath, repoPath);
+			assert.equal(
+				first.repoContext.relativePath,
+				"src/deep/path/file.ts",
+			);
 		} finally {
 			await rm(repoPath, { recursive: true, force: true });
 		}
@@ -144,29 +147,15 @@ describe("MeldCustomEditorProvider.resolveCustomTextEditor", () => {
 			repoPath,
 		);
 		try {
-			await openRepoInGitExtension(worktreePath);
-			const provider = new MeldCustomEditorProvider(Uri.file("/tmp"));
-			const panel = makeFakePanel();
-			const captured: CapturedInitArgs[] = [];
-			stubInitializeWebview(provider, captured);
-			const fileUri = await makeRepoFile(
+			const captured = await assertRepoContextResolution(
 				worktreePath,
 				"worktree-file.ts",
 			);
-			await provider.resolveCustomTextEditor(
-				makeDocument(fileUri),
-				panel as unknown as WebviewPanel,
-				{} as never,
-			);
-			assert.equal(
-				captured.length,
-				1,
-				`_initializeWebview should be called once; got HTML: ${panel.webview.html}`,
-			);
+			assert.equal(captured.length, 1);
 			const first = captured[0];
 			assert.ok(first);
-			assert.equal(first.repoPath, worktreePath);
-			assert.equal(first.relativeFilePath, "worktree-file.ts");
+			assert.equal(first.repoContext.rootFsPath, worktreePath);
+			assert.equal(first.repoContext.relativePath, "worktree-file.ts");
 		} finally {
 			await rm(repoPath, { recursive: true, force: true });
 			await rm(worktreePath, { recursive: true, force: true });

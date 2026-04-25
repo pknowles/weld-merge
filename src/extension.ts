@@ -5,8 +5,7 @@ import {
 	type ExtensionContext,
 	ProgressLocation,
 	Range,
-	RelativePattern,
-	type Uri,
+	Uri,
 	WorkspaceEdit,
 	window,
 	workspace,
@@ -19,6 +18,7 @@ import {
 import { getWeldLogChannel, initializeWeldLogChannel } from "./log.ts";
 import { GitTextMerger } from "./matchers/gitTextMerger.ts";
 import {
+	type GitApiRepository,
 	getGitApi,
 	isSupportedScheme,
 	type RepoContext,
@@ -28,21 +28,29 @@ import { ConflictedFilesProvider, type GitFile } from "./treeView.ts";
 import { MeldCustomEditorProvider } from "./webview/meldWebviewPanel.ts";
 
 const lastConflictedFilesPerRepo: Map<string, Set<string>> = new Map();
-const GIT_CONFLICT_WATCH_PATTERNS = [
-	".git/index",
-	".git/MERGE_HEAD",
-	".git/CHERRY_PICK_HEAD",
-	".git/REVERT_HEAD",
-	".git/rebase-merge/**",
-	".git/rebase-apply/**",
-];
-
 function getErrorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
+	if (error instanceof Error) {
+		const messages: string[] = [];
+		const seen = new Set<unknown>();
+		let current: unknown = error;
+		while (current instanceof Error && !seen.has(current)) {
+			seen.add(current);
+			messages.push(current.message);
+			current = (current as Error & { cause?: unknown }).cause;
+		}
+		if (current !== undefined && !seen.has(current)) {
+			messages.push(String(current));
+		}
+		return messages.join(" -> caused by: ");
+	}
+	return String(error);
 }
 
-async function notifyIfNewConflicts(repoKey: string, repoPath: string) {
-	const currentConflicts = await getConflictedFiles(repoPath);
+async function notifyIfNewConflicts(
+	repoKey: string,
+	repository: GitApiRepository,
+) {
+	const currentConflicts = await getConflictedFiles(repository);
 	const lastFiles = lastConflictedFilesPerRepo.get(repoKey) || new Set();
 	const newConflicts = currentConflicts.filter((f) => !lastFiles.has(f));
 
@@ -63,6 +71,7 @@ interface TrackedRepository {
 	repoKey: string;
 	rootUri: Uri;
 	rootFsPath: string;
+	repository: GitApiRepository;
 }
 
 async function getTrackedRepositories(): Promise<TrackedRepository[]> {
@@ -84,6 +93,7 @@ async function getTrackedRepositories(): Promise<TrackedRepository[]> {
 			repoKey: repository.rootUri.toString(),
 			rootUri: repository.rootUri,
 			rootFsPath: repository.rootUri.fsPath,
+			repository,
 		});
 	}
 	return [...repositoriesByRootUri.values()];
@@ -99,11 +109,11 @@ function registerConflictWatchersForRepository(
 			conflictedFilesProvider.refresh();
 			await notifyIfNewConflicts(
 				trackedRepository.repoKey,
-				trackedRepository.rootFsPath,
+				trackedRepository.repository,
 			);
 			const stateKey =
 				await MeldCustomEditorProvider.getCurrentConflictStateKey(
-					trackedRepository.rootFsPath,
+					trackedRepository.repository,
 				);
 			MeldCustomEditorProvider.onConflictStateChanged.fire({
 				repoPath: trackedRepository.rootFsPath,
@@ -140,15 +150,11 @@ function registerConflictWatchersForRepository(
 		},
 	});
 
-	for (const pattern of GIT_CONFLICT_WATCH_PATTERNS) {
-		const watcher = workspace.createFileSystemWatcher(
-			new RelativePattern(trackedRepository.rootUri, pattern),
-		);
-		context.subscriptions.push(watcher);
-		watcher.onDidChange(refresh);
-		watcher.onDidCreate(refresh);
-		watcher.onDidDelete(refresh);
-	}
+	const stateChangeSubscription =
+		trackedRepository.repository.state.onDidChange(() => {
+			refresh();
+		});
+	context.subscriptions.push(stateChangeSubscription);
 	doRefresh().catch((error: unknown) => {
 		getWeldLogChannel().error(
 			`Initial watcher refresh failed for ${trackedRepository.rootFsPath}: ${getErrorMessage(error)}`,
@@ -157,19 +163,17 @@ function registerConflictWatchersForRepository(
 }
 
 async function getGitFileContent(
-	repoPath: string,
+	repository: GitApiRepository,
 	relativeFilePath: string,
 	stage: number,
 ): Promise<string> {
 	try {
-		const content = await execGit(
-			["show", `:${stage}:${relativeFilePath}`],
-			repoPath,
-		);
-		return content;
-	} catch {
+		return await repository.show(`:${stage}`, relativeFilePath);
+	} catch (error: unknown) {
+		const reason = getErrorMessage(error);
 		throw new Error(
-			`Could not get git content for stage ${stage} of ${relativeFilePath}. Is it in conflict?`,
+			`Could not get git content for stage ${stage} of ${relativeFilePath}. Is it in conflict? ${reason}`,
+			{ cause: error },
 		);
 	}
 }
@@ -264,14 +268,68 @@ function splitLines(text: string) {
 	return lines;
 }
 
+// Runs Weld's three-way merge for a single conflicted file and writes the
+// result back through a VS Code WorkspaceEdit. Throws on any failure so both
+// the single-file command and the batch "auto-merge all" flow can surface the
+// real reason instead of swallowing it.
+async function performAutoMerge(
+	repoContext: RepoContext,
+	documentUri: Uri,
+): Promise<void> {
+	const [baseContent, localContent, remoteContent] = await Promise.all([
+		getGitFileContent(repoContext.repository, repoContext.relativePath, 1),
+		getGitFileContent(repoContext.repository, repoContext.relativePath, 2),
+		getGitFileContent(repoContext.repository, repoContext.relativePath, 3),
+	]);
+
+	const merger = new GitTextMerger();
+	const localLines = splitLines(localContent);
+	const baseLines = splitLines(baseContent);
+	const remoteLines = splitLines(remoteContent);
+
+	const sequences = [localLines, baseLines, remoteLines];
+	const initGen = merger.initialize(sequences, sequences);
+	while (!initGen.next().done) {
+		/* iterate */
+	}
+
+	const mergeGen = merger.merge3FilesGit(true);
+	let resMerge = mergeGen.next();
+	while (!resMerge.done) {
+		resMerge = mergeGen.next();
+	}
+	const finalMergedText =
+		resMerge.value !== undefined ? (resMerge.value as string) : null;
+
+	if (finalMergedText === null) {
+		throw new Error(
+			`Merge engine produced no text for ${repoContext.relativePath}.`,
+		);
+	}
+
+	const document = await workspace.openTextDocument(documentUri);
+	const fullRange = new Range(
+		document.positionAt(0),
+		document.positionAt(document.getText().length),
+	);
+
+	const edit = new WorkspaceEdit();
+	edit.replace(documentUri, fullRange, finalMergedText);
+	const applied = await workspace.applyEdit(edit);
+	if (!applied) {
+		throw new Error(
+			`Failed to apply merged text to ${repoContext.relativePath}.`,
+		);
+	}
+}
+
 async function handleAutoMerge(
 	file: GitFile | undefined,
 	conflictedFilesProvider: ConflictedFilesProvider,
 ) {
 	const documentUri = getTargetDocumentUri(file);
 	if (!documentUri) {
-		window.showErrorMessage("No active text editor found.");
-		return;
+		throw new Error("Weld auto-merge: no active text editor.");
 	}
 
 	const repoContext = await resolveCommandRepoContext(
@@ -282,120 +340,103 @@ async function handleAutoMerge(
 		return;
 	}
 
-	try {
-		const [baseContent, localContent, remoteContent] = await Promise.all([
-			getGitFileContent(
-				repoContext.rootFsPath,
-				repoContext.relativePath,
-				1,
-			),
-			getGitFileContent(
-				repoContext.rootFsPath,
-				repoContext.relativePath,
-				2,
-			),
-			getGitFileContent(
-				repoContext.rootFsPath,
-				repoContext.relativePath,
-				3,
-			),
-		]);
-
-		window.showInformationMessage("Running Weld auto-merge heuristics...");
-
-		const merger = new GitTextMerger();
-		const localLines = splitLines(localContent);
-		const baseLines = splitLines(baseContent);
-		const remoteLines = splitLines(remoteContent);
-
-		const sequences = [localLines, baseLines, remoteLines];
-		const initGen = merger.initialize(sequences, sequences);
-		while (!initGen.next().done) {
-			/* iterate */
-		}
-
-		const mergeGen = merger.merge3FilesGit(true);
-		let resMerge = mergeGen.next();
-		while (!resMerge.done) {
-			resMerge = mergeGen.next();
-		}
-		const finalMergedText =
-			resMerge.value !== undefined ? (resMerge.value as string) : null;
-
-		if (finalMergedText === null) {
-			throw new Error("Merge generation failed to produce text.");
-		}
-
-		const document = await workspace.openTextDocument(documentUri);
-		const fullRange = new Range(
-			document.positionAt(0),
-			document.positionAt(document.getText().length),
-		);
-
-		const edit = new WorkspaceEdit();
-		edit.replace(documentUri, fullRange, finalMergedText);
-		if (await workspace.applyEdit(edit)) {
-			window.showInformationMessage(
-				"Weld Auto-Merge complete! Unresolved conflicts marked.",
-			);
-			conflictedFilesProvider.refresh();
-		} else {
-			window.showErrorMessage("Failed to apply merged text to editor.");
-		}
-	} catch (e: unknown) {
-		const message = `Weld Auto-Merge Error: ${getErrorMessage(e)}`;
-		window.showErrorMessage(message);
-		getWeldLogChannel().error(message);
-	}
+	await performAutoMerge(repoContext, documentUri);
+	conflictedFilesProvider.refresh();
 }
 
+interface ConflictedFileEntry {
+	repository: GitApiRepository;
+	rootUri: Uri;
+	relativePath: string;
+	uri: Uri;
+}
+
+async function collectConflictedFilesAcrossRepositories(): Promise<
+	ConflictedFileEntry[]
+> {
+	const trackedRepositories = await getTrackedRepositories();
+	const perRepositoryEntries = await Promise.all(
+		trackedRepositories.map(async (tracked) => {
+			const relativePaths = await getConflictedFiles(tracked.repository);
+			return relativePaths.map<ConflictedFileEntry>((relativePath) => {
+				const segments = relativePath
+					.split("/")
+					.filter((segment) => segment.length > 0);
+				return {
+					repository: tracked.repository,
+					rootUri: tracked.rootUri,
+					relativePath,
+					uri: Uri.joinPath(tracked.rootUri, ...segments),
+				};
+			});
+		}),
+	);
+	return perRepositoryEntries.flat();
+}
+
+// Auto-merges every conflicted file in every tracked repository. Logs every
+// successful merge to the Weld output channel so a partial run still leaves a
+// record of what changed, then fails fast on the first file that cannot be
+// merged (rethrows with the failing file's name as context).
 async function handleAutoMergeAll(
 	conflictedFilesProvider: ConflictedFilesProvider,
-) {
-	const files = await conflictedFilesProvider.getChildren();
-	const unmergedFiles = files.filter(
-		(f) => f.contextValue === "conflictedFile",
-	);
-	if (unmergedFiles.length === 0) {
+): Promise<void> {
+	const conflictedFiles = await collectConflictedFilesAcrossRepositories();
+	if (conflictedFiles.length === 0) {
 		window.showInformationMessage("No unmerged files to auto-merge.");
 		return;
 	}
 
+	const log = getWeldLogChannel();
 	let successCount = 0;
-	let errorCount = 0;
-
-	await window.withProgress(
-		{
-			location: ProgressLocation.Notification,
-			title: "Weld Auto-Merge All",
-			cancellable: false,
-		},
-		async (progress) => {
-			const processNext = async (index: number): Promise<void> => {
-				const file = unmergedFiles[index];
-				if (!file) {
-					return;
-				}
-				try {
-					progress.report({
-						message: `Merging ${file.label}...`,
-					});
-					await commands.executeCommand(
-						"meld-auto-merge.autoMerge",
-						file,
-					);
-					successCount++;
-				} catch {
-					errorCount++;
-				}
-				return processNext(index + 1);
+	const mergeEntryBuilder =
+		(progress: { report: (value: { message?: string }) => void }) =>
+		async (entry: ConflictedFileEntry): Promise<void> => {
+			progress.report({ message: `Merging ${entry.relativePath}...` });
+			const repoContext: RepoContext = {
+				repository: entry.repository,
+				rootUri: entry.rootUri,
+				rootFsPath: entry.rootUri.fsPath,
+				relativePath: entry.relativePath,
+				uri: entry.uri,
 			};
-			await processNext(0);
-		},
-	);
+			try {
+				await performAutoMerge(repoContext, entry.uri);
+			} catch (error: unknown) {
+				throw new Error(
+					`Weld Auto-Merge All stopped at ${entry.relativePath} after ${successCount} successful merge(s): ${getErrorMessage(error)}`,
+					{ cause: error },
+				);
+			}
+			successCount++;
+			log.info(`Weld Auto-Merge All: merged ${entry.relativePath}`);
+		};
+	try {
+		await window.withProgress(
+			{
+				location: ProgressLocation.Notification,
+				title: "Weld Auto-Merge All",
+				cancellable: false,
+			},
+			async (progress) => {
+				// Sequential chain: stop-on-first-failure is intentional, and
+				// each merge must observe the previous one's applied edit
+				// before starting.
+				const mergeEntry = mergeEntryBuilder(progress);
+				await conflictedFiles.reduce<Promise<void>>(
+					(previous, entry) => previous.then(() => mergeEntry(entry)),
+					Promise.resolve(),
+				);
+			},
+		);
+	} finally {
+		if (successCount > 0) {
+			conflictedFilesProvider.refresh();
+		}
+	}
 
 	window.showInformationMessage(
-		`Auto-merge finished: ${successCount} succeeded, ${errorCount} failed.`,
+		`Weld Auto-Merge All: merged ${successCount} file(s).`,
 	);
 }
 
@@ -524,10 +565,7 @@ async function handleSmartAdd(
 	}
 
 	try {
-		await execGit(
-			["add", "--", repoContext.relativePath],
-			repoContext.rootFsPath,
-		);
+		await repoContext.repository.add([repoContext.relativePath]);
 		window.showInformationMessage(
 			`Successfully added ${repoContext.relativePath}`,
 		);
@@ -615,10 +653,11 @@ async function setupWatchers(
 	);
 }
 
-// The shape of `extensions.getExtension(...).exports` for this extension.
-// Kept minimal on purpose: currently only integration tests consume this API,
-// but each entry is a real, reusable operation against the live extension
-// state (not a test-only backdoor).
+// Shape of `extensions.getExtension(...).exports` for this extension. Kept
+// minimal on purpose: every entry must be a real reusable operation against
+// the live extension state. Do not add test-only hooks here; tests should
+// exercise real command / event boundaries and mock at prototype / git-API
+// level instead.
 export interface WeldExtensionApi {
 	setInitialConflictContent: typeof MeldCustomEditorProvider.setInitialConflictContent;
 }

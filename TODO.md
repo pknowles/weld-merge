@@ -43,6 +43,40 @@ Since `git merge-file -p` is deterministic (same inputs → same output), this e
 
 The ~5 minute disposal becomes beneficial LRU cache eviction rather than a "leak".
 
+## Remaining web-host git gaps
+
+After the remote URI support cleanup, the extension now uses VS Code git APIs and
+`workspace.fs` for the general repo-resolution, blob-reading, conflict-list, and
+watcher flows. The remaining feature operations that still require spawning the
+real `git` executable are:
+
+- `git merge-file -p -L ... -L ... -L ...` in
+  `src/webview/diffPayload.ts` to reproduce git's original conflicted text
+  byte-for-byte for the "was this file modified since conflict creation?" check
+- `git checkout -m -- <path>` in `src/extension.ts` to restore a file to its
+  conflicted state
+- `git rerere forget -- <path>` in `src/extension.ts` to remove a recorded rerere
+  resolution for one file
+
+### Behaviour by environment
+
+- **Local VS Code**: works, because the extension host can spawn `git` and access
+  the repository filesystem directly.
+- **Codespaces / Remote SSH / Dev Containers**: works the same way, because the
+  extension host runs on the remote machine/container where the repository and
+  `git` executable live. The subprocess runs remotely, not on the local desktop.
+- **Pure browser/web extension host**: not supported yet. In a browser-only host
+  there is no Node subprocess API for spawning `git`, so these three features
+  fail even though the rest of the extension can now operate through VS Code APIs.
+
+### Future work
+
+If we ever want full browser-host support, these three operations need an
+alternative design that does not depend on spawning `git`. Before attempting
+that, first check whether newer VS Code git APIs expose verified equivalents.
+If they still do not, track each as a dedicated design problem rather than
+quietly adding heuristics or partial fallbacks.
+
 ## Fix commit message titles
 
 Make sure the toggle compare-with-base icons are always visible - currently if there's not enough spacing they disappear

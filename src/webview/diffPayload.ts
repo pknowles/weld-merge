@@ -24,6 +24,7 @@ import { readConflictState } from "../gitUtils.ts";
 import { Differ } from "../matchers/diffutil.ts";
 import { Merger } from "../matchers/merge.ts";
 import { MyersSequenceMatcher } from "../matchers/myers.ts";
+import type { GitApiRepository, RepoContext } from "../repoContext.ts";
 import type { DiffChunk, PayloadFiles, WebviewPayload } from "./ui/types.ts";
 
 const GIT_STAGE_BASE = 1;
@@ -61,120 +62,50 @@ interface BuildDiffPayloadOptions {
 }
 
 const getGitState = async (
-	repoPath: string,
+	repository: GitApiRepository,
 	relativeFilePath: string,
 	stage: number,
-): Promise<string> => {
-	const gitCmd = await getGitExecutable();
-	return new Promise<string>((resolve, reject) => {
-		execFile(
-			gitCmd,
-			["show", `:${stage}:${relativeFilePath}`],
-			{ cwd: repoPath },
-			(err, stdout, stderr) => {
-				if (err) {
-					reject(
-						new Error(
-							`git show :${stage}:${relativeFilePath} failed in ${repoPath}: ${stderr || err.message}`,
-						),
-					);
-					return;
-				}
-				resolve(stdout);
-			},
-		);
-	});
-};
+): Promise<string> => repository.show(`:${stage}`, relativeFilePath);
 
 const getCommitInfo = async (
-	repoPath: string,
+	repository: GitApiRepository,
 	ref: string,
+): Promise<CommitInfo> => {
+	const commit = await repository.getCommit(ref);
+	const [title = "", ...bodyLines] = commit.message.split("\n");
+	return {
+		hash: commit.hash,
+		title,
+		authorName: commit.authorName ?? "",
+		authorEmail: commit.authorEmail ?? "",
+		date: (commit.authorDate ?? new Date(0)).toISOString(),
+		body: bodyLines.join("\n"),
+	};
+};
+
+// Returns null only for the genuinely expected absence case: the repo is not
+// in an active merge/cherry-pick/rebase operation. Any other failure (fs error
+// reading .git state, etc.) propagates as a thrown exception from
+// readConflictState, so callers can distinguish absent from failed.
+const getRemoteRef = async (
+	repository: GitApiRepository,
+): Promise<string | null> => {
+	const conflictState = await readConflictState(repository);
+	return conflictState?.otherRef ?? null;
+};
+
+const getBaseCommitInfo = async (
+	repository: GitApiRepository,
 ): Promise<CommitInfo | undefined> => {
-	const gitCmd = await getGitExecutable();
-	return new Promise((resolve) => {
-		execFile(
-			gitCmd,
-			["log", "-1", "--format=%H%x00%s%x00%an%x00%ae%x00%aI%x00%b", ref],
-			{ cwd: repoPath },
-			(err, stdout) => {
-				if (err) {
-					resolve(undefined);
-				} else {
-					const [
-						hash,
-						title,
-						authorName,
-						authorEmail,
-						date,
-						...bodyParts
-					] = stdout.trim().split("\0");
-					if (hash && title && authorName && authorEmail && date) {
-						resolve({
-							hash,
-							title,
-							authorName,
-							authorEmail,
-							date,
-							body: bodyParts.join("\0"),
-						});
-					} else {
-						resolve(undefined);
-					}
-				}
-			},
-		);
-	});
-};
-
-// Resolve the incoming ("other") ref for the active conflict operation.
-//
-// Returns null only for the two explicitly expected absence cases:
-//   1. The repo is not in an active merge/cherry-pick/rebase (readConflictState
-//      returns null). Callers that should never hit this decide whether to
-//      tolerate or escalate.
-//   2. The otherRef recorded in .git state no longer resolves to a commit
-//      (e.g. the tip was pruned or force-updated). UI can still render the
-//      panel; we just omit incoming commit info.
-//
-// fs failures while reading .git state propagate as thrown errors from
-// readConflictState; this function never conflates "absent" with "failed".
-// Prefer `string | null` over `string | undefined` so the absent case is
-// explicit rather than the accidental product of a missing return.
-const getRemoteRef = async (repoPath: string): Promise<string | null> => {
-	const conflictState = await readConflictState(repoPath);
-	if (!conflictState) {
-		return null;
-	}
-	const commit = await getCommitInfo(repoPath, conflictState.otherRef);
-	return commit ? conflictState.otherRef : null;
-};
-
-const getBaseCommitInfo = async (repoPath: string) => {
-	const remoteRef = await getRemoteRef(repoPath);
+	const remoteRef = await getRemoteRef(repository);
 	if (remoteRef === null) {
 		return;
 	}
-
-	const gitCmd = await getGitExecutable();
-	const mergeBaseHash = await new Promise<string>((resolve) => {
-		execFile(
-			gitCmd,
-			["merge-base", "HEAD", remoteRef],
-			{ cwd: repoPath },
-			(err, stdout) => {
-				if (err) {
-					resolve("");
-				} else {
-					resolve(stdout.trim());
-				}
-			},
-		);
-	});
-
-	if (mergeBaseHash) {
-		return await getCommitInfo(repoPath, mergeBaseHash);
+	const mergeBaseHash = await repository.getMergeBase("HEAD", remoteRef);
+	if (!mergeBaseHash) {
+		return;
 	}
-	return;
+	return await getCommitInfo(repository, mergeBaseHash);
 };
 
 const splitLines = (text: string) => {
@@ -248,13 +179,13 @@ const runDiff = (
 };
 
 async function fetchConflictStages(
-	repoPath: string,
+	repository: GitApiRepository,
 	relativeFilePath: string,
 ): Promise<ConflictStages> {
 	const [base, local, incoming] = await Promise.all([
-		getGitState(repoPath, relativeFilePath, GIT_STAGE_BASE),
-		getGitState(repoPath, relativeFilePath, GIT_STAGE_LOCAL),
-		getGitState(repoPath, relativeFilePath, GIT_STAGE_REMOTE),
+		getGitState(repository, relativeFilePath, GIT_STAGE_BASE),
+		getGitState(repository, relativeFilePath, GIT_STAGE_LOCAL),
+		getGitState(repository, relativeFilePath, GIT_STAGE_REMOTE),
 	]);
 	return { base, local, incoming };
 }
@@ -320,23 +251,24 @@ async function buildInitialConflictedState(
 }
 
 async function buildDiffPayload(
-	repoPath: string,
+	repoContext: RepoContext,
 	relativeFilePath: string,
 	options: BuildDiffPayloadOptions = {},
 ): Promise<WebviewPayload["data"]> {
+	const { repository } = repoContext;
 	const stages =
 		options.stages ??
-		(await fetchConflictStages(repoPath, relativeFilePath));
+		(await fetchConflictStages(repository, relativeFilePath));
 	const { base, local, incoming } = stages;
 
 	const [localCommit, remoteRef] = await Promise.all([
-		getCommitInfo(repoPath, "HEAD"),
-		getRemoteRef(repoPath),
+		getCommitInfo(repository, "HEAD"),
+		getRemoteRef(repository),
 	]);
 	const incomingCommit =
 		remoteRef === null
 			? undefined
-			: await getCommitInfo(repoPath, remoteRef);
+			: await getCommitInfo(repository, remoteRef);
 
 	const localLines = splitLines(local);
 	const baseLines = splitLines(base);
@@ -369,18 +301,19 @@ async function buildDiffPayload(
 }
 
 async function buildBaseDiffPayload(
-	repoPath: string,
+	repoContext: RepoContext,
 	relativeFilePath: string,
 	side: "left" | "right",
 ) {
+	const { repository } = repoContext;
 	// Base is stage 1, Local is 2, Remote is 3
 	const targetStage = side === "left" ? GIT_STAGE_LOCAL : GIT_STAGE_REMOTE;
 	const [base, target] = await Promise.all([
-		getGitState(repoPath, relativeFilePath, GIT_STAGE_BASE),
-		getGitState(repoPath, relativeFilePath, targetStage),
+		getGitState(repository, relativeFilePath, GIT_STAGE_BASE),
+		getGitState(repository, relativeFilePath, targetStage),
 	]);
 
-	const baseCommit = await getBaseCommitInfo(repoPath);
+	const baseCommit = await getBaseCommitInfo(repository);
 
 	const baseLines = splitLines(base);
 	const targetLines = splitLines(target);

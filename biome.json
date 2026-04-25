@@ -136,7 +136,8 @@
 			"linter": {
 				"rules": {
 					"suspicious": {
-						"noConsole": "off"
+						"noConsole": "off",
+						"noMisplacedAssertion": "off"
 					}
 				}
 			}

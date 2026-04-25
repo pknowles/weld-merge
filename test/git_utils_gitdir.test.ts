@@ -3,7 +3,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "@jest/globals";
-import { getGitDir, readConflictState } from "../src/gitUtils.ts";
+import { Uri } from "vscode";
+import { getGitDirUri, readConflictState } from "../src/gitUtils.ts";
+import type { GitApiRepository } from "../src/repoContext.ts";
 
 function runGit(args: string[], cwd: string): string {
 	return execFileSync("git", args, {
@@ -23,14 +25,23 @@ async function makeRepo(prefix: string): Promise<string> {
 	return repoPath;
 }
 
+function mockRepo(path: string): GitApiRepository {
+	return {
+		rootUri: Uri.file(path),
+	} as GitApiRepository;
+}
+
 describe("gitUtils worktree-safe gitdir resolution", () => {
 	it("resolves .git dir for a normal repository", async () => {
 		const repoPath = await makeRepo("weld-gitdir-");
 		try {
-			const gitDir = await getGitDir(repoPath);
+			const gitDirUri = await getGitDirUri(mockRepo(repoPath));
+			const gitDir = gitDirUri.fsPath;
 			expect(gitDir).toBe(join(repoPath, ".git"));
 			await writeFile(join(gitDir, "MERGE_HEAD"), "deadbeef\n");
-			await expect(readConflictState(repoPath)).resolves.toMatchObject({
+			await expect(
+				readConflictState(mockRepo(repoPath)),
+			).resolves.toMatchObject({
 				operation: "merge",
 				otherRef: "MERGE_HEAD",
 			});
@@ -47,11 +58,12 @@ describe("gitUtils worktree-safe gitdir resolution", () => {
 				["worktree", "add", "-b", "linked-worktree", worktreePath],
 				repoPath,
 			);
-			const gitDir = await getGitDir(worktreePath);
+			const gitDirUri = await getGitDirUri(mockRepo(worktreePath));
+			const gitDir = gitDirUri.fsPath;
 			expect(gitDir).not.toBe(join(worktreePath, ".git"));
 			await writeFile(join(gitDir, "MERGE_HEAD"), "cafebabe\n");
 			await expect(
-				readConflictState(worktreePath),
+				readConflictState(mockRepo(worktreePath)),
 			).resolves.toMatchObject({
 				operation: "merge",
 				otherRef: "MERGE_HEAD",

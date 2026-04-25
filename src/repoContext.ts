@@ -1,8 +1,29 @@
-import { relative } from "node:path";
-import { extensions, type Uri, workspace } from "vscode";
+import { type Event, extensions, type Uri, workspace } from "vscode";
+
+interface GitApiChange {
+	uri: Uri;
+}
+
+interface GitApiCommit {
+	hash: string;
+	message: string;
+	authorName?: string;
+	authorEmail?: string;
+	authorDate?: Date;
+}
+
+interface GitApiRepositoryState {
+	mergeChanges: GitApiChange[];
+	onDidChange: Event<void>;
+}
 
 interface GitApiRepository {
 	rootUri: Uri;
+	state: GitApiRepositoryState;
+	show(ref: string, path: string): Promise<string>;
+	getCommit(ref: string): Promise<GitApiCommit>;
+	getMergeBase(ref1: string, ref2: string): Promise<string>;
+	add(paths: string[]): Promise<void>;
 }
 
 interface GitExtension {
@@ -27,9 +48,41 @@ interface RepoContext {
 
 const SUPPORTED_URI_SCHEMES = new Set(["file", "vscode-remote"]);
 
-let cachedGitApiPromise: Promise<GitApi> | null = null;
+function decodeUriPath(path: string): string[] {
+	return path
+		.split("/")
+		.filter((segment) => segment.length > 0)
+		.map((segment) => decodeURIComponent(segment));
+}
 
-async function loadGitApi(): Promise<GitApi> {
+function repoRelativePath(rootUri: Uri, fileUri: Uri): string | null {
+	if (rootUri.scheme !== fileUri.scheme) {
+		return null;
+	}
+	if (rootUri.authority !== fileUri.authority) {
+		return null;
+	}
+
+	const rootSegments = decodeUriPath(rootUri.path);
+	const fileSegments = decodeUriPath(fileUri.path);
+	if (fileSegments.length < rootSegments.length) {
+		return null;
+	}
+	for (const [index, rootSegment] of rootSegments.entries()) {
+		if (fileSegments[index] !== rootSegment) {
+			return null;
+		}
+	}
+	return fileSegments.slice(rootSegments.length).join("/");
+}
+
+function isSupportedScheme(uri: Uri): boolean {
+	return SUPPORTED_URI_SCHEMES.has(uri.scheme);
+}
+
+// Fetches the Git API fresh each time. Not cached because extensions.getExtension
+// returns a new wrapper object per call, so caching would prevent test mocking.
+async function getGitApi(): Promise<GitApi> {
 	const gitExtension = extensions.getExtension<GitExtension>("vscode.git");
 	if (!gitExtension) {
 		throw new Error("Git extension is not available.");
@@ -40,21 +93,6 @@ async function loadGitApi(): Promise<GitApi> {
 	return gitExtension.exports.getAPI(1);
 }
 
-function relativeFromRoot(rootUri: Uri, fileUri: Uri): string {
-	return relative(rootUri.fsPath, fileUri.fsPath).replace(/\\/g, "/");
-}
-
-function isSupportedScheme(uri: Uri): boolean {
-	return SUPPORTED_URI_SCHEMES.has(uri.scheme);
-}
-
-function getGitApi(): Promise<GitApi> {
-	if (!cachedGitApiPromise) {
-		cachedGitApiPromise = loadGitApi();
-	}
-	return cachedGitApiPromise;
-}
-
 async function resolveRepoContext(uri: Uri): Promise<RepoContext | null> {
 	if (!isSupportedScheme(uri)) {
 		return null;
@@ -63,11 +101,15 @@ async function resolveRepoContext(uri: Uri): Promise<RepoContext | null> {
 	const gitApi = await getGitApi();
 	const directRepository = gitApi.getRepository(uri);
 	if (directRepository) {
+		const relativePath = repoRelativePath(directRepository.rootUri, uri);
+		if (relativePath === null) {
+			return null;
+		}
 		return {
 			repository: directRepository,
 			rootUri: directRepository.rootUri,
 			rootFsPath: directRepository.rootUri.fsPath,
-			relativePath: relativeFromRoot(directRepository.rootUri, uri),
+			relativePath,
 			uri,
 		};
 	}
@@ -81,15 +123,19 @@ async function resolveRepoContext(uri: Uri): Promise<RepoContext | null> {
 	if (!workspaceRepository) {
 		return null;
 	}
+	const relativePath = repoRelativePath(workspaceRepository.rootUri, uri);
+	if (relativePath === null) {
+		return null;
+	}
 
 	return {
 		repository: workspaceRepository,
 		rootUri: workspaceRepository.rootUri,
 		rootFsPath: workspaceRepository.rootUri.fsPath,
-		relativePath: relativeFromRoot(workspaceRepository.rootUri, uri),
+		relativePath,
 		uri,
 	};
 }
 
-export { getGitApi, isSupportedScheme, resolveRepoContext };
-export type { RepoContext };
+export { getGitApi, isSupportedScheme, repoRelativePath, resolveRepoContext };
+export type { GitApiRepository, RepoContext };
