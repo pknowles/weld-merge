@@ -82,13 +82,10 @@ function isSupportedScheme(uri: Uri): boolean {
 
 // Fetches the Git API fresh each time. Not cached because extensions.getExtension
 // returns a new wrapper object per call, so caching would prevent test mocking.
-async function getGitApi(): Promise<GitApi> {
+function getGitApi(): GitApi {
 	const gitExtension = extensions.getExtension<GitExtension>("vscode.git");
 	if (!gitExtension) {
 		throw new Error("Git extension is not available.");
-	}
-	if (!gitExtension.isActive) {
-		await gitExtension.activate();
 	}
 	return gitExtension.exports.getAPI(1);
 }

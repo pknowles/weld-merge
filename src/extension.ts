@@ -74,12 +74,12 @@ interface TrackedRepository {
 	repository: GitApiRepository;
 }
 
-async function getTrackedRepositories(): Promise<TrackedRepository[]> {
+function getTrackedRepositories(): TrackedRepository[] {
 	const workspaceFolders = workspace.workspaceFolders;
 	if (!workspaceFolders) {
 		return [];
 	}
-	const gitApi = await getGitApi();
+	const gitApi = getGitApi();
 	const repositoriesByRootUri = new Map<string, TrackedRepository>();
 	for (const workspaceFolder of workspaceFolders) {
 		if (!isSupportedScheme(workspaceFolder.uri)) {

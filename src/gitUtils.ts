@@ -142,11 +142,10 @@ async function readConflictState(
 /**
  * Executes a git command and returns the stdout.
  */
-async function execGit(args: string[], cwd: string): Promise<string> {
-	const cmd = await getGitExecutable();
+function execGit(args: string[], cwd: string): Promise<string> {
 	return new Promise((resolve, reject) => {
 		execFile(
-			cmd,
+			getGitExecutable(),
 			args,
 			{ cwd, maxBuffer: MAX_BUFFER_SIZE },
 			(err, stdout) => {

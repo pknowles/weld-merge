@@ -33,7 +33,12 @@
 	"categories": [
 		"Other"
 	],
-	"activationEvents": [],
+	"activationEvents": [
+		"onExtensionActivated:vscode.git"
+	],
+	"extensionDependencies": [
+		"vscode.git"
+	],
 	"main": "./out/extension.js",
 	"contributes": {
 		"customEditors": [

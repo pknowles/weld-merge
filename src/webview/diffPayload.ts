@@ -203,7 +203,6 @@ async function buildInitialConflictedState(
 	const localPath = join(tempDir, "local");
 	const basePath = join(tempDir, "base");
 	const remotePath = join(tempDir, "remote");
-	const gitCmd = await getGitExecutable();
 
 	try {
 		await writeFile(localPath, stages.local);
@@ -212,7 +211,7 @@ async function buildInitialConflictedState(
 
 		return await new Promise<string>((resolve, reject) => {
 			execFile(
-				gitCmd,
+				getGitExecutable(),
 				[
 					"merge-file",
 					"-p",
