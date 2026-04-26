@@ -181,7 +181,17 @@ Track as a dedicated refactor; do not fold into unrelated changes.
 - **Fix Returns**: Handle failures properly, e.g. from `getGitState`, without silently passing empty strings.
 - **UX**: Rethink `Ctrl+K` to avoid interfering with global VS Code chord prefixes.
 - **Refactor `DiffCurtain`**: Split into `CurtainContainer` + `CurtainSVG`. The container should always render to maintain 40px flexbox stability, while the SVG/drawing logic only activates when editors are ready. This will allow removing the `undefined` editor types from the core drawing functions.
-- **Remove timing hacks from webview readiness**: Replace `HACK_SYNC_DELAY` in `appHooks.ts` and the related `setTimeout(..., 0)` in `meldPane.tsx` with event-driven editor/layout readiness.
+- **Cull unnecessary `useEffect`s**: Many effects in `src/webview/ui/*` bridge state that is already derivable from props or should just be computed during render. Reserve `useEffect` for crossing the boundary to something non-React (Monaco events, `window`, `postMessage`, timers, DOM observers).
+  - *Unnecessary (mirror-prop-to-ref)*: `useCodePaneSyncRefs` in `CodePane.tsx:518-537` — three effects that mirror `p.actions.*` and `p.file.content` into refs so event handlers can read them. Cleaner pattern: write the ref inline during render (`ref.current = latest`) or, better, inline the current action in the Monaco listener closure via a single `useRef` + updater called from the owner.
+  - *Unnecessary (publish imperative handle)*: `CodePane.tsx:599-638` assigns `applyExternalEditsRef.current = { applyIncrementalEdits, applyFullSync }` inside an effect. This is what `useImperativeHandle` exists for.
+  - *Necessary (external event source)*: `useCodePaneRenderTrigger` in `CodePane.tsx:544-565` subscribes to `model.onDidChangeContent` / `editor.onDidLayoutChange`. Effect is the right tool: external, needs cleanup.
+  - *Necessary (one-shot side effect)*: `appHooks.ts:423-427` posts `{command: "ready"}` to the host. Has to happen after mount, once.
+  - *Suggested structure*:
+    - One small hook per external system (`useMonacoEvents(ed, handlers)`, `useWindowMessage(handler)`, `useVscodeReady(api)`).
+    - For "latest callback in a listener" use a single `useRef` updated during render, not an effect per field.
+    - For parent-visible imperative handles use `useImperativeHandle`, not a manually assigned ref.
+    - Keep effect dep arrays narrow and stable; if a dep is a new object each render, hoist it or memoize it at the source rather than widening the dep list.
+  - *Ratchet render-count baselines after the real fix*: `test/webview_render_count.test.tsx` pins today's App-level render counts via React's `Profiler` API. Observed today: mount + `loadDiff` = 5 commits; single user edit in merged = 1 commit. The per-edit number is already optimal — but it's only that low because the test runs a single edit inside one `act()` batch; multi-pane scroll sync, layout change cascades, and the `renderTrigger` global invalidator (every Monaco `onDidChangeContent` / `onDidLayoutChange` bumps App) will show up as soon as realistic scenarios are tested. Add scenarios (initial scroll, `fullSync`, compare-with-base toggle, typing with layout changes) as `renderTrigger` is removed, and lower the `EXPECTED_*` constants at the top of that file each time. Do not raise a baseline to accommodate a new regression.
 
 ## Testing Improvements
 
@@ -191,6 +201,8 @@ Track as a dedicated refactor; do not fold into unrelated changes.
   integration with VS Code. For full e2e coverage of save behavior (including
   dirty state, file writes, and error handling), migrate to @vscode/test-electron
   which runs tests in an actual VS Code instance.
+
+Consolidate biome `"includes": ["**/*.test.ts", "**/*.test.tsx"]` and `["test/**"]`
 
 Questionable code in c06d4923:
 

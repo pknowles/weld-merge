@@ -136,9 +136,160 @@ const createMockModel = (
 	}),
 });
 
+// TODO: The mock editor maintains listener arrays (layoutListeners, scrollListeners)
+// for structural correctness, but tests requiring actual Monaco event behavior
+// (e.g. onDidLayoutChange firing after resize, onDidScrollChange during scroll)
+// belong in integration tests with a real Monaco editor, not mocked unit tests.
+
+interface MockScrollState {
+	scrollTop: number;
+	scrollLeft: number;
+}
+
+const createCoreEditorApi = (
+	mockModel: ReturnType<typeof createMockModel>,
+	getContent: () => string,
+	setContent: (value: string) => void,
+	scrollState: MockScrollState,
+	scrollListeners: Array<() => void>,
+) => ({
+	getValue: jest.fn(() => getContent()),
+	setValue: jest.fn((val: string) => {
+		setContent(val);
+	}),
+	getModel: jest.fn(() => mockModel as unknown as editor.ITextModel),
+	getContainerDomNode: jest.fn(() => ({
+		getBoundingClientRect: jest.fn(() => ({
+			top: 0,
+			left: 0,
+			width: 100,
+			height: 1000,
+		})),
+	})),
+	getScrollTop: jest.fn(() => scrollState.scrollTop),
+	getScrollLeft: jest.fn(() => scrollState.scrollLeft),
+	setScrollTop: jest.fn((_v: number) => undefined),
+	setScrollLeft: jest.fn((_v: number) => undefined),
+	getLayoutInfo: jest.fn(() => ({ height: 1000 })),
+	getContentHeight: jest.fn(() => 2000),
+	onDidScrollChange: jest.fn((cb: () => void) => {
+		scrollListeners.push(cb);
+		return {
+			dispose: jest.fn(() => {
+				const idx = scrollListeners.indexOf(cb);
+				if (idx >= 0) {
+					scrollListeners.splice(idx, 1);
+				}
+			}),
+		};
+	}),
+	getTopForLineNumber: jest.fn((l: number) => (l - 1) * 20),
+	getBottomForLineNumber: jest.fn((l: number) => l * 20),
+	getOption: jest.fn(() => 20),
+	executeEdits: jest.fn(
+		(
+			_source: string | null | undefined,
+			edits: editor.IIdentifiedSingleEditOperation[],
+		) => {
+			mockModel.pushEditOperations(null, edits, null);
+		},
+	),
+});
+
+const createInteractionEditorApi = (
+	mockModel: ReturnType<typeof createMockModel>,
+	layoutListeners: Array<() => void>,
+) => ({
+	revealLineInCenter: jest.fn(() => {
+		/* mock */
+	}),
+	setPosition: jest.fn(() => {
+		/* mock */
+	}),
+	getPosition: jest.fn(() => ({ lineNumber: 1, column: 1 })),
+	focus: jest.fn(() => {
+		/* mock */
+	}),
+	trigger: jest.fn(
+		(
+			_source: string | null | undefined,
+			handlerId: string,
+			payload: { text: string },
+		) => {
+			if (handlerId === "paste") {
+				mockModel.pushEditOperations(
+					null,
+					[
+						{
+							range: {
+								startLineNumber: 1,
+								startColumn: 1,
+								endLineNumber: 1,
+								endColumn: 1,
+							},
+							text: payload.text,
+						},
+					],
+					null,
+				);
+			}
+		},
+	),
+	addAction: jest.fn(() => {
+		/* mock */
+	}),
+	onDidBlurEditorText: jest.fn(() => ({
+		dispose: jest.fn(() => {
+			/* mock */
+		}),
+	})),
+	onDidFocusEditorText: jest.fn(() => ({
+		dispose: jest.fn(() => {
+			/* mock */
+		}),
+	})),
+	deltaDecorations: jest.fn(
+		(_old: string[], newDecorations: editor.IModelDeltaDecoration[]) =>
+			newDecorations.map((_, i) => `id-${i}`),
+	),
+	getSelection: jest.fn(() => ({ isEmpty: () => true })),
+	getSelections: jest.fn(() => [
+		{
+			startLineNumber: 1,
+			startColumn: 1,
+			endLineNumber: 1,
+			endColumn: 1,
+		},
+	]),
+	getActions: jest.fn(() => []),
+	updateOptions: jest.fn(() => {
+		/* mock */
+	}),
+	onDidLayoutChange: jest.fn((cb: () => void) => {
+		layoutListeners.push(cb);
+		return {
+			dispose: jest.fn(() => {
+				const idx = layoutListeners.indexOf(cb);
+				if (idx >= 0) {
+					layoutListeners.splice(idx, 1);
+				}
+			}),
+		};
+	}),
+	layout: jest.fn(() => {
+		/* mock */
+	}),
+	dispose: jest.fn(() => {
+		/* mock */
+	}),
+});
+
 export const createMockEditor = (content: string) => {
 	let currentContent = content;
 	const listeners: ((e: editor.IModelContentChangedEvent) => void)[] = [];
+	const layoutListeners: Array<() => void> = [];
+	const scrollListeners: Array<() => void> = [];
+	const scrollState: MockScrollState = { scrollTop: 0, scrollLeft: 0 };
 
 	const mockModel = createMockModel(
 		() => currentContent,
@@ -148,122 +299,16 @@ export const createMockEditor = (content: string) => {
 		listeners,
 	);
 
-	const mockEditor = {
-		getValue: jest.fn(() => currentContent),
-		setValue: jest.fn((val: string) => {
-			currentContent = val;
-		}),
-		getModel: jest.fn(() => mockModel as unknown as editor.ITextModel),
-		getContainerDomNode: jest.fn(() => ({
-			getBoundingClientRect: jest.fn(() => ({
-				top: 0,
-				left: 0,
-				width: 100,
-				height: 1000,
-			})),
-		})),
-		getScrollTop: jest.fn(() => 0),
-		getScrollLeft: jest.fn(() => 0),
-		setScrollTop: jest.fn(() => {
-			/* mock */
-		}),
-		setScrollLeft: jest.fn(() => {
-			/* mock */
-		}),
-		getLayoutInfo: jest.fn(() => ({ height: 1000 })),
-		getContentHeight: jest.fn(() => 2000),
-		onDidScrollChange: jest.fn(() => ({
-			dispose: jest.fn(() => {
-				/* mock */
-			}),
-		})),
-		getTopForLineNumber: jest.fn((l: number) => (l - 1) * 20),
-		getBottomForLineNumber: jest.fn((l: number) => l * 20),
-		getOption: jest.fn(() => 20),
-		executeEdits: jest.fn(
-			(
-				_source: string | null | undefined,
-				edits: editor.IIdentifiedSingleEditOperation[],
-			) => {
-				mockModel.pushEditOperations(null, edits, null);
+	return {
+		...createCoreEditorApi(
+			mockModel,
+			() => currentContent,
+			(v) => {
+				currentContent = v;
 			},
+			scrollState,
+			scrollListeners,
 		),
-		revealLineInCenter: jest.fn(() => {
-			/* mock */
-		}),
-		setPosition: jest.fn(() => {
-			/* mock */
-		}),
-		getPosition: jest.fn(() => ({ lineNumber: 1, column: 1 })),
-		focus: jest.fn(() => {
-			/* mock */
-		}),
-		trigger: jest.fn(
-			(
-				_source: string | null | undefined,
-				handlerId: string,
-				payload: { text: string },
-			) => {
-				if (handlerId === "paste") {
-					mockModel.pushEditOperations(
-						null,
-						[
-							{
-								range: {
-									startLineNumber: 1,
-									startColumn: 1,
-									endLineNumber: 1,
-									endColumn: 1,
-								},
-								text: payload.text,
-							},
-						],
-						null,
-					);
-				}
-			},
-		),
-		addAction: jest.fn(() => {
-			/* mock */
-		}),
-		onDidBlurEditorText: jest.fn(() => ({
-			dispose: jest.fn(() => {
-				/* mock */
-			}),
-		})),
-		onDidFocusEditorText: jest.fn(() => ({
-			dispose: jest.fn(() => {
-				/* mock */
-			}),
-		})),
-		deltaDecorations: jest.fn(
-			(_old: string[], newDecorations: editor.IModelDeltaDecoration[]) =>
-				newDecorations.map((_, i) => `id-${i}`),
-		),
-		getSelection: jest.fn(() => ({ isEmpty: () => true })),
-		getSelections: jest.fn(() => [
-			{
-				startLineNumber: 1,
-				startColumn: 1,
-				endLineNumber: 1,
-				endColumn: 1,
-			},
-		]),
-		getActions: jest.fn(() => []),
-		updateOptions: jest.fn(() => {
-			/* mock */
-		}),
-		onDidLayoutChange: jest.fn(() => ({
-			dispose: jest.fn(() => {
-				/* mock */
-			}),
-		})),
-		layout: jest.fn(() => {
-			/* mock */
-		}),
-		dispose: jest.fn(() => {
-			/* mock */
-		}),
+		...createInteractionEditorApi(mockModel, layoutListeners),
 	};
-	return mockEditor;
 };

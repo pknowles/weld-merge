@@ -7,7 +7,6 @@ import type {
 	MeldUIActions,
 	MeldUIState,
 } from "./meldPaneTypes.ts";
-import { INITIAL_SYNC_DELAY } from "./meldPaneTypes.ts";
 import { DIFF_WIDTH, type DiffChunk, type FileState } from "./types.ts";
 
 const getCurtainHandlers = (actions: MeldUIActions, idx: number) => {
@@ -113,9 +112,7 @@ const renderMeldCodePane = (
 		onMount={(ed, i) => {
 			ui.editorRefArray.current[i] = ed;
 			actions.attachScrollListener(ed, i);
-			setTimeout(() => {
-				actions.setRenderTrigger((p) => p + 1);
-			}, 0);
+			actions.setRenderTrigger((p) => p + 1);
 			if (i === 0 || i === 4) {
 				const source = i === 0 ? 1 : 3;
 				const sync = () => {
@@ -123,14 +120,8 @@ const renderMeldCodePane = (
 						actions.forceSyncToPane(source, i);
 					}
 				};
-
-				// Sync now if ready, otherwise on layout change or after a delay
 				sync();
-				const disposable = ed.onDidLayoutChange(sync);
-				setTimeout(() => {
-					disposable.dispose();
-					sync();
-				}, INITIAL_SYNC_DELAY);
+				ed.onDidLayoutChange(sync);
 			}
 		}}
 	/>

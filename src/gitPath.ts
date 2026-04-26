@@ -12,6 +12,7 @@ async function getExtensionPath(): Promise<string | undefined> {
 	}
 }
 
+// TODO: code smell returning undefined. Fail fast.
 function getConfigPath(): string | undefined {
 	const configPath = workspace
 		.getConfiguration("git")
@@ -35,5 +36,6 @@ export async function getGitExecutable(): Promise<string> {
 		return extensionPath;
 	}
 	const configPath = getConfigPath();
+	// TODO: fallback are a violation o the coding standards.
 	return configPath || "git";
 }

@@ -1,151 +1,26 @@
 import { afterEach, beforeEach, describe, it, jest } from "@jest/globals";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import type { editor } from "monaco-editor";
-import { useEffect, useRef } from "react";
+import {
+	createVscodeStub,
+	installResizeObserverMock,
+	installVscodeApi,
+	createMonacoMock as mockCreateMonacoMock,
+	createMonacoReactMockComponent as mockCreateMonacoReactMockComponent,
+	mountedEditors,
+	resetMountedEditors,
+	uninstallVscodeApi,
+	type VscodeStub,
+} from "./mockMonacoSetup.tsx";
+
+// TODO: seems flaky - has to be after mockMonacoSetup.tsx. Why?
 import { App } from "../src/webview/ui/App.tsx";
-import { createMockEditor } from "./mockEditor.ts";
 
-jest.mock("monaco-editor", () => {
-	const mock = {} as unknown as typeof import("monaco-editor");
+jest.mock("monaco-editor", () => mockCreateMonacoMock());
+jest.mock("@monaco-editor/react", () => mockCreateMonacoReactMockComponent());
 
-	const mockEditor = {} as typeof editor;
-	Object.defineProperty(mock, "editor", { value: mockEditor });
-
-	const mockEditorOption = {
-		lineHeight: 1,
-		readOnly: 1,
-	};
-	Object.defineProperty(mockEditor, "EditorOption", {
-		value: mockEditorOption,
-	});
-
-	Object.defineProperty(mock, "Selection", {
-		value: {
-			createWithSelection() {
-				return {};
-			},
-		},
-	});
-
-	const mockKeyMod = {};
-	Object.defineProperty(mockKeyMod, "Alt", { value: 512 });
-	Object.defineProperty(mockKeyMod, "CtrlCmd", { value: 2048 });
-	Object.defineProperty(mock, "KeyMod", { value: mockKeyMod });
-
-	const mockKeyCode = {};
-	Object.defineProperty(mockKeyCode, "KeyJ", { value: 40 });
-	Object.defineProperty(mockKeyCode, "KeyK", { value: 41 });
-	Object.defineProperty(mockKeyCode, "Alt", { value: 512 });
-	Object.defineProperty(mockKeyCode, "UpArrow", { value: 1 });
-	Object.defineProperty(mockKeyCode, "DownArrow", { value: 2 });
-	Object.defineProperty(mockKeyCode, "KeyC", { value: 3 });
-	Object.defineProperty(mockKeyCode, "KeyX", { value: 4 });
-	Object.defineProperty(mockKeyCode, "KeyV", { value: 5 });
-	Object.defineProperty(mock, "KeyCode", { value: mockKeyCode });
-
-	Object.defineProperty(mockEditor, "IStandaloneCodeEditor", {
-		value: {},
-	});
-
-	return mock;
-});
-
-// Mock ResizeObserver
-global.ResizeObserver = class ResizeObserver {
-	observe() {
-		/* mock */
-	}
-	unobserve() {
-		/* mock */
-	}
-	disconnect() {
-		/* mock */
-	}
-};
-
-const messagesSent: unknown[] = [];
-const vscode = {
-	postMessage: jest.fn((msg: unknown) => {
-		messagesSent.push(msg);
-	}),
-	getState: jest.fn(() => ({})),
-	setState: jest.fn((_state: unknown) => {
-		/* mock implementation */
-	}),
-};
-(
-	window as unknown as { acquireVsCodeApi: () => typeof vscode }
-).acquireVsCodeApi = () => vscode;
-
-// Editors registered in the order they are mounted, for retrieval by tests.
-const mountedEditors: ReturnType<typeof createMockEditor>[] = [];
-
-jest.mock(
-	"@monaco-editor/react",
-	() =>
-		function MockedEditor(props: {
-			onMount?: (ed: ReturnType<typeof createMockEditor>) => void;
-			value?: string;
-			defaultValue?: string;
-		}) {
-			const editorRef = useRef<ReturnType<
-				typeof createMockEditor
-			> | null>(null);
-
-			if (editorRef.current) {
-				const val =
-					props.value !== undefined
-						? props.value
-						: props.defaultValue;
-				if (val !== undefined) {
-					editorRef.current.setValue(val);
-				}
-			}
-
-			useEffect(() => {
-				if (props.onMount && !editorRef.current) {
-					const mock = createMockEditor(
-						props.value || props.defaultValue || "",
-					);
-					editorRef.current = mock;
-					mountedEditors.push(mock);
-					props.onMount(mock);
-				}
-			}, [props.onMount, props.value, props.defaultValue]);
-
-			return <div data-testid="monaco-editor" />;
-		},
-);
-
-const clickActionButton = async (action: string) => {
-	let buttons = screen.queryAllByRole("button");
-	if (
-		buttons.filter((b) => b.getAttribute("title") === action).length === 0
-	) {
-		await act(() => {
-			for (let i = 0; i < 5; i++) {
-				jest.advanceTimersByTime(100);
-			}
-		});
-		buttons = screen.queryAllByRole("button");
-	}
-	const actionButtons = buttons.filter(
-		(b) => b.getAttribute("title") === action,
-	);
-	const btn = actionButtons[0];
-	if (!btn) {
-		const titles = buttons
-			.map((b) => b.getAttribute("title"))
-			.filter((t): t is string => typeof t === "string")
-			.join(", ");
-		throw new Error(
-			`Button ${action} not found. Available buttons: ${titles}`,
-		);
-	}
-	await act(() => {
-		fireEvent.click(btn);
-	});
-};
+installResizeObserverMock();
+const vscode: VscodeStub = createVscodeStub();
+installVscodeApi(vscode);
 
 const runTestCase = async (config: {
 	local: string;
@@ -202,25 +77,55 @@ const runTestCase = async (config: {
 	await act(() => {
 		jest.advanceTimersByTime(500);
 	});
-	await clickActionButton(config.action);
-	await act(() => {
-		jest.advanceTimersByTime(100);
-	});
+	const mergedEditor =
+		mountedEditors.find((entry) => entry.props.options?.readOnly === false)
+			?.mock ?? null;
+	let buttons = screen.queryAllByRole("button");
+	let actionButtons = buttons.filter(
+		(button) => button.getAttribute("title") === config.action,
+	);
+	if (actionButtons.length === 0) {
+		await act(() => {
+			for (let i = 0; i < 5; i++) {
+				jest.advanceTimersByTime(100);
+			}
+		});
+		buttons = screen.queryAllByRole("button");
+		actionButtons = buttons.filter(
+			(button) => button.getAttribute("title") === config.action,
+		);
+	}
+	if (actionButtons.length === 0) {
+		const titles = buttons
+			.map((button) => button.getAttribute("title"))
+			.filter((title): title is string => typeof title === "string")
+			.join(", ");
+		throw new Error(
+			`Button ${config.action} not found. Available buttons: ${titles}`,
+		);
+	}
+	await actionButtons.reduce<Promise<void>>(async (chain, button) => {
+		await chain;
+		if (mergedEditor?.getValue() === config.expected) {
+			return;
+		}
+		await act(() => {
+			fireEvent.click(button);
+		});
+	}, Promise.resolve());
 
-	// Editors mount in order: Local (0), Merged (1), Remote (2)
-	return mountedEditors[1] ?? null;
+	return mergedEditor;
 };
 
 describe("Webview E2E - Chunk Actions", () => {
 	beforeEach(() => {
 		jest.useFakeTimers();
-		messagesSent.length = 0;
-		mountedEditors.length = 0;
+		vscode.messagesSent.length = 0;
+		resetMountedEditors();
 	});
 
 	afterEach(() => {
-		(window as unknown as { acquireVsCodeApi: unknown }).acquireVsCodeApi =
-			undefined;
+		uninstallVscodeApi();
 		jest.useRealTimers();
 	});
 
@@ -309,13 +214,12 @@ const setupLongDocumentTestCase = async () => {
 describe("Webview E2E - Base Comparisons", () => {
 	beforeEach(() => {
 		jest.useFakeTimers();
-		messagesSent.length = 0;
-		mountedEditors.length = 0;
+		vscode.messagesSent.length = 0;
+		resetMountedEditors();
 	});
 
 	afterEach(() => {
-		(window as unknown as { acquireVsCodeApi: unknown }).acquireVsCodeApi =
-			undefined;
+		uninstallVscodeApi();
 		jest.useRealTimers();
 	});
 
@@ -384,13 +288,12 @@ describe("Webview E2E - Base Comparisons", () => {
 describe("Webview E2E - Conflict State Transitions", () => {
 	beforeEach(() => {
 		jest.useFakeTimers();
-		messagesSent.length = 0;
-		mountedEditors.length = 0;
+		vscode.messagesSent.length = 0;
+		resetMountedEditors();
 	});
 
 	afterEach(() => {
-		(window as unknown as { acquireVsCodeApi: unknown }).acquireVsCodeApi =
-			undefined;
+		uninstallVscodeApi();
 		jest.useRealTimers();
 	});
 
@@ -448,13 +351,12 @@ describe("Webview E2E - Conflict State Transitions", () => {
 describe("Webview E2E - Stress Tests", () => {
 	beforeEach(() => {
 		jest.useFakeTimers();
-		messagesSent.length = 0;
-		mountedEditors.length = 0;
+		vscode.messagesSent.length = 0;
+		resetMountedEditors();
 	});
 
 	afterEach(() => {
-		(window as unknown as { acquireVsCodeApi: unknown }).acquireVsCodeApi =
-			undefined;
+		uninstallVscodeApi();
 		jest.useRealTimers();
 	});
 

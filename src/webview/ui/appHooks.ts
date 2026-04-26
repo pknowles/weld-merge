@@ -1,5 +1,5 @@
 import type { editor } from "monaco-editor";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { Differ } from "../../matchers/diffutil.ts";
 import {
 	applyChunkEdit,
@@ -67,8 +67,6 @@ const assertDiffChunksWellFormed = (chunks: DiffChunk[], label: string) => {
 	}
 };
 
-const HACK_SYNC_DELAY = 100;
-
 interface MessageHandlersDeps {
 	filesRef: React.MutableRefObject<PaneFiles>;
 	diffsRef: React.MutableRefObject<PaneDiffs>;
@@ -91,9 +89,7 @@ interface MessageHandlersDeps {
 	} | null>;
 }
 
-interface MessageDispatchDeps extends MessageHandlersDeps {
-	queuePayloadRenderTrigger: () => void;
-}
+type MessageDispatchDeps = MessageHandlersDeps;
 
 interface LoadDiffData {
 	files: PayloadFiles;
@@ -140,6 +136,7 @@ function handleLoadDiff(data: LoadDiffData, p: MessageDispatchDeps) {
 	p.setLastExternalChangeVersion(data.lastExternalChangeVersion);
 	p.lastExternalChangeVersionRef.current = data.lastExternalChangeVersion;
 	p.setIsConflicted(data.isConflicted ?? true);
+	p.setRenderTrigger((prev) => prev + 1);
 
 	handleConfig(data.config, p);
 
@@ -154,7 +151,6 @@ function handleLoadDiff(data: LoadDiffData, p: MessageDispatchDeps) {
 		s = dI.next();
 	}
 	p.differRef.current = differ;
-	p.queuePayloadRenderTrigger();
 }
 
 function handleLoadBaseDiff(data: BaseDiffPayload, p: MessageDispatchDeps) {
@@ -172,7 +168,7 @@ function handleLoadBaseDiff(data: BaseDiffPayload, p: MessageDispatchDeps) {
 	nD[side === "left" ? 0 : 3] = pD;
 	p.diffsRef.current = nD;
 	p.setDiffs(nD);
-	p.queuePayloadRenderTrigger();
+	p.setRenderTrigger((prev) => prev + 1);
 }
 
 function handleExternalEdit(
@@ -348,7 +344,6 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 		lastExternalChangeVersionRef,
 		applyExternalEditsRef,
 	} = p;
-	const [payloadEpoch, setPayloadEpoch] = useState(0);
 
 	useEffect(() => {
 		const messageDeps: MessageDispatchDeps = {
@@ -368,8 +363,6 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 			differRef,
 			lastExternalChangeVersionRef,
 			applyExternalEditsRef,
-			queuePayloadRenderTrigger: () =>
-				setPayloadEpoch((currentEpoch) => currentEpoch + 1),
 		};
 		const handleMessage = (event: MessageEvent) => {
 			const m = event.data;
@@ -426,16 +419,6 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 		setSyntaxHighlighting,
 		vscodeApi,
 	]);
-
-	useEffect(() => {
-		if (payloadEpoch === 0) {
-			return;
-		}
-		const timeoutId = setTimeout(() => {
-			setRenderTrigger((prev) => prev + 1);
-		}, HACK_SYNC_DELAY);
-		return () => clearTimeout(timeoutId);
-	}, [payloadEpoch, setRenderTrigger]);
 
 	useEffect(() => {
 		if (vscodeApi) {

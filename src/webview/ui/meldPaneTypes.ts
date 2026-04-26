@@ -7,8 +7,6 @@ import type {
 	MonacoContentChange,
 } from "./types.ts";
 
-export const INITIAL_SYNC_DELAY = 50;
-
 export interface MeldUIState {
 	files: PaneFiles;
 	diffs: PaneDiffs;

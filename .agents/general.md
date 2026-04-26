@@ -20,7 +20,7 @@
 - Are all formatting/linting/validation/testing passing?
 - Do not create spurious `.md` analysis files; keep history in commits.
 - Update project documentation if your change affects architecture, flow, or object names.
-- Report anything you skipped or new architectural smells to the user.
+- Report to the user anything you skipped, new architectural smells or anything that you think they should know.
 
 ## Tools
 

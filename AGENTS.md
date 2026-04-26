@@ -7,8 +7,8 @@ Use `implementation_references.md` to help navigating directly to the relevant s
 ## Guideline Directory
 Before contributing, agents **MUST** read the relevant guidelines for their task:
 1. [General Behavior & Git Etiquette](.agents/general.md)
-2. [Core Architecture Principles](.agents/standards/core.md)
-3. [Python & GPU Standards](.agents/standards/python.md)
+2. [Core Coding Standards](.agents/standards/core.md)
+3. [Python Standards](.agents/standards/python.md)
 4. [Web (JS/TS/React) Standards](.agents/standards/web.md)
 5. [Testing & Quality Workflows](.agents/workflows/testing-guidelines.md)
 

@@ -2,6 +2,7 @@ interface VsCodeApi {
 	postMessage: (msg: unknown) => void;
 }
 
+// TODO: looks like a code smell and useless wrapper.
 let vscodeApi: VsCodeApi | null = null;
 
 export function useVscodeMessageBus() {

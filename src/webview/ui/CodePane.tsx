@@ -19,6 +19,7 @@ import type {
 } from "./types.ts";
 
 const NEWLINE_REGEX = /\r?\n/;
+const NOOP_DISPOSABLE = { dispose: () => undefined };
 
 interface CodePaneProps {
 	file: FileState;
@@ -536,6 +537,33 @@ const useCodePaneSyncRefs = (
 	}, [p.file.content, paneContentRef]);
 };
 
+const useCodePaneRenderTrigger = (
+	ed: editor.IStandaloneCodeEditor | null,
+	setRenderTrigger: MeldUIActions["setRenderTrigger"],
+) => {
+	useEffect(() => {
+		if (!ed) {
+			return;
+		}
+		const triggerRender = () => {
+			setRenderTrigger((prev) => prev + 1);
+		};
+		const model = ed.getModel();
+		const modelChangeDisposable =
+			model && typeof model.onDidChangeContent === "function"
+				? model.onDidChangeContent(triggerRender)
+				: NOOP_DISPOSABLE;
+		const layoutDisposable =
+			typeof ed.onDidLayoutChange === "function"
+				? ed.onDidLayoutChange(triggerRender)
+				: NOOP_DISPOSABLE;
+		return () => {
+			modelChangeDisposable.dispose();
+			layoutDisposable.dispose();
+		};
+	}, [ed, setRenderTrigger]);
+};
+
 const useCodePaneLogic = (p: CodePaneProps) => {
 	const [ed, setEd] = useState<editor.IStandaloneCodeEditor | null>(null);
 	const isApplyingSync = useRef(false);
@@ -549,6 +577,7 @@ const useCodePaneLogic = (p: CodePaneProps) => {
 	});
 	const paneContentRef = useRef(p.file.content);
 	useCodePaneSyncRefs(p, sendSaveRef, syncActionsRef, paneContentRef);
+	useCodePaneRenderTrigger(ed, p.actions.setRenderTrigger);
 
 	useEffect(() => {
 		if (ed && p.highlights) {
