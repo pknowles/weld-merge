@@ -41,8 +41,6 @@ interface GitApi {
 interface RepoContext {
 	repository: GitApiRepository;
 	rootUri: Uri;
-	rootFsPath: string;
-	relativePath: string;
 	uri: Uri;
 }
 
@@ -56,6 +54,7 @@ function decodeUriPath(path: string): string[] {
 		.map((segment) => decodeURIComponent(segment));
 }
 
+// TODO: no really!!
 function repoRelativePath(rootUri: Uri, fileUri: Uri): string | null {
 	if (rootUri.scheme !== fileUri.scheme) {
 		return null;
@@ -75,6 +74,10 @@ function repoRelativePath(rootUri: Uri, fileUri: Uri): string | null {
 		}
 	}
 	return fileSegments.slice(rootSegments.length).join("/");
+}
+
+function fileDisplayString(_rootUri: Uri, fileUri: Uri): string {
+	return workspace.asRelativePath(fileUri, false);
 }
 
 function isSupportedScheme(uri: Uri): boolean {
@@ -106,8 +109,6 @@ async function resolveRepoContext(uri: Uri): Promise<RepoContext | null> {
 		return {
 			repository: directRepository,
 			rootUri: directRepository.rootUri,
-			rootFsPath: directRepository.rootUri.fsPath,
-			relativePath,
 			uri,
 		};
 	}
@@ -129,11 +130,9 @@ async function resolveRepoContext(uri: Uri): Promise<RepoContext | null> {
 	return {
 		repository: workspaceRepository,
 		rootUri: workspaceRepository.rootUri,
-		rootFsPath: workspaceRepository.rootUri.fsPath,
-		relativePath,
 		uri,
 	};
 }
 
-export { getGitApi, isSupportedScheme, repoRelativePath, resolveRepoContext };
+export { getGitApi, isSupportedScheme, fileDisplayString, resolveRepoContext };
 export type { GitApiRepository, RepoContext };

@@ -25,8 +25,8 @@ describe("repoContext.resolveRepoContext (VS Code host)", () => {
 			const fileUri = await makeRepoFile(repoPath, "src/nested/file.txt");
 			const repoContext = await resolveRepoContext(fileUri);
 			assert.ok(repoContext);
-			assert.equal(repoContext.rootFsPath, repoPath);
-			assert.equal(repoContext.relativePath, "src/nested/file.txt");
+			assert.equal(repoContext.rootUri.fsPath, repoPath);
+			assert.equal(repoContext.uri.toString(), fileUri.toString());
 		} finally {
 			await rm(repoPath, { recursive: true, force: true });
 		}
@@ -47,8 +47,8 @@ describe("repoContext.resolveRepoContext (VS Code host)", () => {
 			);
 			const repoContext = await resolveRepoContext(fileUri);
 			assert.ok(repoContext);
-			assert.equal(repoContext.rootFsPath, worktreePath);
-			assert.equal(repoContext.relativePath, "worktree-file.txt");
+			assert.equal(repoContext.rootUri.fsPath, worktreePath);
+			assert.equal(repoContext.uri.toString(), fileUri.toString());
 		} finally {
 			await rm(repoPath, { recursive: true, force: true });
 			await rm(worktreePath, { recursive: true, force: true });
@@ -64,8 +64,8 @@ describe("repoContext.resolveRepoContext (VS Code host)", () => {
 			const fileUri = await makeRepoFile(repoPathB, "only-b.txt");
 			const repoContext = await resolveRepoContext(fileUri);
 			assert.ok(repoContext);
-			assert.equal(repoContext.rootFsPath, repoPathB);
-			assert.equal(repoContext.relativePath, "only-b.txt");
+			assert.equal(repoContext.rootUri.fsPath, repoPathB);
+			assert.equal(repoContext.uri.toString(), fileUri.toString());
 		} finally {
 			await rm(repoPathA, { recursive: true, force: true });
 			await rm(repoPathB, { recursive: true, force: true });

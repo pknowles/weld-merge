@@ -6,7 +6,7 @@
 
 ## Coding
 
-See ./standards/core.md and ./standards/*.
+Read ./standards/core.md and any relevant ./standards/* before designing or writing code.
 
 ## Git Etiquette
 - **Surgical Commits:** Prefer `git add -u` or manually staging specific files. NEVER `git add -A` or `git add .` as this WILL stage files we don't want.

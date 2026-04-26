@@ -23,7 +23,7 @@ const PER_REPO_LABEL_REGEX = /Failed to list conflicts for/;
 const PER_REPO_FILENOTFOUND_REGEX =
 	/(FileNotFound|ENOENT|cannot find|MERGE_MSG)/;
 const AUTO_MERGE_ALL_FAILURE_REGEX =
-	/Weld Auto-Merge All stopped at tracked\.txt after 0 successful merge\(s\): .*forced repository\.show failure/;
+	/Weld Auto-Merge All stopped at .*tracked\.txt after 0 successful merge\(s\): .*forced repository\.show failure/;
 
 // Reproduces the Compare feature's initial-conflict URI round-trip using the
 // real VS Code host. setInitialConflictContent stores the original conflicted

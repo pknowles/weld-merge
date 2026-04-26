@@ -5,7 +5,7 @@ import {
 	type ExtensionContext,
 	ProgressLocation,
 	Range,
-	Uri,
+	type Uri,
 	WorkspaceEdit,
 	window,
 	workspace,
@@ -79,11 +79,10 @@ function showExceptionMessage(context: string, exception: unknown): void {
 	}
 }
 
-async function notifyIfNewConflicts(
-	repoKey: string,
-	repository: GitApiRepository,
-) {
-	const currentConflicts = await getConflictedFiles(repository);
+function notifyIfNewConflicts(repoKey: string, repository: GitApiRepository) {
+	const currentConflicts = getConflictedFiles(repository).map((f) =>
+		f.toString(),
+	);
 	const lastFiles = lastConflictedFilesPerRepo.get(repoKey) || new Set();
 	const newConflicts = currentConflicts.filter((f) => !lastFiles.has(f));
 
@@ -103,7 +102,6 @@ async function notifyIfNewConflicts(
 interface TrackedRepository {
 	repoKey: string;
 	rootUri: Uri;
-	rootFsPath: string;
 	repository: GitApiRepository;
 }
 
@@ -125,7 +123,6 @@ function getTrackedRepositories(): TrackedRepository[] {
 		repositoriesByRootUri.set(repository.rootUri.toString(), {
 			repoKey: repository.rootUri.toString(),
 			rootUri: repository.rootUri,
-			rootFsPath: repository.rootUri.fsPath,
 			repository,
 		});
 	}
@@ -149,12 +146,12 @@ function registerConflictWatchersForRepository(
 					trackedRepository.repository,
 				);
 			MeldCustomEditorProvider.onConflictStateChanged.fire({
-				repoPath: trackedRepository.rootFsPath,
+				repoUri: trackedRepository.rootUri,
 				stateKey,
 			});
 		} catch (error: unknown) {
 			getWeldLogChannel().error(
-				`Refresh watcher failed for ${trackedRepository.rootFsPath}: ${getErrorMessage(error)}`,
+				`Refresh watcher failed for ${trackedRepository.rootUri}: ${getErrorMessage(error)}`,
 			);
 		}
 	};
@@ -169,7 +166,7 @@ function registerConflictWatchersForRepository(
 			refreshTimer = null;
 			doRefresh().catch((error: unknown) => {
 				getWeldLogChannel().error(
-					`Refresh watcher failed for ${trackedRepository.rootFsPath}: ${getErrorMessage(error)}`,
+					`Refresh watcher failed for ${trackedRepository.rootUri}: ${getErrorMessage(error)}`,
 				);
 			});
 		}, RefreshDebounceMs);
@@ -190,22 +187,22 @@ function registerConflictWatchersForRepository(
 	context.subscriptions.push(stateChangeSubscription);
 	doRefresh().catch((error: unknown) => {
 		getWeldLogChannel().error(
-			`Initial watcher refresh failed for ${trackedRepository.rootFsPath}: ${getErrorMessage(error)}`,
+			`Initial watcher refresh failed for ${trackedRepository.rootUri}: ${getErrorMessage(error)}`,
 		);
 	});
 }
 
 async function getGitFileContent(
 	repository: GitApiRepository,
-	relativeFilePath: string,
+	file: Uri,
 	stage: number,
 ): Promise<string> {
 	try {
-		return await repository.show(`:${stage}`, relativeFilePath);
+		return await repository.show(`:${stage}`, file.fsPath);
 	} catch (error: unknown) {
 		const reason = getErrorMessage(error);
 		throw new Error(
-			`Could not get git content for stage ${stage} of ${relativeFilePath}. Is it in conflict? ${reason}`,
+			`Could not get git content for stage ${stage} of ${file}. Is it in conflict? ${reason}`,
 			{ cause: error },
 		);
 	}
@@ -310,9 +307,9 @@ async function performAutoMerge(
 	documentUri: Uri,
 ): Promise<void> {
 	const [baseContent, localContent, remoteContent] = await Promise.all([
-		getGitFileContent(repoContext.repository, repoContext.relativePath, 1),
-		getGitFileContent(repoContext.repository, repoContext.relativePath, 2),
-		getGitFileContent(repoContext.repository, repoContext.relativePath, 3),
+		getGitFileContent(repoContext.repository, repoContext.uri, 1),
+		getGitFileContent(repoContext.repository, repoContext.uri, 2),
+		getGitFileContent(repoContext.repository, repoContext.uri, 3),
 	]);
 
 	const merger = new GitTextMerger();
@@ -336,7 +333,7 @@ async function performAutoMerge(
 
 	if (finalMergedText === null) {
 		throw new Error(
-			`Merge engine produced no text for ${repoContext.relativePath}.`,
+			`Merge engine produced no text for ${repoContext.uri}.`,
 		);
 	}
 
@@ -350,9 +347,7 @@ async function performAutoMerge(
 	edit.replace(documentUri, fullRange, finalMergedText);
 	const applied = await workspace.applyEdit(edit);
 	if (!applied) {
-		throw new Error(
-			`Failed to apply merged text to ${repoContext.relativePath}.`,
-		);
+		throw new Error(`Failed to apply merged text to ${repoContext.uri}.`);
 	}
 }
 
@@ -380,30 +375,19 @@ async function handleAutoMerge(
 interface ConflictedFileEntry {
 	repository: GitApiRepository;
 	rootUri: Uri;
-	relativePath: string;
 	uri: Uri;
 }
 
-async function collectConflictedFilesAcrossRepositories(): Promise<
-	ConflictedFileEntry[]
-> {
-	const trackedRepositories = await getTrackedRepositories();
-	const perRepositoryEntries = await Promise.all(
-		trackedRepositories.map(async (tracked) => {
-			const relativePaths = await getConflictedFiles(tracked.repository);
-			return relativePaths.map<ConflictedFileEntry>((relativePath) => {
-				const segments = relativePath
-					.split("/")
-					.filter((segment) => segment.length > 0);
-				return {
-					repository: tracked.repository,
-					rootUri: tracked.rootUri,
-					relativePath,
-					uri: Uri.joinPath(tracked.rootUri, ...segments),
-				};
-			});
-		}),
-	);
+function collectConflictedFilesAcrossRepositories(): ConflictedFileEntry[] {
+	const trackedRepositories = getTrackedRepositories();
+	const perRepositoryEntries = trackedRepositories.map((tracked) => {
+		const conflictedFiles = getConflictedFiles(tracked.repository);
+		return conflictedFiles.map<ConflictedFileEntry>((uri) => ({
+			repository: tracked.repository,
+			rootUri: tracked.rootUri,
+			uri,
+		}));
+	});
 	return perRepositoryEntries.flat();
 }
 
@@ -425,24 +409,22 @@ async function handleAutoMergeAll(
 	const mergeEntryBuilder =
 		(progress: { report: (value: { message?: string }) => void }) =>
 		async (entry: ConflictedFileEntry): Promise<void> => {
-			progress.report({ message: `Merging ${entry.relativePath}...` });
+			progress.report({ message: `Merging ${entry.uri}...` });
 			const repoContext: RepoContext = {
 				repository: entry.repository,
 				rootUri: entry.rootUri,
-				rootFsPath: entry.rootUri.fsPath,
-				relativePath: entry.relativePath,
 				uri: entry.uri,
 			};
 			try {
 				await performAutoMerge(repoContext, entry.uri);
 			} catch (error: unknown) {
 				throw new Error(
-					`Weld Auto-Merge All stopped at ${entry.relativePath} after ${successCount} successful merge(s): ${getErrorMessage(error)}`,
+					`Weld Auto-Merge All stopped at ${entry.uri} after ${successCount} successful merge(s): ${getErrorMessage(error)}`,
 					{ cause: error },
 				);
 			}
 			successCount++;
-			log.info(`Weld Auto-Merge All: merged ${entry.relativePath}`);
+			log.info(`Weld Auto-Merge All: merged ${entry.uri}`);
 		};
 	try {
 		await window.withProgress(
@@ -490,7 +472,7 @@ async function handleCheckoutConflicted(
 	}
 
 	const confirm = await window.showWarningMessage(
-		`Are you sure you want to checkout the conflicted version of ${repoContext.relativePath} (-m)? This will overwrite your current file.`,
+		`Are you sure you want to checkout the conflicted version of ${repoContext.uri} (-m)? This will overwrite your current file.`,
 		{ modal: true },
 		"Yes",
 	);
@@ -500,12 +482,12 @@ async function handleCheckoutConflicted(
 
 	try {
 		await execGit(
-			["checkout", "-m", "--", repoContext.relativePath],
-			repoContext.rootFsPath,
+			["checkout", "-m", "--", repoContext.uri.fsPath],
+			repoContext.rootUri.fsPath,
 		);
 		MeldCustomEditorProvider.onRequestRefresh.fire(documentUri);
 		window.showInformationMessage(
-			`Checked out conflicted version of ${repoContext.relativePath}`,
+			`Checked out conflicted version of ${repoContext.uri}`,
 		);
 		conflictedFilesProvider.refresh();
 	} catch (e: unknown) {
@@ -532,7 +514,7 @@ async function handleRerereForget(
 	}
 
 	const confirm = await window.showWarningMessage(
-		`Are you sure you want to forget the recorded rerere resolution for ${repoContext.relativePath}?`,
+		`Are you sure you want to forget the recorded rerere resolution for ${repoContext.uri}?`,
 		{ modal: true },
 		"Yes",
 	);
@@ -542,11 +524,11 @@ async function handleRerereForget(
 
 	try {
 		await execGit(
-			["rerere", "forget", "--", repoContext.relativePath],
-			repoContext.rootFsPath,
+			["rerere", "forget", "--", repoContext.uri.fsPath],
+			repoContext.rootUri.fsPath,
 		);
 		window.showInformationMessage(
-			`Forgot recorded resolution for ${repoContext.relativePath}`,
+			`Forgot recorded resolution for ${repoContext.uri}`,
 		);
 		conflictedFilesProvider.refresh();
 	} catch (e: unknown) {

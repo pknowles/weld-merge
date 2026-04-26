@@ -129,10 +129,10 @@ describe("MeldCustomEditorProvider.resolveCustomTextEditor", () => {
 			assert.equal(captured.length, 1);
 			const first = captured[0];
 			assert.ok(first);
-			assert.equal(first.repoContext.rootFsPath, repoPath);
+			assert.equal(first.repoContext.rootUri.fsPath, repoPath);
 			assert.equal(
-				first.repoContext.relativePath,
-				"src/deep/path/file.ts",
+				first.repoContext.uri.fsPath,
+				`${repoPath}/src/deep/path/file.ts`,
 			);
 		} finally {
 			await rm(repoPath, { recursive: true, force: true });
@@ -154,8 +154,11 @@ describe("MeldCustomEditorProvider.resolveCustomTextEditor", () => {
 			assert.equal(captured.length, 1);
 			const first = captured[0];
 			assert.ok(first);
-			assert.equal(first.repoContext.rootFsPath, worktreePath);
-			assert.equal(first.repoContext.relativePath, "worktree-file.ts");
+			assert.equal(first.repoContext.rootUri.fsPath, worktreePath);
+			assert.equal(
+				first.repoContext.uri.fsPath,
+				`${worktreePath}/worktree-file.ts`,
+			);
 		} finally {
 			await rm(repoPath, { recursive: true, force: true });
 			await rm(worktreePath, { recursive: true, force: true });

@@ -3,7 +3,7 @@
 import { execFile } from "node:child_process";
 import { FileType, Uri, workspace } from "vscode";
 import { getGitExecutable } from "./gitPath.ts";
-import { type GitApiRepository, repoRelativePath } from "./repoContext.ts";
+import type { GitApiRepository } from "./repoContext.ts";
 
 const LINE_BREAK_REGEX = /\r?\n/;
 const WINDOWS_DRIVE_PREFIX_REGEX = /^[A-Za-z]:[\\/]/;
@@ -162,15 +162,12 @@ function execGit(args: string[], cwd: string): Promise<string> {
 /**
  * Gets the list of currently conflicted files in a repository.
  */
-function getConflictedFiles(repository: GitApiRepository): Promise<string[]> {
-	const conflictedPaths: string[] = [];
+function getConflictedFiles(repository: GitApiRepository): Uri[] {
+	const result: Uri[] = [];
 	for (const change of repository.state.mergeChanges) {
-		const relativePath = repoRelativePath(repository.rootUri, change.uri);
-		if (relativePath !== null && relativePath.length > 0) {
-			conflictedPaths.push(relativePath);
-		}
+		result.push(change.uri);
 	}
-	return Promise.resolve([...new Set(conflictedPaths)]);
+	return result;
 }
 
 /**

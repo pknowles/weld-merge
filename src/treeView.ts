@@ -16,6 +16,7 @@ import {
 	readConflictState,
 } from "./gitUtils.ts";
 import {
+	fileDisplayString,
 	type GitApiRepository,
 	getGitApi,
 	isSupportedScheme,
@@ -45,18 +46,19 @@ interface GitFileOptions {
 	label: string;
 	collapsibleState: TreeItemCollapsibleState;
 	uri: Uri;
-	repoPath: string;
+	repoPath: Uri;
 	commandId: string;
 }
 
 abstract class GitFile extends TreeItem {
 	readonly uri: Uri;
-	readonly repoPath: string;
+	readonly repoPath: Uri;
 
 	constructor(options: GitFileOptions) {
 		super(options.label, options.collapsibleState);
 		this.uri = options.uri;
 		this.repoPath = options.repoPath;
+		// TODO: seeing "ExplorerItem not found" exception for some files in codespaces
 		this.resourceUri = options.uri;
 		this.tooltip = `${options.label}`;
 		this.command = {
@@ -177,30 +179,29 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 	private async _buildItemsForRepository(
 		repository: GitApiRepository,
 	): Promise<ConflictedTreeItem[]> {
-		const repoPath = repository.rootUri.fsPath;
 		try {
-			const rootUri = repository.rootUri;
 			const unmergedFiles = await this._getUnmergedFiles(repository);
 			const conflictedItems = this._createConflictedItems(
 				unmergedFiles,
-				rootUri,
-				repoPath,
+				repository.rootUri,
 			);
-			const originallyConflicted =
+			const originallyConflictedUris =
 				await this._getOriginallyConflicted(repository);
-			const resolvedFiles = originallyConflicted.filter(
-				(f) => !unmergedFiles.includes(f),
+			const unmergedFilesStrings = new Set(
+				unmergedFiles.map((f) => f.toString()),
+			);
+			const resolvedFiles = originallyConflictedUris.filter(
+				(f) => !unmergedFilesStrings.has(f.toString()),
 			);
 			const resolvedItems = this._createResolvedItems(
 				resolvedFiles,
-				rootUri,
-				repoPath,
+				repository.rootUri,
 			);
 			return [...conflictedItems, ...resolvedItems];
 		} catch (error: unknown) {
 			return [
 				new ErrorTreeItem(
-					`Failed to list conflicts for ${repoPath}`,
+					`Failed to list conflicts for ${repository.rootUri}`,
 					error,
 				),
 			];
@@ -212,39 +213,31 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 		return Uri.joinPath(rootUri, ...pathSegments);
 	}
 
-	private _createConflictedItems(
-		files: string[],
-		rootUri: Uri,
-		repoPath: string,
-	): GitFile[] {
+	private _createConflictedItems(files: Uri[], repoUri: Uri): GitFile[] {
 		return files.map(
 			(file) =>
 				new ConflictedFile({
-					label: file,
+					label: fileDisplayString(repoUri, file),
 					collapsibleState: TreeItemCollapsibleState.None,
-					uri: this._createFileUri(rootUri, file),
-					repoPath,
+					uri: file,
+					repoPath: repoUri,
 				}),
 		);
 	}
 
-	private _createResolvedItems(
-		files: string[],
-		rootUri: Uri,
-		repoPath: string,
-	): GitFile[] {
+	private _createResolvedItems(files: Uri[], rootUri: Uri): GitFile[] {
 		return files.map(
 			(file) =>
 				new ResolvedFile({
-					label: file,
+					label: fileDisplayString(rootUri, file),
 					collapsibleState: TreeItemCollapsibleState.None,
-					uri: this._createFileUri(rootUri, file),
-					repoPath,
+					uri: file,
+					repoPath: rootUri,
 				}),
 		);
 	}
 
-	private _getUnmergedFiles(repository: GitApiRepository): Promise<string[]> {
+	private _getUnmergedFiles(repository: GitApiRepository): Uri[] {
 		return getConflictedFiles(repository);
 	}
 
@@ -256,18 +249,19 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 
 	private async _getOriginallyConflicted(
 		repository: GitApiRepository,
-	): Promise<string[]> {
+	): Promise<Uri[]> {
 		if (!(await this._isInConflictState(repository))) {
 			return [];
 		}
 
-		const mergeMsgPath = Uri.joinPath(
-			await getGitDirUri(repository),
-			"MERGE_MSG",
-		);
+		const gitDirUri = await getGitDirUri(repository);
+		const mergeMsgPath = Uri.joinPath(gitDirUri, "MERGE_MSG");
 		const mergeMsgBytes = await workspace.fs.readFile(mergeMsgPath);
 		const msg = new TextDecoder("utf-8").decode(mergeMsgBytes);
-		return this._parseMergeMsgConflicts(msg.split("\n"));
+		const relativePaths = this._parseMergeMsgConflicts(msg.split("\n"));
+		return relativePaths.map((path) =>
+			this._createFileUri(repository.rootUri, path),
+		);
 	}
 
 	private _parseMergeMsgConflicts(lines: string[]): string[] {

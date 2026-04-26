@@ -19,6 +19,7 @@ import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Uri } from "vscode";
 import { getGitExecutable } from "../gitPath.ts";
 import { readConflictState } from "../gitUtils.ts";
 import { Differ } from "../matchers/diffutil.ts";
@@ -63,9 +64,9 @@ interface BuildDiffPayloadOptions {
 
 const getGitState = async (
 	repository: GitApiRepository,
-	relativeFilePath: string,
+	file: Uri,
 	stage: number,
-): Promise<string> => repository.show(`:${stage}`, relativeFilePath);
+): Promise<string> => repository.show(`:${stage}`, file.fsPath);
 
 const getCommitInfo = async (
 	repository: GitApiRepository,
@@ -180,18 +181,18 @@ const runDiff = (
 
 async function fetchConflictStages(
 	repository: GitApiRepository,
-	relativeFilePath: string,
+	file: Uri,
 ): Promise<ConflictStages> {
 	const [base, local, incoming] = await Promise.all([
-		getGitState(repository, relativeFilePath, GIT_STAGE_BASE),
-		getGitState(repository, relativeFilePath, GIT_STAGE_LOCAL),
-		getGitState(repository, relativeFilePath, GIT_STAGE_REMOTE),
+		getGitState(repository, file, GIT_STAGE_BASE),
+		getGitState(repository, file, GIT_STAGE_LOCAL),
+		getGitState(repository, file, GIT_STAGE_REMOTE),
 	]);
 	return { base, local, incoming };
 }
 
 async function buildInitialConflictedState(
-	repoPath: string,
+	repoUri: Uri,
 	stages: ConflictStages,
 	labels: ConflictLabels,
 ): Promise<string> {
@@ -225,7 +226,7 @@ async function buildInitialConflictedState(
 					basePath,
 					remotePath,
 				],
-				{ cwd: repoPath },
+				{ cwd: repoUri.fsPath },
 				(err, stdout, stderr) => {
 					// git-merge-file documents: 0 = clean merge, 1..127 = conflict count,
 					// and negative values indicate errors. In Node callbacks these error
@@ -235,7 +236,7 @@ async function buildInitialConflictedState(
 					if (err && ((err as { code?: number }).code ?? 0) >= 128) {
 						reject(
 							new Error(
-								`git merge-file failed for ${repoPath}: ${stderr || err.message}`,
+								`git merge-file failed for ${repoUri}: ${stderr || err.message}`,
 							),
 						);
 						return;
@@ -251,13 +252,12 @@ async function buildInitialConflictedState(
 
 async function buildDiffPayload(
 	repoContext: RepoContext,
-	relativeFilePath: string,
+	file: Uri,
 	options: BuildDiffPayloadOptions = {},
 ): Promise<WebviewPayload["data"]> {
 	const { repository } = repoContext;
 	const stages =
-		options.stages ??
-		(await fetchConflictStages(repository, relativeFilePath));
+		options.stages ?? (await fetchConflictStages(repository, file));
 	const { base, local, incoming } = stages;
 
 	const [localCommit, remoteRef] = await Promise.all([
@@ -301,15 +301,15 @@ async function buildDiffPayload(
 
 async function buildBaseDiffPayload(
 	repoContext: RepoContext,
-	relativeFilePath: string,
+	file: Uri,
 	side: "left" | "right",
 ) {
 	const { repository } = repoContext;
 	// Base is stage 1, Local is 2, Remote is 3
 	const targetStage = side === "left" ? GIT_STAGE_LOCAL : GIT_STAGE_REMOTE;
 	const [base, target] = await Promise.all([
-		getGitState(repository, relativeFilePath, GIT_STAGE_BASE),
-		getGitState(repository, relativeFilePath, targetStage),
+		getGitState(repository, file, GIT_STAGE_BASE),
+		getGitState(repository, file, targetStage),
 	]);
 
 	const baseCommit = await getBaseCommitInfo(repository);

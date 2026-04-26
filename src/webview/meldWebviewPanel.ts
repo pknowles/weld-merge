@@ -106,7 +106,7 @@ import type {
 const DEFAULT_DEBOUNCE_DELAY = 300;
 
 interface ConflictStateChangeEvent {
-	repoPath: string;
+	repoUri: Uri;
 	stateKey: string | undefined;
 }
 
@@ -409,7 +409,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		const docText = ctx.document.getText();
 		const stages = await fetchConflictStages(
 			ctx.repoContext.repository,
-			ctx.repoContext.relativePath,
+			ctx.repoContext.uri,
 		);
 
 		// TODO: consolidate this duplicate block with the rest below
@@ -437,6 +437,8 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		// silently load the current file state instead.
 		const labels = extractConflictLabels(docText);
 		if (!labels) {
+			// TODO: add logging
+			//getWeldLogChannel().log(`Skipping automerge; no conflict marker labels found in ${ctx.document.uri.toString()}`);
 			return this._snapshotFromCurrentDocument(
 				ctx,
 				config,
@@ -480,7 +482,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		labels: ConflictLabels,
 	): Promise<string> {
 		return buildInitialConflictedState(
-			ctx.repoContext.rootFsPath,
+			ctx.repoContext.rootUri,
 			stages,
 			labels,
 		);
@@ -497,7 +499,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		// Keep path: never rewrite the buffer; render and diff exactly what exists.
 		const snapshot = await buildDiffPayload(
 			ctx.repoContext,
-			ctx.repoContext.relativePath,
+			ctx.repoContext.uri,
 			{
 				stages,
 				workingContent: docText,
@@ -518,7 +520,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		// Replace path: compute merged middle content, then apply it in-memory only.
 		const snapshot = await buildDiffPayload(
 			ctx.repoContext,
-			ctx.repoContext.relativePath,
+			ctx.repoContext.uri,
 			{
 				stages,
 			},
@@ -769,7 +771,10 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		const conflictStateSubscription =
 			MeldCustomEditorProvider.onConflictStateChanged.event(
 				async (event) => {
-					if (event.repoPath !== ctx.repoContext.rootFsPath) {
+					if (
+						event.repoUri.toString() !==
+						ctx.repoContext.rootUri.toString()
+					) {
 						return;
 					}
 					if (event.stateKey === undefined) {
@@ -969,7 +974,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 	) {
 		const basePayload = (await buildBaseDiffPayload(
 			ctx.repoContext,
-			ctx.repoContext.relativePath,
+			ctx.repoContext.uri,
 			msg.side,
 		)) as {
 			command: string;
