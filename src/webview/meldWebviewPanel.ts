@@ -569,7 +569,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 				config.get<boolean>("mergeEditor.syntaxHighlighting") ?? true,
 			baseCompareHighlighting:
 				config.get<boolean>("mergeEditor.baseCompareHighlighting") ??
-				false,
+				true,
 			smoothScrolling:
 				config.get<boolean>("mergeEditor.smoothScrolling") ?? true,
 		};

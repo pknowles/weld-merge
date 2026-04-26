@@ -35,13 +35,13 @@ const getBridge01 = (ui: MeldUIState): DiffState | null => {
 	if (!(ui.files[0] || ui.renderBaseLeft)) {
 		return null;
 	}
-	const fade = !ui.files[0];
+	const fade = !ui.baseCompareHighlighting;
 	return {
 		dFC: ui.diffs[0] || ui.prevBaseLeftDiffs,
 		lEIdx: 0,
 		rEIdx: 1,
-		fOL: fade,
-		fOR: false,
+		fOL: false,
+		fOR: fade,
 	};
 };
 
@@ -49,13 +49,13 @@ const getBridge34 = (ui: MeldUIState): DiffState | null => {
 	if (!(ui.files[4] || ui.renderBaseRight)) {
 		return null;
 	}
-	const fade = !ui.files[4];
+	const fade = !ui.baseCompareHighlighting;
 	return {
 		dFC: ui.diffs[3] || ui.prevBaseRightDiffs,
 		lEIdx: 3,
 		rEIdx: 4,
-		fOL: false,
-		fOR: fade,
+		fOL: fade,
+		fOR: false,
 	};
 };
 

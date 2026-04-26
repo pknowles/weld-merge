@@ -285,7 +285,7 @@ const useAppCoreData = () => {
 	const [debounceDelay, setDebounceDelay] = useState(DEFAULT_DEBOUNCE_DELAY);
 	const [syntaxHighlighting, setSyntaxHighlighting] = useState(true);
 	const [baseCompareHighlighting, setBaseCompareHighlighting] =
-		useState(false);
+		useState(true);
 	const [isConflicted, setIsConflicted] = useState(true);
 	const [renderTrigger, setRenderTrigger] = useState(0);
 	const editorRefArray = useRef<editor.IStandaloneCodeEditor[]>([]);
