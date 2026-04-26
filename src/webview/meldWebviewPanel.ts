@@ -352,7 +352,12 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 
 		readyState.handling = true;
 		try {
-			const snapshot = await this._loadInitialSnapshot(ctx, config);
+			const [snapshot, initialStateKey] = await Promise.all([
+				this._loadInitialSnapshot(ctx, config),
+				MeldCustomEditorProvider.getCurrentConflictStateKey(
+					ctx.repoContext.repository,
+				),
+			]);
 			if (!snapshot) {
 				return;
 			}
@@ -360,14 +365,17 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			readyState.handled = true;
 			// Phase 2: setup listeners and send initial snapshot.
 			// All of this is synchronous — no other code can interleave.
-			this._setupPerEditorListeners({
-				document: ctx.document,
-				webviewPanel: ctx.webviewPanel,
-				repoContext: ctx.repoContext,
-				readyState,
-				editState: ctx.editState,
-				disposables: ctx.disposables,
-			});
+			this._setupPerEditorListeners(
+				{
+					document: ctx.document,
+					webviewPanel: ctx.webviewPanel,
+					repoContext: ctx.repoContext,
+					readyState,
+					editState: ctx.editState,
+					disposables: ctx.disposables,
+				},
+				initialStateKey,
+			);
 		} finally {
 			readyState.handling = false;
 		}
@@ -702,20 +710,28 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 	 * By doing everything synchronously, the content we send to the webview is
 	 * guaranteed to match exactly what the listener will track going forward.
 	 */
-	private _setupPerEditorListeners(ctx: {
-		document: TextDocument;
-		webviewPanel: WebviewPanel;
-		repoContext: RepoContext;
-		readyState: {
-			snapshot: WebviewPayload["data"] | null;
-			handled: boolean;
-			handling: boolean;
-		};
-		editState: EditState;
-		disposables: Disposable[];
-	}): void {
+	private _setupPerEditorListeners(
+		ctx: {
+			document: TextDocument;
+			webviewPanel: WebviewPanel;
+			repoContext: RepoContext;
+			readyState: {
+				snapshot: WebviewPayload["data"] | null;
+				handled: boolean;
+				handling: boolean;
+			};
+			editState: EditState;
+			disposables: Disposable[];
+		},
+		initialStateKey: string | undefined,
+	): void {
 		// All of this is synchronous — no await, no other code can interleave.
 		// This guarantees the content we send matches exactly what the listener tracks.
+
+		// Track the conflict stateKey so we only reload when it actually changes.
+		// Without this, any git working-tree change (e.g. saving .vscode/settings.json)
+		// would fire onConflictStateChanged and reset the base-compare panes.
+		let lastStateKey: string | undefined = initialStateKey;
 
 		const changeDocumentSubscription = workspace.onDidChangeTextDocument(
 			(e) => this._handleTrackedDocumentChange(ctx, e),
@@ -757,11 +773,20 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 						return;
 					}
 					if (event.stateKey === undefined) {
+						lastStateKey = undefined;
 						ctx.webviewPanel.webview.postMessage({
 							command: "conflictStateLost",
 						});
 						return;
 					}
+					// Only reload when the conflict state actually changes (e.g. a
+					// new MERGE_HEAD or operation type). Spurious git state notifications
+					// from unrelated working-tree writes (e.g. .vscode/settings.json)
+					// must not reset the base-compare panes.
+					if (event.stateKey === lastStateKey) {
+						return;
+					}
+					lastStateKey = event.stateKey;
 					const snapshot = await this._loadInitialSnapshot(
 						{
 							document: ctx.document,
