@@ -403,14 +403,32 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			ctx.repoContext.repository,
 			ctx.repoContext.relativePath,
 		);
-		// Labels come from file markers, because git does not persist label text
-		// in .git metadata and we need byte-exact reconstruction for the check.
+
+		// TODO: consolidate this duplicate block with the rest below
+		if (ctx.document.isDirty) {
+			// Already dirty on init: likely a hot exit restore or the user just
+			// edited this file in another tab. Either way, they have unsaved
+			// changes they expect to keep. Skip the prompt and the auto-merge
+			// overwrite.
+			return this._snapshotFromCurrentDocument(
+				ctx,
+				config,
+				stages,
+				docText,
+			);
+		}
+
+		// If the file is un-changed since the merge conflict was first created
+		// we run auto-merge. We can only verify this by re-running git
+		// merge-file -p. To get an identical result we need to know the labels
+		// git uses for local/base/remote or write a diff to ignore them. Rather
+		// than filter out labels when diffing, we extract them from existing
+		// conflict markers. This is safer in case a user commits conflict
+		// markers. It serves a double purpose in that if conflict markers are
+		// missing, the user has most likely made changes already and we
+		// silently load the current file state instead.
 		const labels = extractConflictLabels(docText);
 		if (!labels) {
-			this._warnAutoMergeSkipped(
-				ctx.document,
-				"could not read conflict labels from the current file text",
-			);
 			return this._snapshotFromCurrentDocument(
 				ctx,
 				config,
@@ -539,16 +557,6 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		}
 		await commands.executeCommand("workbench.action.closeActiveEditor");
 		return "cancel";
-	}
-
-	private _warnAutoMergeSkipped(
-		document: TextDocument,
-		reason: string,
-	): void {
-		const filePath = workspace.asRelativePath(document.uri, false);
-		window.showWarningMessage(
-			`Weld: auto-merge skipped - ${reason}. Expected conflict markers like "<<<<<<< HEAD", "||||||| merged common ancestors", "=======", and ">>>>>>> remote" in ${filePath}.`,
-		);
 	}
 
 	private _getWebviewConfig() {
