@@ -48,6 +48,7 @@ interface RepoContext {
 
 const SUPPORTED_URI_SCHEMES = new Set(["file", "vscode-remote"]);
 
+// TODO: wtf is this garbage!???
 function decodeUriPath(path: string): string[] {
 	return path
 		.split("/")

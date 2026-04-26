@@ -46,6 +46,39 @@ function getErrorMessage(error: unknown): string {
 	return String(error);
 }
 
+function showExceptionMessage(context: string, exception: unknown): void {
+	if (exception instanceof Error) {
+		const details: string[] = [];
+		const messages: string[] = [];
+		const seen = new Set<unknown>();
+		let current: unknown = exception;
+		while (current instanceof Error) {
+			seen.add(current);
+			messages.push(current.message);
+			// Look for stderr specifically
+			if (
+				"stderr" in current &&
+				typeof current.stderr === "string" &&
+				current.stderr
+			) {
+				details.push(current.stderr);
+			}
+			current = (current as Error & { cause?: unknown }).cause;
+		}
+		if (current !== undefined && !seen.has(current)) {
+			messages.push(String(current));
+		}
+		const message = `${context}: ${messages.join(" -> caused by: ")}`;
+		//window.showErrorMessage(message, { detail: details.join("\n\n") });
+		window.showErrorMessage(`${message} \n${details.join("\n")}`);
+		getWeldLogChannel().error(message);
+	} else {
+		const message = `${context}: ${String(exception)}`;
+		window.showErrorMessage(message);
+		getWeldLogChannel().error(message);
+	}
+}
+
 async function notifyIfNewConflicts(
 	repoKey: string,
 	repository: GitApiRepository,
@@ -565,16 +598,11 @@ async function handleSmartAdd(
 	}
 
 	try {
-		await repoContext.repository.add([repoContext.relativePath]);
-		window.showInformationMessage(
-			`Successfully added ${repoContext.relativePath}`,
-		);
+		await repoContext.repository.add([repoContext.uri.fsPath]);
 		conflictedFilesProvider.refresh();
 		return true;
 	} catch (e: unknown) {
-		const message = `Git Add failed: ${getErrorMessage(e)}`;
-		window.showErrorMessage(message);
-		getWeldLogChannel().error(message);
+		showExceptionMessage("Git Add Failed", e);
 		return false;
 	}
 }
