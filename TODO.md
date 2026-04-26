@@ -23,6 +23,26 @@ Off-by-one error for DiffCurtain connecting to the very last line of a file.
 
 Update SVG connection attributes rather than re-render the entire SVG. This involves keeping track of which we've displayed/culled, only updating the svg if those changed, and otherwise just updating the path coordinates.
 
+## Content-addressed URIs for Compare view caching
+
+The Compare feature stores initial conflict content in memory and serves it via a
+`TextDocumentContentProvider` with URIs like `weld-initial-conflict:/path/to/file.txt`.
+
+VS Code caches virtual documents for ~5 minutes after the editor closes (this is
+intentional - `onDidCloseTextDocument` fires on document disposal, not editor close).
+
+**Improvement:** Make URIs content-addressed by including the git blob SHAs:
+```
+weld-initial-conflict:/path/to/file.txt?base=<sha>&ours=<sha>&theirs=<sha>
+```
+
+Since `git merge-file -p` is deterministic (same inputs → same output), this enables:
+- **Cache hits**: Same conflict state → same URI → VS Code serves cached doc → skip `git merge-file` entirely
+- **Correct invalidation**: Different inputs → different URI → fresh computation
+- **No stale content bugs**: Current implementation keys only on file path, which could serve stale content if the user does multiple merges on the same file within the ~5 min cache window
+
+The ~5 minute disposal becomes beneficial LRU cache eviction rather than a "leak".
+
 ## Fix commit message titles
 
 Make sure the toggle compare-with-base icons are always visible - currently if there's not enough spacing they disappear
@@ -161,6 +181,7 @@ Track as a dedicated refactor; do not fold into unrelated changes.
 - **Fix Returns**: Handle failures properly, e.g. from `getGitState`, without silently passing empty strings.
 - **UX**: Rethink `Ctrl+K` to avoid interfering with global VS Code chord prefixes.
 - **Refactor `DiffCurtain`**: Split into `CurtainContainer` + `CurtainSVG`. The container should always render to maintain 40px flexbox stability, while the SVG/drawing logic only activates when editors are ready. This will allow removing the `undefined` editor types from the core drawing functions.
+- **Remove timing hacks from webview readiness**: Replace `HACK_SYNC_DELAY` in `appHooks.ts` and the related `setTimeout(..., 0)` in `meldPane.tsx` with event-driven editor/layout readiness.
 
 ## Testing Improvements
 

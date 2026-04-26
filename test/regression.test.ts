@@ -1,3 +1,4 @@
+import { describe, it } from "@jest/globals";
 import { Merger } from "../src/matchers/merge.ts";
 import { mapLineAcrossChunks } from "../src/webview/ui/scrollMapping.ts";
 import type { DiffChunk } from "../src/webview/ui/types.ts";

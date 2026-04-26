@@ -6,7 +6,7 @@
 // Limitation: This doesn't test actual document.save() integration with VS Code.
 // See TODO.md for upgrade path to @vscode/test-electron for full e2e coverage.
 
-import { jest } from "@jest/globals";
+import { describe, it, jest } from "@jest/globals";
 
 interface EditQueue {
 	queue: Promise<void>;

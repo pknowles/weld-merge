@@ -1,6 +1,6 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-import { jest } from "@jest/globals";
+import { afterEach, beforeEach, describe, it, jest } from "@jest/globals";
 import { act, render } from "@testing-library/react";
 import type { editor } from "monaco-editor";
 import { useEffect, useRef } from "react";

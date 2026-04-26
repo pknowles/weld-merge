@@ -1,6 +1,5 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-import { relative } from "node:path";
 import {
 	commands,
 	type ExtensionContext,
@@ -17,7 +16,14 @@ import {
 	getConflictedFiles,
 	getUnresolvedReasons,
 } from "./gitUtils.ts";
+import { getWeldLogChannel, initializeWeldLogChannel } from "./log.ts";
 import { GitTextMerger } from "./matchers/gitTextMerger.ts";
+import {
+	getGitApi,
+	isSupportedScheme,
+	type RepoContext,
+	resolveRepoContext,
+} from "./repoContext.ts";
 import { ConflictedFilesProvider, type GitFile } from "./treeView.ts";
 import { MeldCustomEditorProvider } from "./webview/meldWebviewPanel.ts";
 
@@ -31,9 +37,13 @@ const GIT_CONFLICT_WATCH_PATTERNS = [
 	".git/rebase-apply/**",
 ];
 
-async function notifyIfNewConflicts(repoPath: string) {
+function getErrorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+async function notifyIfNewConflicts(repoKey: string, repoPath: string) {
 	const currentConflicts = await getConflictedFiles(repoPath);
-	const lastFiles = lastConflictedFilesPerRepo.get(repoPath) || new Set();
+	const lastFiles = lastConflictedFilesPerRepo.get(repoKey) || new Set();
 	const newConflicts = currentConflicts.filter((f) => !lastFiles.has(f));
 
 	if (newConflicts.length > 0) {
@@ -46,18 +56,104 @@ async function notifyIfNewConflicts(repoPath: string) {
 		});
 	}
 
-	lastConflictedFilesPerRepo.set(repoPath, new Set(currentConflicts));
+	lastConflictedFilesPerRepo.set(repoKey, new Set(currentConflicts));
 }
 
-function getRelativeRepoPath(documentUri: Uri): string | null {
-	const workspaceFolder = workspace.getWorkspaceFolder(documentUri);
-	if (!workspaceFolder) {
-		return null;
+interface TrackedRepository {
+	repoKey: string;
+	rootUri: Uri;
+	rootFsPath: string;
+}
+
+async function getTrackedRepositories(): Promise<TrackedRepository[]> {
+	const workspaceFolders = workspace.workspaceFolders;
+	if (!workspaceFolders) {
+		return [];
 	}
-	return relative(workspaceFolder.uri.fsPath, documentUri.fsPath).replace(
-		/\\/g,
-		"/",
-	);
+	const gitApi = await getGitApi();
+	const repositoriesByRootUri = new Map<string, TrackedRepository>();
+	for (const workspaceFolder of workspaceFolders) {
+		if (!isSupportedScheme(workspaceFolder.uri)) {
+			continue;
+		}
+		const repository = gitApi.getRepository(workspaceFolder.uri);
+		if (!repository) {
+			continue;
+		}
+		repositoriesByRootUri.set(repository.rootUri.toString(), {
+			repoKey: repository.rootUri.toString(),
+			rootUri: repository.rootUri,
+			rootFsPath: repository.rootUri.fsPath,
+		});
+	}
+	return [...repositoriesByRootUri.values()];
+}
+
+function registerConflictWatchersForRepository(
+	context: ExtensionContext,
+	conflictedFilesProvider: ConflictedFilesProvider,
+	trackedRepository: TrackedRepository,
+): void {
+	const doRefresh = async () => {
+		try {
+			conflictedFilesProvider.refresh();
+			await notifyIfNewConflicts(
+				trackedRepository.repoKey,
+				trackedRepository.rootFsPath,
+			);
+			const stateKey =
+				await MeldCustomEditorProvider.getCurrentConflictStateKey(
+					trackedRepository.rootFsPath,
+				);
+			MeldCustomEditorProvider.onConflictStateChanged.fire({
+				repoPath: trackedRepository.rootFsPath,
+				stateKey,
+			});
+		} catch (error: unknown) {
+			getWeldLogChannel().error(
+				`Refresh watcher failed for ${trackedRepository.rootFsPath}: ${getErrorMessage(error)}`,
+			);
+		}
+	};
+
+	const RefreshDebounceMs = 50;
+	let refreshTimer: NodeJS.Timeout | null = null;
+	const refresh = () => {
+		if (refreshTimer !== null) {
+			clearTimeout(refreshTimer);
+		}
+		refreshTimer = setTimeout(() => {
+			refreshTimer = null;
+			doRefresh().catch((error: unknown) => {
+				getWeldLogChannel().error(
+					`Refresh watcher failed for ${trackedRepository.rootFsPath}: ${getErrorMessage(error)}`,
+				);
+			});
+		}, RefreshDebounceMs);
+	};
+	context.subscriptions.push({
+		dispose: () => {
+			if (refreshTimer !== null) {
+				clearTimeout(refreshTimer);
+				refreshTimer = null;
+			}
+		},
+	});
+
+	for (const pattern of GIT_CONFLICT_WATCH_PATTERNS) {
+		const watcher = workspace.createFileSystemWatcher(
+			new RelativePattern(trackedRepository.rootUri, pattern),
+		);
+		context.subscriptions.push(watcher);
+		watcher.onDidChange(refresh);
+		watcher.onDidCreate(refresh);
+		watcher.onDidDelete(refresh);
+	}
+	doRefresh().catch((error: unknown) => {
+		getWeldLogChannel().error(
+			`Initial watcher refresh failed for ${trackedRepository.rootFsPath}: ${getErrorMessage(error)}`,
+		);
+	});
 }
 
 async function getGitFileContent(
@@ -78,34 +174,86 @@ async function getGitFileContent(
 	}
 }
 
-function handleOpenMergeEditor(file?: GitFile) {
-	let uri = file?.uri;
-	if (!uri) {
-		const editor = window.activeTextEditor;
-		if (!editor) {
-			return;
-		}
-		uri = editor.document.uri;
+function getTargetDocumentUri(file?: GitFile): Uri | null {
+	if (file) {
+		return file.uri;
 	}
-	commands.executeCommand("git.openMergeEditor", uri);
+	const editor = window.activeTextEditor;
+	if (!editor?.document || editor.document.isUntitled) {
+		return null;
+	}
+	return editor.document.uri;
 }
 
-function handleOpenMeldDiff(file?: GitFile) {
-	let documentUri: Uri;
-	if (file) {
-		documentUri = file.uri;
-	} else {
-		const editor = window.activeTextEditor;
-		if (!editor?.document || editor.document.isUntitled) {
-			return;
+async function resolveCommandRepoContext(
+	documentUri: Uri,
+	commandName: string,
+): Promise<RepoContext | null> {
+	if (!isSupportedScheme(documentUri)) {
+		const message = `Cannot run ${commandName}: unsupported URI scheme "${documentUri.scheme}".`;
+		window.showErrorMessage(message);
+		getWeldLogChannel().error(message);
+		return null;
+	}
+	try {
+		const repoContext = await resolveRepoContext(documentUri);
+		if (!repoContext) {
+			const message = `Cannot run ${commandName}: file is not in a git repository.`;
+			window.showErrorMessage(message);
+			getWeldLogChannel().error(message);
+			return null;
 		}
-		documentUri = editor.document.uri;
+		return repoContext;
+	} catch (error: unknown) {
+		const message = `Cannot run ${commandName}: ${getErrorMessage(error)}`;
+		window.showErrorMessage(message);
+		getWeldLogChannel().error(message);
+		return null;
+	}
+}
+
+async function handleOpenMergeEditor(file?: GitFile) {
+	const documentUri = getTargetDocumentUri(file);
+	if (!documentUri) {
+		return;
+	}
+	const repoContext = await resolveCommandRepoContext(
+		documentUri,
+		"open merge editor",
+	);
+	if (!repoContext) {
+		return;
+	}
+	commands.executeCommand("git.openMergeEditor", repoContext.uri);
+}
+
+async function handleOpenMeldDiff(file?: GitFile) {
+	const documentUri = getTargetDocumentUri(file);
+	if (!documentUri) {
+		return;
+	}
+	const repoContext = await resolveCommandRepoContext(
+		documentUri,
+		"open Weld diff",
+	);
+	if (!repoContext) {
+		return;
 	}
 	commands.executeCommand(
 		"vscode.openWith",
-		documentUri,
+		repoContext.uri,
 		MeldCustomEditorProvider.viewType,
 	);
+}
+
+function handleOpenConflictedFile(file: GitFile) {
+	if (!isSupportedScheme(file.uri)) {
+		const message = `Cannot open conflicted file: unsupported URI scheme "${file.uri.scheme}".`;
+		window.showErrorMessage(message);
+		getWeldLogChannel().error(message);
+		return;
+	}
+	window.showTextDocument(file.uri);
 }
 
 function splitLines(text: string) {
@@ -120,38 +268,37 @@ async function handleAutoMerge(
 	file: GitFile | undefined,
 	conflictedFilesProvider: ConflictedFilesProvider,
 ) {
-	let documentUri: Uri;
-	if (file) {
-		documentUri = file.uri;
-	} else {
-		const editor = window.activeTextEditor;
-		if (!editor) {
-			window.showErrorMessage("No active text editor found.");
-			return;
-		}
-		documentUri = editor.document.uri;
-	}
-
-	const workspaceFolder = workspace.getWorkspaceFolder(documentUri);
-	if (!workspaceFolder) {
-		window.showErrorMessage(
-			"File must be in a workspace to use git commands.",
-		);
+	const documentUri = getTargetDocumentUri(file);
+	if (!documentUri) {
+		window.showErrorMessage("No active text editor found.");
 		return;
 	}
 
-	const repoPath = workspaceFolder.uri.fsPath;
-	const relativeFilePath = getRelativeRepoPath(documentUri);
-	if (!relativeFilePath) {
-		window.showErrorMessage("Could not determine relative file path.");
+	const repoContext = await resolveCommandRepoContext(
+		documentUri,
+		"Weld auto-merge",
+	);
+	if (!repoContext) {
 		return;
 	}
 
 	try {
 		const [baseContent, localContent, remoteContent] = await Promise.all([
-			getGitFileContent(repoPath, relativeFilePath, 1),
-			getGitFileContent(repoPath, relativeFilePath, 2),
-			getGitFileContent(repoPath, relativeFilePath, 3),
+			getGitFileContent(
+				repoContext.rootFsPath,
+				repoContext.relativePath,
+				1,
+			),
+			getGitFileContent(
+				repoContext.rootFsPath,
+				repoContext.relativePath,
+				2,
+			),
+			getGitFileContent(
+				repoContext.rootFsPath,
+				repoContext.relativePath,
+				3,
+			),
 		]);
 
 		window.showInformationMessage("Running Weld auto-merge heuristics...");
@@ -196,9 +343,9 @@ async function handleAutoMerge(
 			window.showErrorMessage("Failed to apply merged text to editor.");
 		}
 	} catch (e: unknown) {
-		window.showErrorMessage(
-			`Weld Auto-Merge Error: ${(e as Error).message}`,
-		);
+		const message = `Weld Auto-Merge Error: ${getErrorMessage(e)}`;
+		window.showErrorMessage(message);
+		getWeldLogChannel().error(message);
 	}
 }
 
@@ -256,20 +403,20 @@ async function handleCheckoutConflicted(
 	file: GitFile | undefined,
 	conflictedFilesProvider: ConflictedFilesProvider,
 ) {
-	let documentUri: Uri;
-	if (file) {
-		documentUri = file.uri;
-	} else {
-		const editor = window.activeTextEditor;
-		if (!editor?.document || editor.document.isUntitled) {
-			return;
-		}
-		documentUri = editor.document.uri;
+	const documentUri = getTargetDocumentUri(file);
+	if (!documentUri) {
+		return;
+	}
+	const repoContext = await resolveCommandRepoContext(
+		documentUri,
+		"checkout conflicted file",
+	);
+	if (!repoContext) {
+		return;
 	}
 
-	const relativePath = getRelativeRepoPath(documentUri) || documentUri.fsPath;
 	const confirm = await window.showWarningMessage(
-		`Are you sure you want to checkout the conflicted version of ${relativePath} (-m)? This will overwrite your current file.`,
+		`Are you sure you want to checkout the conflicted version of ${repoContext.relativePath} (-m)? This will overwrite your current file.`,
 		{ modal: true },
 		"Yes",
 	);
@@ -277,26 +424,20 @@ async function handleCheckoutConflicted(
 		return;
 	}
 
-	const workspaceFolder = workspace.getWorkspaceFolder(documentUri);
-	if (!workspaceFolder) {
-		return;
-	}
-
-	const repoPath = workspaceFolder.uri.fsPath;
-	const relativeFilePath = getRelativeRepoPath(documentUri);
-	if (!relativeFilePath) {
-		return;
-	}
-
 	try {
-		await execGit(["checkout", "-m", "--", relativeFilePath], repoPath);
+		await execGit(
+			["checkout", "-m", "--", repoContext.relativePath],
+			repoContext.rootFsPath,
+		);
 		MeldCustomEditorProvider.onRequestRefresh.fire(documentUri);
 		window.showInformationMessage(
-			`Checked out conflicted version of ${relativeFilePath}`,
+			`Checked out conflicted version of ${repoContext.relativePath}`,
 		);
 		conflictedFilesProvider.refresh();
 	} catch (e: unknown) {
-		window.showErrorMessage(`Checkout failed: ${(e as Error).message}`);
+		const message = `Checkout failed: ${getErrorMessage(e)}`;
+		window.showErrorMessage(message);
+		getWeldLogChannel().error(message);
 	}
 }
 
@@ -304,20 +445,20 @@ async function handleRerereForget(
 	file: GitFile | undefined,
 	conflictedFilesProvider: ConflictedFilesProvider,
 ) {
-	let documentUri: Uri;
-	if (file) {
-		documentUri = file.uri;
-	} else {
-		const editor = window.activeTextEditor;
-		if (!editor?.document || editor.document.isUntitled) {
-			return;
-		}
-		documentUri = editor.document.uri;
+	const documentUri = getTargetDocumentUri(file);
+	if (!documentUri) {
+		return;
+	}
+	const repoContext = await resolveCommandRepoContext(
+		documentUri,
+		"rerere forget",
+	);
+	if (!repoContext) {
+		return;
 	}
 
-	const relativePath = getRelativeRepoPath(documentUri) || documentUri.fsPath;
 	const confirm = await window.showWarningMessage(
-		`Are you sure you want to forget the recorded rerere resolution for ${relativePath}?`,
+		`Are you sure you want to forget the recorded rerere resolution for ${repoContext.relativePath}?`,
 		{ modal: true },
 		"Yes",
 	);
@@ -325,27 +466,19 @@ async function handleRerereForget(
 		return;
 	}
 
-	const workspaceFolder = workspace.getWorkspaceFolder(documentUri);
-	if (!workspaceFolder) {
-		return;
-	}
-
-	const repoPath = workspaceFolder.uri.fsPath;
-	const relativeFilePath = getRelativeRepoPath(documentUri);
-	if (!relativeFilePath) {
-		return;
-	}
-
 	try {
-		await execGit(["rerere", "forget", relativeFilePath], repoPath);
+		await execGit(
+			["rerere", "forget", "--", repoContext.relativePath],
+			repoContext.rootFsPath,
+		);
 		window.showInformationMessage(
-			`Forgot recorded resolution for ${relativeFilePath}`,
+			`Forgot recorded resolution for ${repoContext.relativePath}`,
 		);
 		conflictedFilesProvider.refresh();
 	} catch (e: unknown) {
-		window.showErrorMessage(
-			`Rerere forget failed: ${(e as Error).message}`,
-		);
+		const message = `Rerere forget failed: ${getErrorMessage(e)}`;
+		window.showErrorMessage(message);
+		getWeldLogChannel().error(message);
 	}
 }
 
@@ -353,7 +486,7 @@ async function handleSmartAdd(
 	file: GitFile | undefined,
 	conflictedFilesProvider: ConflictedFilesProvider,
 ) {
-	let documentUri: Uri;
+	let documentUri: Uri | null = null;
 	let text: string;
 
 	if (file) {
@@ -370,6 +503,9 @@ async function handleSmartAdd(
 		documentUri = editor.document.uri;
 		text = editor.document.getText();
 	}
+	if (!documentUri) {
+		return;
+	}
 
 	const unresolvedReasons = getUnresolvedReasons(text);
 	if (unresolvedReasons.length > 0) {
@@ -379,24 +515,28 @@ async function handleSmartAdd(
 		return false;
 	}
 
-	const workspaceFolder = workspace.getWorkspaceFolder(documentUri);
-	if (!workspaceFolder) {
-		return;
-	}
-
-	const repoPath = workspaceFolder.uri.fsPath;
-	const relativeFilePath = getRelativeRepoPath(documentUri);
-	if (!relativeFilePath) {
+	const repoContext = await resolveCommandRepoContext(
+		documentUri,
+		"git add resolved file",
+	);
+	if (!repoContext) {
 		return;
 	}
 
 	try {
-		await execGit(["add", relativeFilePath], repoPath);
-		window.showInformationMessage(`Successfully added ${relativeFilePath}`);
+		await execGit(
+			["add", "--", repoContext.relativePath],
+			repoContext.rootFsPath,
+		);
+		window.showInformationMessage(
+			`Successfully added ${repoContext.relativePath}`,
+		);
 		conflictedFilesProvider.refresh();
 		return true;
 	} catch (e: unknown) {
-		window.showErrorMessage(`Git Add failed: ${(e as Error).message}`);
+		const message = `Git Add failed: ${getErrorMessage(e)}`;
+		window.showErrorMessage(message);
+		getWeldLogChannel().error(message);
 		return false;
 	}
 }
@@ -422,9 +562,7 @@ function registerCommands(
 		}),
 		commands.registerCommand(
 			"meld-auto-merge.openConflictedFile",
-			(file: GitFile) => {
-				window.showTextDocument(file.uri);
-			},
+			(file: GitFile) => handleOpenConflictedFile(file),
 		),
 		commands.registerCommand(
 			"meld-auto-merge.openMergeEditor",
@@ -457,63 +595,17 @@ function registerCommands(
 	);
 }
 
-function setupWatchers(
+async function setupWatchers(
 	context: ExtensionContext,
 	conflictedFilesProvider: ConflictedFilesProvider,
-) {
-	const workspaceFolders = workspace.workspaceFolders;
-	if (workspaceFolders) {
-		for (const workspaceFolder of workspaceFolders) {
-			const repoPath = workspaceFolder.uri.fsPath;
-			const doRefresh = () => {
-				conflictedFilesProvider.refresh();
-				notifyIfNewConflicts(repoPath);
-				MeldCustomEditorProvider.onConflictStateChanged.fire({
-					repoPath,
-					stateKey:
-						MeldCustomEditorProvider.getCurrentConflictStateKey(
-							repoPath,
-						),
-				});
-			};
-
-			// Git operations write multiple files in quick succession (e.g. a
-			// merge --abort rewrites .git/index and removes MERGE_HEAD). Debounce
-			// so we consolidate the resulting watcher bursts into a single
-			// refresh pass rather than re-reading .git state once per event.
-			const RefreshDebounceMs = 50;
-			let refreshTimer: NodeJS.Timeout | null = null;
-			const refresh = () => {
-				if (refreshTimer !== null) {
-					clearTimeout(refreshTimer);
-				}
-				refreshTimer = setTimeout(() => {
-					refreshTimer = null;
-					doRefresh();
-				}, RefreshDebounceMs);
-			};
-			context.subscriptions.push({
-				dispose: () => {
-					if (refreshTimer !== null) {
-						clearTimeout(refreshTimer);
-						refreshTimer = null;
-					}
-				},
-			});
-
-			for (const pattern of GIT_CONFLICT_WATCH_PATTERNS) {
-				const watcher = workspace.createFileSystemWatcher(
-					new RelativePattern(repoPath, pattern),
-				);
-				context.subscriptions.push(watcher);
-				watcher.onDidChange(refresh);
-				watcher.onDidCreate(refresh);
-				watcher.onDidDelete(refresh);
-			}
-
-			// Initial refresh runs immediately (no burst to consolidate).
-			doRefresh();
-		}
+): Promise<void> {
+	const trackedRepositories = await getTrackedRepositories();
+	for (const trackedRepository of trackedRepositories) {
+		registerConflictWatchersForRepository(
+			context,
+			conflictedFilesProvider,
+			trackedRepository,
+		);
 	}
 
 	context.subscriptions.push(
@@ -523,11 +615,27 @@ function setupWatchers(
 	);
 }
 
-export function activate(context: ExtensionContext) {
+// The shape of `extensions.getExtension(...).exports` for this extension.
+// Kept minimal on purpose: currently only integration tests consume this API,
+// but each entry is a real, reusable operation against the live extension
+// state (not a test-only backdoor).
+export interface WeldExtensionApi {
+	setInitialConflictContent: typeof MeldCustomEditorProvider.setInitialConflictContent;
+}
+
+export async function activate(
+	context: ExtensionContext,
+): Promise<WeldExtensionApi> {
+	const logChannel = initializeWeldLogChannel();
+	context.subscriptions.push(logChannel);
 	const conflictedFilesProvider = new ConflictedFilesProvider();
 	registerViews(context, conflictedFilesProvider);
 	registerCommands(context, conflictedFilesProvider);
-	setupWatchers(context, conflictedFilesProvider);
+	await setupWatchers(context, conflictedFilesProvider);
+	return {
+		setInitialConflictContent:
+			MeldCustomEditorProvider.setInitialConflictContent,
+	};
 }
 
 export function deactivate() {

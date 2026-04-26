@@ -33,6 +33,15 @@ jobs:
       - name: Run unit tests with coverage
         run: npm run test:coverage
 
+      - name: Cache VS Code integration test binaries
+        uses: actions/cache@v4
+        with:
+          path: .vscode-test
+          key: vscode-test-${{ runner.os }}-stable
+
+      - name: Run VS Code integration tests
+        run: npm run test:vscode
+
       - name: Jest coverage report
         uses: ArtiomTr/jest-coverage-report-action@v2
         if: github.event_name == 'pull_request'

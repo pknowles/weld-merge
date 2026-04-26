@@ -1,11 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { afterEach, beforeEach, describe, it, jest } from "@jest/globals";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { App } from "../src/webview/ui/App.tsx";
-
-// biome-ignore lint/suspicious/noExplicitAny: jest is global
-declare let jest: any;
 
 import { createMockEditor } from "./mockEditor.ts";
 

@@ -2,7 +2,7 @@
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { getGitExecutable } from "./gitPath.ts";
 
 const LINE_BREAK_REGEX = /\r?\n/;
@@ -48,9 +48,34 @@ const CONFLICT_STATE_FILES: Array<{
 	},
 ];
 
-function readConflictState(repoPath: string): ConflictState | undefined {
+const gitDirByRepoPath: Map<string, string> = new Map();
+
+async function getGitDir(repoPath: string): Promise<string> {
+	const cachedGitDir = gitDirByRepoPath.get(repoPath);
+	if (cachedGitDir) {
+		return cachedGitDir;
+	}
+
+	const rawGitDir = (
+		await execGit(["rev-parse", "--git-dir"], repoPath)
+	).trim();
+	if (!rawGitDir) {
+		throw new Error(`Could not resolve git dir for ${repoPath}.`);
+	}
+
+	const gitDir = isAbsolute(rawGitDir)
+		? rawGitDir
+		: resolve(repoPath, rawGitDir);
+	gitDirByRepoPath.set(repoPath, gitDir);
+	return gitDir;
+}
+
+async function readConflictState(
+	repoPath: string,
+): Promise<ConflictState | undefined> {
+	const gitDir = await getGitDir(repoPath);
 	for (const conflictState of CONFLICT_STATE_FILES) {
-		if (existsSync(join(repoPath, ".git", conflictState.statePath))) {
+		if (existsSync(join(gitDir, conflictState.statePath))) {
 			return {
 				operation: conflictState.operation,
 				otherRef: conflictState.otherRef,
@@ -87,7 +112,7 @@ async function execGit(args: string[], cwd: string): Promise<string> {
 async function getConflictedFiles(repoPath: string): Promise<string[]> {
 	try {
 		const output = await execGit(
-			["diff", "--name-only", "--diff-filter=U"],
+			["diff", "--name-only", "--diff-filter=U", "--"],
 			repoPath,
 		);
 		return output
@@ -126,4 +151,10 @@ function getUnresolvedReasons(text: string): string[] {
 	return reasons;
 }
 
-export { execGit, getConflictedFiles, getUnresolvedReasons, readConflictState };
+export {
+	execGit,
+	getConflictedFiles,
+	getGitDir,
+	getUnresolvedReasons,
+	readConflictState,
+};

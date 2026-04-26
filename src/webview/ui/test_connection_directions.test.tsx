@@ -1,3 +1,4 @@
+import { afterAll, beforeAll, describe, it, jest } from "@jest/globals";
 import "@testing-library/jest-dom";
 import { render } from "@testing-library/react";
 import type { editor } from "monaco-editor";
@@ -123,7 +124,9 @@ describe("Connection Directions and Bounds Checking", () => {
 			});
 		});
 		afterAll(() => {
-			(console.error as unknown as jest.SpyInstance).mockRestore();
+			(
+				console.error as unknown as ReturnType<typeof jest.spyOn>
+			).mockRestore();
 		});
 
 		it("should NOT throw during rendering when reversed=false for the 4th curtain", () => {

@@ -16,6 +16,7 @@
  * or miscalculate offsets, the final "revert to baseline" assertion will fail.
  */
 
+import { afterEach, beforeEach, describe, it, jest } from "@jest/globals";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { Differ } from "../src/matchers/diffutil.ts";
 import { App } from "../src/webview/ui/App.tsx";
@@ -107,9 +108,6 @@ interface MockedEditorProps {
 	defaultValue?: string;
 	options?: { readOnly?: boolean };
 }
-
-// biome-ignore lint/suspicious/noExplicitAny: globally declared jest
-declare let jest: any;
 
 const capturedEditors: { props: MockedEditorProps; mock: MockEditor }[] = [];
 const capturedDiffsMap: Record<string, DiffChunk[]> = {};

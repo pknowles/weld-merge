@@ -7,5 +7,9 @@
 		"playwright"
 	],
 	"ignoreBinaries": ["jest.fuzz.config.js"],
-	"entry": ["test/benchmarking/logic_bench.ts"]
+	"entry": [
+		"test/benchmarking/logic_bench.ts",
+		"test/vscode/suite/index.cjs",
+		"test/vscode/suite/**/*.test.ts"
+	]
 }

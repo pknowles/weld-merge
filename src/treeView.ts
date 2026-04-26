@@ -11,7 +11,8 @@ import {
 	Uri,
 	workspace,
 } from "vscode";
-import { execGit, readConflictState } from "./gitUtils.ts";
+import { execGit, getGitDir, readConflictState } from "./gitUtils.ts";
+import { getGitApi, isSupportedScheme } from "./repoContext.ts";
 
 const CONFLICT_PREFIX_REGEX = /^#?\t/;
 
@@ -88,34 +89,62 @@ class ConflictedFilesProvider implements TreeDataProvider<GitFile> {
 			return [];
 		}
 
-		const repoPath = workspaceFolders[0]?.uri.fsPath;
-		if (!repoPath) {
-			return [];
-		}
-
 		try {
-			const unmergedFiles = await this._getUnmergedFiles(repoPath);
-			const items: GitFile[] = this._createConflictedItems(
-				unmergedFiles,
-				repoPath,
+			const gitApi = await getGitApi();
+			const repositoriesByRootUri = new Map<string, Uri>();
+			for (const workspaceFolder of workspaceFolders) {
+				if (!isSupportedScheme(workspaceFolder.uri)) {
+					continue;
+				}
+				const repository = gitApi.getRepository(workspaceFolder.uri);
+				if (!repository) {
+					continue;
+				}
+				repositoriesByRootUri.set(
+					repository.rootUri.toString(),
+					repository.rootUri,
+				);
+			}
+			if (repositoriesByRootUri.size === 0) {
+				return [];
+			}
+			const perRepositoryItems = await Promise.all(
+				[...repositoriesByRootUri.values()].map(async (rootUri) => {
+					const repoPath = rootUri.fsPath;
+					const unmergedFiles =
+						await this._getUnmergedFiles(repoPath);
+					const conflictedItems = this._createConflictedItems(
+						unmergedFiles,
+						rootUri,
+						repoPath,
+					);
+					const originallyConflicted =
+						await this._getOriginallyConflicted(repoPath);
+					const resolvedFiles = originallyConflicted.filter(
+						(f) => !unmergedFiles.includes(f),
+					);
+					const resolvedItems = this._createResolvedItems(
+						resolvedFiles,
+						rootUri,
+						repoPath,
+					);
+					return [...conflictedItems, ...resolvedItems];
+				}),
 			);
-
-			const originallyConflicted =
-				this._getOriginallyConflicted(repoPath);
-			const resolvedFiles = originallyConflicted.filter(
-				(f) => !unmergedFiles.includes(f),
-			);
-
-			items.push(...this._createResolvedItems(resolvedFiles, repoPath));
-
-			return items;
+			return perRepositoryItems.flat();
 		} catch {
 			return [];
 		}
 	}
 
+	private _createFileUri(rootUri: Uri, filePath: string): Uri {
+		const pathSegments = filePath.split("/").filter((segment) => segment);
+		return Uri.joinPath(rootUri, ...pathSegments);
+	}
+
 	private _createConflictedItems(
 		files: string[],
+		rootUri: Uri,
 		repoPath: string,
 	): GitFile[] {
 		return files.map(
@@ -123,19 +152,23 @@ class ConflictedFilesProvider implements TreeDataProvider<GitFile> {
 				new ConflictedFile({
 					label: file,
 					collapsibleState: TreeItemCollapsibleState.None,
-					uri: Uri.file(join(repoPath, file)),
+					uri: this._createFileUri(rootUri, file),
 					repoPath,
 				}),
 		);
 	}
 
-	private _createResolvedItems(files: string[], repoPath: string): GitFile[] {
+	private _createResolvedItems(
+		files: string[],
+		rootUri: Uri,
+		repoPath: string,
+	): GitFile[] {
 		return files.map(
 			(file) =>
 				new ResolvedFile({
 					label: file,
 					collapsibleState: TreeItemCollapsibleState.None,
-					uri: Uri.file(join(repoPath, file)),
+					uri: this._createFileUri(rootUri, file),
 					repoPath,
 				}),
 		);
@@ -143,7 +176,7 @@ class ConflictedFilesProvider implements TreeDataProvider<GitFile> {
 
 	private async _getUnmergedFiles(repoPath: string): Promise<string[]> {
 		const unmergedOutput = await execGit(
-			["diff", "--name-only", "--diff-filter=U"],
+			["diff", "--name-only", "--diff-filter=U", "--"],
 			repoPath,
 		);
 		return unmergedOutput
@@ -152,16 +185,18 @@ class ConflictedFilesProvider implements TreeDataProvider<GitFile> {
 			.filter((f) => f);
 	}
 
-	private _isInConflictState(repoPath: string): boolean {
-		return readConflictState(repoPath) !== undefined;
+	private async _isInConflictState(repoPath: string): Promise<boolean> {
+		return (await readConflictState(repoPath)) !== undefined;
 	}
 
-	private _getOriginallyConflicted(repoPath: string): string[] {
-		if (!this._isInConflictState(repoPath)) {
+	private async _getOriginallyConflicted(
+		repoPath: string,
+	): Promise<string[]> {
+		if (!(await this._isInConflictState(repoPath))) {
 			return [];
 		}
 
-		const mergeMsgPath = join(repoPath, ".git", "MERGE_MSG");
+		const mergeMsgPath = join(await getGitDir(repoPath), "MERGE_MSG");
 		if (!existsSync(mergeMsgPath)) {
 			return [];
 		}

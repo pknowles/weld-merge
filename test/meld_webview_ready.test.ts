@@ -1,8 +1,8 @@
+import { afterEach, describe, it } from "@jest/globals";
 import { extractConflictLabels } from "../src/webview/conflictLabels.ts";
 import {
-	clearInitialConflictContent,
+	deleteInitialConflictContent,
 	getInitialConflictContent,
-	makeInitialConflictKey,
 	setInitialConflictContent,
 } from "../src/webview/initialConflictContentStore.ts";
 import {
@@ -11,7 +11,7 @@ import {
 } from "../src/webview/readyStateGuard.ts";
 
 const MISSING_CONTENT_PREFIX =
-	/^No initial conflict content registered for key /;
+	/^No initial conflict content registered for URI /;
 
 describe("readyStateGuard.assertReadyMessageIsFirst", () => {
 	it("passes silently on the first call", () => {
@@ -91,29 +91,30 @@ describe("conflictLabels.extractConflictLabels", () => {
 });
 
 describe("initialConflictContentStore", () => {
-	const docUri = "file:///repo/conflict-store-test.txt";
+	const conflictUri = "weld-initial-conflict:/repo/conflict-store-test.txt";
 
 	afterEach(() => {
-		clearInitialConflictContent(docUri);
+		deleteInitialConflictContent(conflictUri);
 	});
 
-	it("stores content and returns it via the computed key", () => {
+	it("stores content and returns it via the same URI", () => {
 		const content = "<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> branch";
-		const key = setInitialConflictContent(docUri, content);
-		expect(key).toBe(makeInitialConflictKey(docUri));
-		expect(getInitialConflictContent(key)).toBe(content);
+		setInitialConflictContent(conflictUri, content);
+		expect(getInitialConflictContent(conflictUri)).toBe(content);
 	});
 
-	it("throws for keys that have never been registered", () => {
-		expect(() => getInitialConflictContent("unknown-key")).toThrow(
-			'No initial conflict content registered for key "unknown-key".',
+	it("throws for URIs that have never been registered", () => {
+		expect(() =>
+			getInitialConflictContent("weld-initial-conflict:/not-stored"),
+		).toThrow(
+			'No initial conflict content registered for URI "weld-initial-conflict:/not-stored".',
 		);
 	});
 
-	it("clears content by the original document URI", () => {
-		const key = setInitialConflictContent(docUri, "some text");
-		clearInitialConflictContent(docUri);
-		expect(() => getInitialConflictContent(key)).toThrow(
+	it("deletes content by the conflict URI", () => {
+		setInitialConflictContent(conflictUri, "some text");
+		deleteInitialConflictContent(conflictUri);
+		expect(() => getInitialConflictContent(conflictUri)).toThrow(
 			MISSING_CONTENT_PREFIX,
 		);
 	});

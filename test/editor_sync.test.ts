@@ -1,6 +1,6 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-import { jest } from "@jest/globals";
+import { describe, it, jest } from "@jest/globals";
 import {
 	classifyDocumentChange,
 	type EditState,

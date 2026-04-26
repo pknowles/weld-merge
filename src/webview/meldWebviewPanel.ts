@@ -1,4 +1,4 @@
-import { basename, relative } from "node:path";
+import { basename } from "node:path";
 import {
 	type CancellationToken,
 	type ConfigurationChangeEvent,
@@ -21,6 +21,7 @@ import {
 	workspace,
 } from "vscode";
 import { getUnresolvedReasons, readConflictState } from "../gitUtils.ts";
+import { resolveRepoContext } from "../repoContext.ts";
 import {
 	type ConflictLabels,
 	extractConflictLabels,
@@ -37,7 +38,7 @@ import {
 	processContentChanged,
 } from "./editorSync.ts";
 import {
-	clearInitialConflictContent as clearInitialConflictStoreEntry,
+	deleteInitialConflictContent,
 	getInitialConflictContent,
 	INITIAL_CONFLICT_SCHEME,
 	setInitialConflictContent as setInitialConflictStoreEntry,
@@ -174,20 +175,23 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		this.extensionUri = extensionUri;
 	}
 
+	// Store the original conflicted text for the Compare view and return the
+	// URI to pass to `vscode.diff`. The URI is the document URI with the
+	// scheme swapped to INITIAL_CONFLICT_SCHEME so the diff tab title still
+	// shows the file name, and so the URI's canonical toString() form is
+	// stable between store and lookup.
 	static setInitialConflictContent(documentUri: Uri, content: string): Uri {
-		const key = setInitialConflictStoreEntry(
-			documentUri.toString(),
-			content,
-		);
-		return Uri.parse(`${INITIAL_CONFLICT_SCHEME}:${key}`);
+		const conflictUri = documentUri.with({
+			scheme: INITIAL_CONFLICT_SCHEME,
+		});
+		setInitialConflictStoreEntry(conflictUri.toString(), content);
+		return conflictUri;
 	}
 
-	static clearInitialConflictContent(documentUri: Uri): void {
-		clearInitialConflictStoreEntry(documentUri.toString());
-	}
-
-	static getCurrentConflictStateKey(repoPath: string): string | undefined {
-		const state = readConflictState(repoPath);
+	static async getCurrentConflictStateKey(
+		repoPath: string,
+	): Promise<string | undefined> {
+		const state = await readConflictState(repoPath);
 		if (!state) {
 			return;
 		}
@@ -196,12 +200,8 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 
 	private static _createInitialConflictContentProvider(): TextDocumentContentProvider {
 		return {
-			provideTextDocumentContent: (uri: Uri) => {
-				const key = uri.path.startsWith("/")
-					? uri.path.slice(1)
-					: uri.path;
-				return getInitialConflictContent(key);
-			},
+			provideTextDocumentContent: (uri: Uri) =>
+				getInitialConflictContent(uri.toString()),
 		};
 	}
 
@@ -219,10 +219,23 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 				INITIAL_CONFLICT_SCHEME,
 				MeldCustomEditorProvider._createInitialConflictContentProvider(),
 			);
-		return Disposable.from(editorRegistration, contentProviderRegistration);
+		// Lifetime: the stored content must live as long as the diff document
+		// that consumes it. The Compare flow disposes our custom editor
+		// immediately after opening the diff, so the diff tab outlives the
+		// panel. Free each entry when its own text document is closed.
+		const closeSubscription = workspace.onDidCloseTextDocument((doc) => {
+			if (doc.uri.scheme === INITIAL_CONFLICT_SCHEME) {
+				deleteInitialConflictContent(doc.uri.toString());
+			}
+		});
+		return Disposable.from(
+			editorRegistration,
+			contentProviderRegistration,
+			closeSubscription,
+		);
 	}
 
-	resolveCustomTextEditor(
+	async resolveCustomTextEditor(
 		document: TextDocument,
 		webviewPanel: WebviewPanel,
 		_token: CancellationToken,
@@ -230,20 +243,18 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		if (document.uri.scheme !== "file") {
 			webviewPanel.webview.html =
 				"<p>Cannot open: Weld only supports local files.</p>";
-			return Promise.resolve();
+			return;
 		}
 
-		const workspaceFolder = workspace.getWorkspaceFolder(document.uri);
-		if (!workspaceFolder) {
-			webviewPanel.webview.html = "<p>File is not in a workspace.</p>";
-			return Promise.resolve();
+		const repoContext = await resolveRepoContext(document.uri);
+		if (!repoContext) {
+			webviewPanel.webview.html =
+				"<p>Cannot open: file is not in a git repository.</p>";
+			return;
 		}
 
-		const repoPath = workspaceFolder.uri.fsPath;
-		const relativeFilePath = relative(
-			repoPath,
-			document.uri.fsPath,
-		).replace(/\\/g, "/");
+		const repoPath = repoContext.rootFsPath;
+		const relativeFilePath = repoContext.relativePath;
 
 		webviewPanel.webview.options = {
 			enableScripts: true,
@@ -258,7 +269,6 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			repoPath,
 			relativeFilePath,
 		);
-		return Promise.resolve();
 	}
 
 	private _initializeWebview(
@@ -323,7 +333,6 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		disposables.push(messageListener);
 
 		webviewPanel.onDidDispose(() => {
-			MeldCustomEditorProvider.clearInitialConflictContent(document.uri);
 			for (const d of disposables) {
 				d.dispose();
 			}
@@ -765,19 +774,6 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 				);
 			});
 
-		const closeDocumentSubscription = workspace.onDidCloseTextDocument(
-			(closedDocument) => {
-				if (
-					closedDocument.uri.toString() ===
-					ctx.document.uri.toString()
-				) {
-					MeldCustomEditorProvider.clearInitialConflictContent(
-						ctx.document.uri,
-					);
-				}
-			},
-		);
-
 		const conflictStateSubscription =
 			MeldCustomEditorProvider.onConflictStateChanged.event(
 				async (event) => {
@@ -815,7 +811,6 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			changeDocumentSubscription,
 			changeConfigurationSubscription,
 			refreshSubscription,
-			closeDocumentSubscription,
 			conflictStateSubscription,
 		);
 

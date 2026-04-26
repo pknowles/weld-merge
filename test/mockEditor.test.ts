@@ -1,3 +1,4 @@
+import { describe, it } from "@jest/globals";
 import { createMockEditor } from "./mockEditor.ts";
 
 describe("MockEditor - core", () => {

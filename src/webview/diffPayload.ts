@@ -141,7 +141,7 @@ const getCommitInfo = async (
 // Prefer `string | null` over `string | undefined` so the absent case is
 // explicit rather than the accidental product of a missing return.
 const getRemoteRef = async (repoPath: string): Promise<string | null> => {
-	const conflictState = readConflictState(repoPath);
+	const conflictState = await readConflictState(repoPath);
 	if (!conflictState) {
 		return null;
 	}
@@ -329,8 +329,10 @@ async function buildDiffPayload(
 		(await fetchConflictStages(repoPath, relativeFilePath));
 	const { base, local, incoming } = stages;
 
-	const localCommit = await getCommitInfo(repoPath, "HEAD");
-	const remoteRef = await getRemoteRef(repoPath);
+	const [localCommit, remoteRef] = await Promise.all([
+		getCommitInfo(repoPath, "HEAD"),
+		getRemoteRef(repoPath),
+	]);
 	const incomingCommit =
 		remoteRef === null
 			? undefined

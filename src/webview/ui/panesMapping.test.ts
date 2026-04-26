@@ -1,5 +1,6 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
+import { describe, it } from "@jest/globals";
 import { mapLineAcrossPanes } from "./scrollMapping.ts";
 import type { DiffChunk } from "./types.ts";
 

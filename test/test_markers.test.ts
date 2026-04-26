@@ -1,3 +1,4 @@
+import { describe, it } from "@jest/globals";
 import { Differ } from "../src/matchers/diffutil.ts";
 
 describe("Differ with conflict markers", () => {

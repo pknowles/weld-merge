@@ -1,3 +1,4 @@
+import { describe, it } from "@jest/globals";
 import { Differ } from "../src/matchers/diffutil.ts";
 import { SyncPointMyersSequenceMatcher } from "../src/matchers/myers.ts";
 import { mapLineAcrossChunks } from "../src/webview/ui/scrollMapping.ts";

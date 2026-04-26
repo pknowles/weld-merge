@@ -10,7 +10,9 @@ Found in `src/matchers/`. High-performance, side-effect-free TypeScript logic.
 ## Extension Host (VS Code Plumbing)
 Entry point and Git integration.
 - **`extension.ts`**: Extension lifecycle, command registrations, and workspace event handling.
-- **`gitUtils.ts`**: Extracts `LOCAL`, `BASE`, and `REMOTE` text contents from Git objects.
+- **`repoContext.ts`**: Resolves per-file Git repository context via `vscode.git` (`rootUri`, `rootFsPath`, and repo-relative path).
+- **`gitUtils.ts`**: Git command utilities, conflict-state detection via resolved gitdir (worktree-safe), and conflicted-file queries.
+- **`log.ts`**: Shared `LogOutputChannel` initialization/access for extension-host diagnostics.
 - **`treeView.ts`**: Implementation of the "Conflicted Files" view in the SCM panel.
 - **`webview/meldWebviewPanel.ts`**: Manages the custom editor lifecycle, lifecycle of the Webview, and message passing.
 
@@ -27,3 +29,13 @@ Located in `src/webview/ui/`.
 - **`scrollMapping.ts`**: Calculations for mapping line indices between Local/Base/Remote/Merged.
 - **`highlightUtil.ts`**: Logic for generating Monaco-compatible line decorations from diff chunks.
 - **`editorActions.ts`**: Functions for modifying text content in response to UI actions (arrows/crosses).
+
+## Testing
+
+- Unit test what we can in ./test/test_*
+- Webview mocking in ./test/webview_*
+- For e2e vscode interaction, use ./test/vscode/*
+- For e2e browser interaction and benchmarks, use playwrite, e.g. in ./test/benchmarking/
+- xvfb may be used if real windows MUST be displayed
+
+Test coverage with jest, mutations with stryker, fuzz testing with jazzer should be kept up to date.

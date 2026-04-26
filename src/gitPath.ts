@@ -1,32 +1,15 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-import { extensions, workspace } from "vscode";
-
-interface GitAPI {
-	git: {
-		path: string;
-	};
-}
-
-interface GitExtension {
-	getAPI(version: number): GitAPI;
-}
+import { workspace } from "vscode";
+import { getGitApi } from "./repoContext.ts";
 
 async function getExtensionPath(): Promise<string | undefined> {
-	const gitExtension = extensions.getExtension<GitExtension>("vscode.git");
-	if (gitExtension) {
-		if (!gitExtension.isActive) {
-			await gitExtension.activate();
-		}
-		const exports = gitExtension.exports;
-		if (exports && typeof exports.getAPI === "function") {
-			const api = exports.getAPI(1);
-			if (api?.git?.path) {
-				return api.git.path;
-			}
-		}
+	try {
+		const api = await getGitApi();
+		return api.git.path || undefined;
+	} catch {
+		return;
 	}
-	return;
 }
 
 function getConfigPath(): string | undefined {

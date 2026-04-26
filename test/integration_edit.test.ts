@@ -1,3 +1,4 @@
+import { describe, it } from "@jest/globals";
 import { Merger } from "../src/matchers/merge.ts";
 
 describe("Merger Integration: Live Editing", () => {

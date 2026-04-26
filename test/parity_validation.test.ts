@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
+import { describe, test } from "@jest/globals";
 import { Merger } from "../src/matchers/merge.ts";
 
 const testDir = join(process.cwd(), "test");

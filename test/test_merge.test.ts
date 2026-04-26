@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { beforeEach, describe, it } from "@jest/globals";
 import { Merger } from "../src/matchers/merge.ts";
 
 describe("Merger", () => {
