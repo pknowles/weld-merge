@@ -124,6 +124,11 @@ function handleLoadDiff(data: LoadDiffData, p: MessageDispatchDeps) {
 	assertDiffChunksWellFormed(leftDiffs, "loadDiff left");
 	assertDiffChunksWellFormed(rightDiffs, "loadDiff right");
 
+	// Remember which base-compare panes were open before this reload so we
+	// can re-request them below. The webview owns this state — no round-trip.
+	const wasLeftOpen = p.filesRef.current[0] !== null;
+	const wasRightOpen = p.filesRef.current[4] !== null;
+
 	// PaneFiles still has the 5-slot shape (baseLeft, local, merged, remote,
 	// baseRight). The base-compare slots are filled lazily via loadBaseDiff,
 	// so they start as null here. See TODO.md "PaneFiles / PaneDiffs".
@@ -151,6 +156,14 @@ function handleLoadDiff(data: LoadDiffData, p: MessageDispatchDeps) {
 		s = dI.next();
 	}
 	p.differRef.current = differ;
+
+	// Re-request any base-compare panes that were open before this reload.
+	if (wasLeftOpen) {
+		p.vscodeApi?.postMessage({ command: "requestBaseDiff", side: "left" });
+	}
+	if (wasRightOpen) {
+		p.vscodeApi?.postMessage({ command: "requestBaseDiff", side: "right" });
+	}
 }
 
 function handleLoadBaseDiff(data: BaseDiffPayload, p: MessageDispatchDeps) {
