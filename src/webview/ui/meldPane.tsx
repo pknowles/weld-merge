@@ -61,8 +61,11 @@ const getBridge34 = (ui: MeldUIState): DiffState | null => {
 
 const getDiffStateInternal = (idx: number, ui: MeldUIState): DiffState => {
 	// Base Compare highlighting state
-	const isLBC = ui.baseCompareHighlighting && Boolean(ui.files[0]);
-	const isRBC = ui.baseCompareHighlighting && Boolean(ui.files[4]);
+	const isLBC =
+		ui.baseCompareHighlighting && Boolean(ui.files[0] || ui.renderBaseLeft);
+	const isRBC =
+		ui.baseCompareHighlighting &&
+		Boolean(ui.files[4] || ui.renderBaseRight);
 
 	if (idx === 0) {
 		const b = getBridge01(ui);

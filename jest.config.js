@@ -21,9 +21,8 @@ export default {
 	testPathIgnorePatterns: [
 		"/node_modules/",
 		"/test/benchmarking/",
-		"/test/vscode/",
-		"/test/repo_context.test.ts",
-		"/test/git_utils_gitdir.test.ts",
+		"/test/vscode/", // vscode integration tests (not jest)
+		"/test/e2e/", // playwrite end to end tests (not jest)
 	],
 	// Keep Jest's haste-map out of @vscode/test-electron's downloaded VS Code
 	// trees. Each install ships ~70 built-in extensions whose package.json
