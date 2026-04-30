@@ -216,10 +216,6 @@ const useMeldUIActions = (p: MeldUIActionsProps) =>
 			getHighlights: p.highlights,
 			requestClipboardText: p.requestClipboardText,
 			writeClipboardText: p.writeClipboardText,
-			onEditImmediate: (_i: number) => {
-				// useCommitModelUpdate already clears/updates diffs debounced.
-				// Synchronous clearing here causes visible flicker on every keystroke.
-			},
 			onEdit: debounce((v: string | undefined, i: number) => {
 				if (v !== undefined && i === 2) {
 					p.commitModelUpdate(v);

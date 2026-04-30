@@ -510,10 +510,8 @@ const useCodePaneSyncRefs = (
 	sendSaveRef: React.MutableRefObject<() => void>,
 	syncActionsRef: React.MutableRefObject<{
 		sendContentChanged: (changes: editor.IModelContentChange[]) => void;
-		onEditImmediate: (index: number) => void;
 		onEdit: (value: string | undefined, index: number) => void;
 	}>,
-	paneContentRef: React.MutableRefObject<string>,
 ) => {
 	useEffect(() => {
 		sendSaveRef.current = p.actions.sendSave;
@@ -522,19 +520,9 @@ const useCodePaneSyncRefs = (
 	useEffect(() => {
 		syncActionsRef.current = {
 			sendContentChanged: p.actions.sendContentChanged,
-			onEditImmediate: p.actions.onEditImmediate,
 			onEdit: p.actions.onEdit,
 		};
-	}, [
-		p.actions.sendContentChanged,
-		p.actions.onEditImmediate,
-		p.actions.onEdit,
-		syncActionsRef,
-	]);
-
-	useEffect(() => {
-		paneContentRef.current = p.file.content;
-	}, [p.file.content, paneContentRef]);
+	}, [p.actions.sendContentChanged, p.actions.onEdit, syncActionsRef]);
 };
 
 const useCodePaneRenderTrigger = (
@@ -572,11 +560,9 @@ const useCodePaneLogic = (p: CodePaneProps) => {
 	const sendSaveRef = useRef(p.actions.sendSave);
 	const syncActionsRef = useRef({
 		sendContentChanged: p.actions.sendContentChanged,
-		onEditImmediate: p.actions.onEditImmediate,
 		onEdit: p.actions.onEdit,
 	});
-	const paneContentRef = useRef(p.file.content);
-	useCodePaneSyncRefs(p, sendSaveRef, syncActionsRef, paneContentRef);
+	useCodePaneSyncRefs(p, sendSaveRef, syncActionsRef);
 	useCodePaneRenderTrigger(ed, p.actions.setRenderTrigger);
 
 	useEffect(() => {
@@ -651,9 +637,6 @@ const useCodePaneLogic = (p: CodePaneProps) => {
 				syncActionsRef.current.sendContentChanged(ev.changes);
 			}
 			const v = m.getValue();
-			if (v !== paneContentRef.current) {
-				syncActionsRef.current.onEditImmediate(p.index);
-			}
 			syncActionsRef.current.onEdit(v, p.index);
 		});
 

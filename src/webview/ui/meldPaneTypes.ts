@@ -42,7 +42,6 @@ export interface MeldUIActions {
 	onEdit: (v: string | undefined, i: number) => void;
 	sendContentChanged: (changes: editor.IModelContentChange[]) => void;
 	sendSave: () => void;
-	onEditImmediate: (i: number) => void;
 	setRenderTrigger: (p: (prev: number) => number) => void;
 }
 
