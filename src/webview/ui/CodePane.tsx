@@ -610,9 +610,9 @@ const useCodePaneLogic = (p: CodePaneProps) => {
 				isApplyingSync.current = true;
 				try {
 					m.pushEditOperations(
-						ed.getSelections() || [],
+						ed.getSelections() || null,
 						monacoChangesToEditOps(changes),
-						() => ed.getSelections() || [],
+						() => ed.getSelections() || null,
 					);
 				} finally {
 					isApplyingSync.current = false;
