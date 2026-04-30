@@ -1,5 +1,5 @@
 import type { editor } from "monaco-editor";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Differ } from "../../matchers/diffutil.ts";
 import {
 	applyChunkEdit,
@@ -562,10 +562,18 @@ export const useAppChunkActions = (
 		[editorRefs],
 	);
 
-	return {
-		handleApplyChunk,
-		handleDeleteChunk,
-		handleCopyUpChunk,
-		handleCopyDownChunk,
-	};
+	return useMemo(
+		() => ({
+			handleApplyChunk,
+			handleDeleteChunk,
+			handleCopyUpChunk,
+			handleCopyDownChunk,
+		}),
+		[
+			handleApplyChunk,
+			handleDeleteChunk,
+			handleCopyUpChunk,
+			handleCopyDownChunk,
+		],
+	);
 };
