@@ -647,10 +647,9 @@ const useCodePaneLogic = (p: CodePaneProps) => {
 		}
 
 		const disposable = m.onDidChangeContent((ev) => {
-			if (isApplyingSync.current) {
-				return;
+			if (!isApplyingSync.current) {
+				syncActionsRef.current.sendContentChanged(ev.changes);
 			}
-			syncActionsRef.current.sendContentChanged(ev.changes);
 			const v = m.getValue();
 			if (v !== paneContentRef.current) {
 				syncActionsRef.current.onEditImmediate(p.index);
