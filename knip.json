@@ -3,8 +3,7 @@
 	"ignoreDependencies": [
 		"@jazzer.js/core",
 		"mutation-testing-metrics",
-		"mutation-testing-report-schema",
-		"playwright"
+		"mutation-testing-report-schema"
 	],
 	"ignoreBinaries": ["jest.fuzz.config.js"],
 	"entry": [

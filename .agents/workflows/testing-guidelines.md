@@ -32,7 +32,7 @@ Run these from the root directory:
 
 1. List all the intended use cases, the happy paths.
 2. List all the edge cases for each of the happy paths.
-3. Describe the expected outcomes for each case
+3. Describe the expected outcomes for each case and edge case
 4. Describe two or three ways you can test whether the expected outcome happened or not, explaining why they verify the outcome and detect anything other than the outcome - your validation ideas
 5. Anything else you can think of?
 
@@ -41,3 +41,4 @@ Stop here and ask the user to check your progress.
 6. For each of the use cases, describe one result that would be incorrect. Would your test catch the wrong output?
 7. For each of your validation ideas, evaluate how well they will work. Do they actually verify whether the feature works in spirit? I.e. not just that the code does what it does. Do they test solid invariants that match the use cases, allowing for the implementation to change yet still verify it produces the right result?
 8. Replace any useless tests you found with test that would catch incorrect usage and repeat the above negative testing thought experiment.
+9. Review to ensure we’re not adding brittle, tautological tests that would fail on valid implementation changes

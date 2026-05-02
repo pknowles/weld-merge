@@ -273,8 +273,12 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		repoContext: RepoContext,
 	): void {
 		const config = this._getWebviewConfig();
+		const stagesPromise = fetchConflictStages(
+			repoContext.repository,
+			repoContext.uri,
+		);
 
-		// Phase 1 (before webview is ready): Setup per-editor sync state.
+		// Per-editor sync state shared by all callbacks for this panel.
 		// See editorSync.ts for detailed documentation of each field.
 		// Key points:
 		// - editQueue serializes all document mutations (edits + saves)
@@ -304,6 +308,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 							repoContext,
 							editState,
 							disposables,
+							stagesPromise,
 						},
 						config,
 					);
@@ -324,6 +329,15 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			},
 		);
 		disposables.push(messageListener);
+		this._maybeApplyAutoMerge(
+			{
+				document,
+				repoContext,
+			},
+			stagesPromise,
+		).catch((error: unknown) => {
+			throw error;
+		});
 
 		webviewPanel.onDidDispose(() => {
 			for (const d of disposables) {
@@ -345,6 +359,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			repoContext: RepoContext;
 			editState: EditState;
 			disposables: Disposable[];
+			stagesPromise: ReturnType<typeof fetchConflictStages>;
 		},
 		config: ReturnType<MeldCustomEditorProvider["_getWebviewConfig"]>,
 	): Promise<void> {
@@ -352,19 +367,24 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 
 		readyState.handling = true;
 		try {
-			const [snapshot, initialStateKey] = await Promise.all([
-				this._loadInitialSnapshot(ctx, config),
+			const [stages, initialStateKey] = await Promise.all([
+				ctx.stagesPromise,
 				MeldCustomEditorProvider.getCurrentConflictStateKey(
 					ctx.repoContext.repository,
 				),
 			]);
-			if (!snapshot) {
-				return;
-			}
+			const snapshot = await this._buildSnapshotFromCurrentDocument(
+				{
+					document: ctx.document,
+					repoContext: ctx.repoContext,
+				},
+				config,
+				stages,
+			);
 			readyState.snapshot = snapshot;
 			readyState.handled = true;
-			// Phase 2: setup listeners and send initial snapshot.
-			// All of this is synchronous — no other code can interleave.
+			// Listener setup and the first loadDiff post run synchronously so the
+			// webview content and tracked version boundary start in lockstep.
 			this._setupPerEditorListeners(
 				{
 					document: ctx.document,
@@ -381,12 +401,12 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		}
 	}
 
-	private async _applyAutoMergedContent(
+	private async _replaceDocumentContent(
 		document: TextDocument,
-		mergedContent: string | undefined,
+		content: string | undefined,
 	): Promise<void> {
 		const docText = document.getText();
-		if (mergedContent === undefined || mergedContent === docText) {
+		if (content === undefined || content === docText) {
 			return;
 		}
 
@@ -395,83 +415,31 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			document.positionAt(0),
 			document.positionAt(docText.length),
 		);
-		edit.replace(document.uri, fullRange, mergedContent);
+		edit.replace(document.uri, fullRange, content);
 		await workspace.applyEdit(edit);
 	}
 
-	private async _loadInitialSnapshot(
+	private async _buildSnapshotFromCurrentDocument(
 		ctx: {
 			document: TextDocument;
 			repoContext: RepoContext;
 		},
 		config: ReturnType<MeldCustomEditorProvider["_getWebviewConfig"]>,
-	): Promise<WebviewPayload["data"] | null> {
+		stages: Awaited<ReturnType<typeof fetchConflictStages>>,
+	): Promise<WebviewPayload["data"]> {
 		const docText = ctx.document.getText();
-		const stages = await fetchConflictStages(
-			ctx.repoContext.repository,
+		// Build the 3-pane payload against the exact working text currently in
+		// the VS Code buffer; no document mutation is performed here.
+		const snapshot = await buildDiffPayload(
+			ctx.repoContext,
 			ctx.repoContext.uri,
-		);
-
-		// TODO: consolidate this duplicate block with the rest below
-		if (ctx.document.isDirty) {
-			// Already dirty on init: likely a hot exit restore or the user just
-			// edited this file in another tab. Either way, they have unsaved
-			// changes they expect to keep. Skip the prompt and the auto-merge
-			// overwrite.
-			return this._snapshotFromCurrentDocument(
-				ctx,
-				config,
+			{
 				stages,
-				docText,
-			);
-		}
-
-		// If the file is un-changed since the merge conflict was first created
-		// we run auto-merge. We can only verify this by re-running git
-		// merge-file -p. To get an identical result we need to know the labels
-		// git uses for local/base/remote or write a diff to ignore them. Rather
-		// than filter out labels when diffing, we extract them from existing
-		// conflict markers. This is safer in case a user commits conflict
-		// markers. It serves a double purpose in that if conflict markers are
-		// missing, the user has most likely made changes already and we
-		// silently load the current file state instead.
-		const labels = extractConflictLabels(docText);
-		if (!labels) {
-			// TODO: add logging
-			//getWeldLogChannel().log(`Skipping automerge; no conflict marker labels found in ${ctx.document.uri.toString()}`);
-			return this._snapshotFromCurrentDocument(
-				ctx,
-				config,
-				stages,
-				docText,
-			);
-		}
-
-		const initialGitState = await this._tryBuildInitialConflictText(
-			ctx,
-			stages,
-			labels,
+				workingContent: docText,
+			},
 		);
-		if (docText === initialGitState) {
-			return this._snapshotFromAutoMerge(ctx, config, stages);
-		}
-
-		const modAction = await this._checkAndPromptModification(
-			ctx.document,
-			initialGitState,
-		);
-		if (modAction === "cancel") {
-			return null;
-		}
-		if (modAction === "keep") {
-			return this._snapshotFromCurrentDocument(
-				ctx,
-				config,
-				stages,
-				docText,
-			);
-		}
-		return this._snapshotFromAutoMerge(ctx, config, stages);
+		snapshot.config = config;
+		return snapshot;
 	}
 
 	private _tryBuildInitialConflictText(
@@ -488,49 +456,88 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		);
 	}
 
-	private async _snapshotFromCurrentDocument(
+	private async _buildAutoMergedContent(
 		ctx: {
 			repoContext: RepoContext;
 		},
-		config: ReturnType<MeldCustomEditorProvider["_getWebviewConfig"]>,
 		stages: Awaited<ReturnType<typeof fetchConflictStages>>,
-		docText: string,
-	): Promise<WebviewPayload["data"]> {
-		// Keep path: never rewrite the buffer; render and diff exactly what exists.
+	): Promise<string | undefined> {
 		const snapshot = await buildDiffPayload(
 			ctx.repoContext,
 			ctx.repoContext.uri,
 			{
 				stages,
-				workingContent: docText,
 			},
 		);
-		snapshot.config = config;
-		return snapshot;
+		return snapshot.files[1]?.content;
 	}
 
-	private async _snapshotFromAutoMerge(
+	/**
+	 * Decides whether to apply auto-merge and, if so, replaces the document content.
+	 *
+	 * Auto-merge detection: We only auto-merge if the file is unchanged since the
+	 * merge conflict was created. To verify this, we re-run git merge-file -p using
+	 * the same labels git originally used. We extract those labels from existing
+	 * conflict markers in the document. This serves a double purpose: if conflict
+	 * markers are missing, the user has most likely made changes already and we
+	 * treat their content as authoritative.
+	 *
+	 * This runs concurrently with the "ready" handshake. The workspace.applyEdit
+	 * it performs (if any) is handled correctly regardless of timing — see the
+	 * docstring on _setupPerEditorListeners for the two interleavings.
+	 */
+	private async _maybeApplyAutoMerge(
 		ctx: {
 			document: TextDocument;
 			repoContext: RepoContext;
 		},
-		config: ReturnType<MeldCustomEditorProvider["_getWebviewConfig"]>,
-		stages: Awaited<ReturnType<typeof fetchConflictStages>>,
-	): Promise<WebviewPayload["data"]> {
-		// Replace path: compute merged middle content, then apply it in-memory only.
-		const snapshot = await buildDiffPayload(
-			ctx.repoContext,
-			ctx.repoContext.uri,
-			{
-				stages,
-			},
+		stagesPromise: ReturnType<typeof fetchConflictStages>,
+	): Promise<void> {
+		const stages = await stagesPromise;
+		const docText = ctx.document.getText();
+		if (ctx.document.isDirty) {
+			// Already dirty: likely a hot exit restore or the user edited in another
+			// tab. They have unsaved changes they expect to keep — skip auto-merge.
+			return;
+		}
+
+		// Extract conflict marker labels to verify the file is unchanged. If labels
+		// are missing, the user has already resolved/edited the file manually.
+		const labels = extractConflictLabels(docText);
+		if (!labels) {
+			return;
+		}
+
+		const initialGitState = await this._tryBuildInitialConflictText(
+			{ repoContext: ctx.repoContext },
+			stages,
+			labels,
 		);
-		snapshot.config = config;
-		await this._applyAutoMergedContent(
+		if (docText === initialGitState) {
+			await this._replaceDocumentContent(
+				ctx.document,
+				await this._buildAutoMergedContent(
+					{ repoContext: ctx.repoContext },
+					stages,
+				),
+			);
+			return;
+		}
+
+		const modAction = await this._checkAndPromptModification(
 			ctx.document,
-			snapshot.files[1]?.content,
+			initialGitState,
 		);
-		return snapshot;
+		if (modAction !== "replace") {
+			return;
+		}
+		await this._replaceDocumentContent(
+			ctx.document,
+			await this._buildAutoMergedContent(
+				{ repoContext: ctx.repoContext },
+				stages,
+			),
+		);
 	}
 
 	private async _checkAndPromptModification(
@@ -688,29 +695,28 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 	}
 
 	/**
-	 * Sets up per-editor event listeners. Called from the "ready" message handler.
+	 * Sets up per-editor event listeners and sends the initial loadDiff.
+	 * Called from the "ready" message handler after awaiting async setup work.
 	 *
-	 * IMPORTANT: This is Phase 2 of the bootstrap protocol. The sequence matters:
+	 * IMPORTANT: The listener registration and loadDiff post must be synchronous.
 	 *
-	 * Phase 1 (_initializeWebview, before webview ready):
-	 * - Create editState with initial lastExternalChangeVersion
-	 * - Apply initial auto-merge edit if needed (no listener yet, so echo is ignored)
-	 *
-	 * Phase 2 (this function, after webview sends "ready"):
-	 * - Set up onDidChangeTextDocument listener
-	 * - Read document.getText() for initial content
-	 * - Record lastExternalChangeVersion = document.version
-	 * - Send loadDiff to webview
-	 *
-	 * Why this order? The listener must be set up BEFORE we read the document content,
-	 * and both must happen synchronously (no await between them). Otherwise:
-	 * - If we read content, then await something, then set up listener: we might
-	 *   miss changes that happened during the await.
+	 * Why this order matters:
+	 * - The onDidChangeTextDocument listener must be set up BEFORE we read the
+	 *   document content for loadDiff, and both must happen with no await between.
+	 * - If we read content, then await, then set up listener: we might miss
+	 *   changes that happened during the await.
 	 * - If we set up listener, then await, then read: we might get stale content
 	 *   that doesn't match what the listener will track.
 	 *
 	 * By doing everything synchronously, the content we send to the webview is
 	 * guaranteed to match exactly what the listener will track going forward.
+	 *
+	 * Note: maybeApplyAutoMerge runs concurrently from _initializeWebview. Its
+	 * workspace.applyEdit can resolve before or after this function runs:
+	 * - Before "ready": no listener yet, so no externalEdit sent. The loadDiff
+	 *   we post here reads document.getText() which already has merged content.
+	 * - After "ready": the listener catches the change and posts externalEdit.
+	 * Both interleavings are correct; the webview ends up with merged content.
 	 */
 	private _setupPerEditorListeners(
 		ctx: {
@@ -749,22 +755,15 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 				if (uri.toString() !== ctx.document.uri.toString()) {
 					return;
 				}
-				const snapshot = await this._loadInitialSnapshot(
+				await this._reloadSnapshotAndMaybeAutoMerge(
 					{
 						document: ctx.document,
+						webviewPanel: ctx.webviewPanel,
 						repoContext: ctx.repoContext,
+						editState: ctx.editState,
+						readyState: ctx.readyState,
 					},
 					this._getWebviewConfig(),
-				);
-				if (!snapshot) {
-					return;
-				}
-				ctx.readyState.snapshot = snapshot;
-				this._postCurrentLoadDiff(
-					snapshot,
-					ctx.document,
-					ctx.webviewPanel,
-					ctx.editState,
 				);
 			});
 
@@ -792,22 +791,15 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 						return;
 					}
 					lastStateKey = event.stateKey;
-					const snapshot = await this._loadInitialSnapshot(
+					await this._reloadSnapshotAndMaybeAutoMerge(
 						{
 							document: ctx.document,
+							webviewPanel: ctx.webviewPanel,
 							repoContext: ctx.repoContext,
+							editState: ctx.editState,
+							readyState: ctx.readyState,
 						},
 						this._getWebviewConfig(),
-					);
-					if (!snapshot) {
-						return;
-					}
-					ctx.readyState.snapshot = snapshot;
-					this._postCurrentLoadDiff(
-						snapshot,
-						ctx.document,
-						ctx.webviewPanel,
-						ctx.editState,
 					);
 				},
 			);
@@ -831,6 +823,46 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			ctx.webviewPanel,
 			ctx.editState,
 		);
+	}
+
+	private async _reloadSnapshotAndMaybeAutoMerge(
+		ctx: {
+			document: TextDocument;
+			webviewPanel: WebviewPanel;
+			repoContext: RepoContext;
+			editState: EditState;
+			readyState: ReadyState;
+		},
+		config: ReturnType<MeldCustomEditorProvider["_getWebviewConfig"]>,
+	): Promise<void> {
+		const stages = await fetchConflictStages(
+			ctx.repoContext.repository,
+			ctx.repoContext.uri,
+		);
+		const snapshot = await this._buildSnapshotFromCurrentDocument(
+			{
+				document: ctx.document,
+				repoContext: ctx.repoContext,
+			},
+			config,
+			stages,
+		);
+		ctx.readyState.snapshot = snapshot;
+		this._postCurrentLoadDiff(
+			snapshot,
+			ctx.document,
+			ctx.webviewPanel,
+			ctx.editState,
+		);
+		this._maybeApplyAutoMerge(
+			{
+				document: ctx.document,
+				repoContext: ctx.repoContext,
+			},
+			Promise.resolve(stages),
+		).catch((error: unknown) => {
+			throw error;
+		});
 	}
 
 	/**

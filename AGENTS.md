@@ -2,8 +2,6 @@
 
 This repository uses a structured set of guidelines for AI agents to ensure high maintainability, type safety, and architectural consistency.
 
-Use `implementation_references.md` to help navigating directly to the relevant section of code. Keep this document up to date after making changes.
-
 ## Guideline Directory
 Before contributing, agents **MUST** read the relevant guidelines for their task:
 1. [General Behavior & Git Etiquette](.agents/general.md)
