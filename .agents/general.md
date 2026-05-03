@@ -25,6 +25,7 @@ Read ./standards/core.md and any relevant ./standards/* before designing or writ
 - Are all formatting/linting/validation/testing passing?
 - Do not create spurious `.md` analysis files; keep history in commits.
 - Update project documentation if your change affects architecture, flow, or object names.
+- If an LLM were to skim the docs and comments, are appropriate high and low level directions and intent documented to know what the code should be doing (not just what it is doing)?
 - Report to the user anything you skipped, new architectural smells or anything that you think they should know.
 
 ## Tools

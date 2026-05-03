@@ -3,6 +3,8 @@
 .git
 .husky
 .agents
+.claude
+.cursor
 **/*.map
 node_modules
 src
@@ -13,6 +15,7 @@ stryker.config.json
 tsconfig.json
 biome.json
 TODO.md
+AGENTS.md
 .gitignore
 *.tsbuildinfo
 *.log
@@ -37,3 +40,4 @@ test-results/
 test/benchmarking/results/
 Trace-*.json
 trace_processor
+implementation_reference.md

@@ -1,23 +1,32 @@
 # Future Improvements & Known Issues
 
-## Partially edited files
+## Behaviour Differences to GNOME Meld
 
-When opening a conflicted files, we follow Meld's behaviour of clobbering the
-contents with the auto-merged result, with a warning of course.
+The initial merge is correct, but after making changes the diffs/highlighting do
+not get the same result. I have seen this in the real Meld app, but the aim here
+was to match what Meld does exactly, so the current behaviour is incorrect.
 
-Possible idea: instead of completely overwriting the file, we can parse the
-document for typical Git conflict markers (`<<<<<<<` ... `=======` ...
-`>>>>>>>`) and selectively inject the Meld auto-merged chunks *only* where those
-markers exist using the VS Code WorkspaceEdit API. This way, any manual
-resolutions or unrelated modifications the user has made outside of the
-remaining conflict zones are perfectly preserved without the need for a warning
-popup or diffing the original git state.
+## Repository discovery
 
-## Funcional breakages
+Race condition on launch: `ConflictedFilesProvider` and
+`getTrackedRepositories()` check once for repositories and apparently there are
+no listeners. There must be some though because we already detect the conflict
+state changing.
 
-Check auto-reload works if there are no pending changes - need to reload base, local, remote panes and re-run auto-merge.
+Maybe use `onDidOpenRepository()` or some actual GIT API to detect repositories.
+E.g. a user runs git init for the first time in the project folder? Maybe avoid
+`repository.state` if it can just become stale?
 
-Off-by-one error for DiffCurtain connecting to the very last line of a file.
+`gitApi.getRepository(uri)` for workspace/project root isn't necessarily a git
+repository. How does vscode handle subdirectories with git repositories?
+
+What about worktrees? Should `ConflictedFilesProvider` have an optional top
+level list of worktrees? Probably.
+
+There is a change in progress for merging submodule commit hash conflicts, but
+what about merge conflicts within submodules? Similar issue to worktrees.
+
+`fetchConflictStages()` has no catch -> error path in `_initializeWebview()`.
 
 ## Perf improvements
 
@@ -43,47 +52,11 @@ Since `git merge-file -p` is deterministic (same inputs → same output), this e
 
 The ~5 minute disposal becomes beneficial LRU cache eviction rather than a "leak".
 
-## Remaining web-host git gaps
+## Browser / web extension host support
 
-After the remote URI support cleanup, the extension now uses VS Code git APIs and
-`workspace.fs` for the general repo-resolution, blob-reading, conflict-list, and
-watcher flows. The remaining feature operations that still require spawning the
-real `git` executable are:
-
-- `git merge-file -p -L ... -L ... -L ...` in
-  `src/webview/diffPayload.ts` to reproduce git's original conflicted text
-  byte-for-byte for the "was this file modified since conflict creation?" check
-- `git checkout -m -- <path>` in `src/extension.ts` to restore a file to its
-  conflicted state
-- `git rerere forget -- <path>` in `src/extension.ts` to remove a recorded rerere
-  resolution for one file
-
-### Behaviour by environment
-
-- **Local VS Code**: works, because the extension host can spawn `git` and access
-  the repository filesystem directly.
-- **Codespaces / Remote SSH / Dev Containers**: works the same way, because the
-  extension host runs on the remote machine/container where the repository and
-  `git` executable live. The subprocess runs remotely, not on the local desktop.
-- **Pure browser/web extension host**: not supported yet. In a browser-only host
-  there is no Node subprocess API for spawning `git`, so these three features
-  fail even though the rest of the extension can now operate through VS Code APIs.
-
-### Future work
-
-If we ever want full browser-host support, these three operations need an
-alternative design that does not depend on spawning `git`. Before attempting
-that, first check whether newer VS Code git APIs expose verified equivalents.
-If they still do not, track each as a dedicated design problem rather than
-quietly adding heuristics or partial fallbacks.
+Three operations still spawn the `git` executable (`merge-file -p`, `checkout -m`, `rerere forget`) — see README Known Limitations. If browser support is ever wanted, redesign these against VS Code git APIs before adding heuristics or partial fallbacks.
 
 ## Fix commit message titles
-
-Make sure the toggle compare-with-base icons are always visible - currently if there's not enough spacing they disappear
-
-Make the commit title fill the space but use a ... ellipsis when the title is too long; remove the square brackets around it
-
-Check the commit message font matches the rest - it looks odd. Maybe even just replace the message with an icon to see the card.
 
 Match the commit mssage card contents in upstream vscode?
 
@@ -241,11 +214,7 @@ Consolidate biome `"includes": ["**/*.test.ts", "**/*.test.tsx"]` and `["test/**
 Questionable code in c06d4923:
 
 1. Hardcoded Race Condition Workarounds
-   The agent used setTimeout everywhere to paper over race conditions between Monaco's lifecycle and React's render cycle.
-
-   In meldPane.tsx, it uses setTimeout(..., 50) just to force a scroll sync
-   after mounting. In CodePane.tsx, it uses setTimeout(..., 500) (line 610) to
-   automatically trigger a "Next Conflict" navigation after mount. This is
+   In CodePane.tsx, a `setTimeout(..., 500)` automatically triggers "Next Conflict" navigation after mount. This is
    particularly annoying as it might jump the user's view unexpectedly half a
    second after the page loads.
 2. Aggressive Content Syncing The sync logic in CodePane.tsx (lines 485-498)

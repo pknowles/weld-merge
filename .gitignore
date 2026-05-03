@@ -6,6 +6,9 @@ coverage/
 .stryker-tmp/
 reports/
 .cifuzz-corpus/
+.claude/
+.cursor/
+.vscode/
 test/fuzz/**/corpus/
 test/fuzz/**/crash-*
 test/fuzz/**/timeout-*

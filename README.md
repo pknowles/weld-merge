@@ -21,6 +21,13 @@ looking for a dedicated 3-way merge tool and superior Git merge conflict
 resolution, this Visual Studio Code Git extension provides an unmatched
 developer experience.
 
+**Environment Support**
+
+✔ Local Filesystem<br/>
+✔ Remote SSH<br/>
+✔ Dev Containers<br/>
+✔ Codespaces<br/>
+
 ## Table of Contents
 - [Alpha Release Notice](#️-alpha-release-notice)
 - [Installation](#installation)
@@ -29,6 +36,7 @@ developer experience.
 - [How It Works](#how-it-works)
 - [How to Use the Extension](#how-to-use-the-extension)
 - [Configuration Settings](#configuration-settings)
+- [Known Limitations](#known-limitations)
 - [Developer Setup](#developer-setup)
 - [Credits](#credits)
 - [License](#license)
@@ -256,6 +264,16 @@ Example `settings.json` snippet to tweak colors:
     "weldMerge.diffInsertBackground": "#00ff001a"
 }
 ```
+
+## Known Limitations
+
+Git worktrees are not supported, but the feature is planned.
+
+Git submodules are not supported, but the feature is planned.
+
+Partial support for browser / web extension host environments. Some operations
+run `git` directly (`merge-file`, `checkout -m`, `rerere forget`) which cannot
+be done in a browser-only host.
 
 ## Developer Setup
 

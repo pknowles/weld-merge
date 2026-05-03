@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.0.10] - 2026-05-02
+
+### Added
+- **Conflict Detection Warning**: Tree view now shows a visible warning when the repository is in a merge/rebase/cherry-pick conflict state but VS Code's Git API reports no merge changes, helping diagnose cases where conflicts exist but aren't being detected.
+
+### Fixed
+- **Auto-Reload**: After aborting and re-merging, the extension now correctly reloads base/local/remote content and re-runs auto-merge even when there are no pending local changes.
+- **Startup Timing**: Removed `setTimeout`-based scroll sync hacks from `meldPane.tsx`; replaced with event-driven rendering via Monaco's `onDidChangeContent` and `onDidLayoutChange`.
+- **Editor Sync**: Editor no longer fails to sync from external edits on a fresh launch.
+- **Highlighting**: Fixed highlighting not updating from external edits, including a debounce delay that was preventing updates.
+- **DiffCurtain**: Fixed fade effect and incorrect initial setting for the diff curtain overlay.
+- **Compare-with-Base**: The "compare with base" toggle now persists correctly across panel reloads.
+- **Complete Merge**: Fixed `git add` not being called after a merge is marked complete.
+- **Save Flow**: Removed a 3-second deadlock caused by `onWillSaveTextDocument`; save now queues directly after pending edits resolve.
+- **Checkout-Conflicted Save**: Eliminated a "content is newer" error when saving a checkout-conflicted file by letting VS Code handle the reload naturally.
+- **Edit Serialization**: Rapid content-changed messages are now serialized via the edit queue, preventing overlapping `applyEdit` calls and version-capture races.
+- **Echo Suppression**: Fixed incorrect `versionBeforeEdit` capture that caused spurious echo suppression during fast edits.
+- **Overwrite Dialog**: Suppressed the unnecessary overwrite confirmation dialog when loading a file with unsaved changes; also suppressed the low-signal warning about missing conflict markers in that case.
+- **Error Visibility**: Tree view now shows an `ErrorTreeItem` (with hover detail) instead of silently rendering an empty list when repository or top-level provider errors occur.
+
+### Changed
+- **Git API**: The VS Code Git extension is now a required dependency (`extensionDependencies`); `getGitApi` is synchronous.
+- **URI Handling**: Replaced ad-hoc string-based file paths with `vscode.Uri` throughout the extension for correctness and consistency.
+- **Webview Bootstrap**: Decoupled webview initialization from the auto-merge flow for cleaner startup sequencing.
+
 ## [0.0.9] - 2026-04-11
 
 ### Fixed
