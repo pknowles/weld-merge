@@ -392,6 +392,7 @@ export class Merger extends Differ {
 		return change.endA - change.startA;
 	}
 
+	// TODO: this looks damn similar to merge3FilesGit in gitTextMerger.ts
 	merge3Files(markConflicts = true): string {
 		this.differ.unresolved = [];
 		let lastline = 0;

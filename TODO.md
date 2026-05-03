@@ -6,6 +6,16 @@ The initial merge is correct, but after making changes the diffs/highlighting do
 not get the same result. I have seen this in the real Meld app, but the aim here
 was to match what Meld does exactly, so the current behaviour is incorrect.
 
+There's a million of these everywhere that appear to drop trailing newlines.. for reasons?
+
+  function splitLines(text: string) {
+    const lines = text.split("\n");
+    if (lines.length > 0 && lines.at(-1) === "") {
+      lines.pop();
+    }
+    return lines;
+  }
+
 ## Repository discovery
 
 Race condition on launch: `ConflictedFilesProvider` and
@@ -174,6 +184,16 @@ Benefits:
 
 Scope: large, touches all the files listed above plus snapshots and tests.
 Track as a dedicated refactor; do not fold into unrelated changes.
+
+## Code duplication
+
+Gemini's summary of jscpd (currently thresholded in `.jscpd.json`):
+
+- src/matchers/myers.ts: Contains 4 separate clones (10-13 lines each), mostly within the core diffing logic.
+- src/webview/ui/diffCurtainButtons.test.tsx: Has a significant 31-line internal clone of test setup/logic.
+- src/extension.ts ↔ src/treeView.ts: Shares an 18-line block and a 9-line block, likely related to command registration or VS Code utility logic.
+- src/webview/ui/editorActions.ts: Contains internal clones of 18 and 15 lines in action handlers.
+- src/webview/ui/appHooks.ts ↔ highlightUtil.ts: Shares a 10-line logic block.
 
 ## Assorted Polish
 

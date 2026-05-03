@@ -19,6 +19,7 @@ import type { DiffChunk } from "./myers.ts";
 const CONFLICT_MARKER_LINES = 4;
 
 export class GitTextMerger extends Merger {
+	// TODO: this looks damn similar to merge3Files in merge.ts
 	merge3FilesGit(markConflicts = true): string {
 		this.differ.unresolved = [];
 		const mergedText: string[] = [];

@@ -349,7 +349,7 @@
 		"test:bench": "npx tsx test/benchmarking/main.ts",
 		"test:e2e": "npx playwright test test/e2e",
 		"ratchet": "npx tsx scripts/ratchet_coverage.ts",
-		"pre-checkin": "npm run lint && npm run build && npm run test:coverage && npm run test:vscode && npm run test:e2e && npm run ratchet",
+		"pre-checkin": "npm run lint && npm run build && npm run test:coverage && npm run test:vscode && npm run test:e2e && npm run jscpd && npm run depcruise && npm run ratchet",
 		"format": "biome format --write .",
 		"lint": "biome lint --error-on-warnings --write .",
 		"knip": "knip",
