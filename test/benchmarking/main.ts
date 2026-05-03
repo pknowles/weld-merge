@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import process from "node:process";
+import { RESULTS_DIR } from "./config.ts";
 import {
 	type BenchmarkResult,
 	getPreviousResult,
@@ -25,12 +25,7 @@ interface LogicResults {
 }
 
 function runBenchmarks() {
-	const resultsDir = path.resolve(
-		process.cwd(),
-		"test",
-		"benchmarking",
-		"results",
-	);
+	const resultsDir = RESULTS_DIR;
 	if (!fs.existsSync(resultsDir)) {
 		fs.mkdirSync(resultsDir, { recursive: true });
 	}
@@ -77,8 +72,6 @@ function runLogicBenchmark(resultsDir: string): LogicResults {
 	try {
 		execSync("npx tsx test/benchmarking/logic_bench.ts", {
 			stdio: "inherit",
-			/* biome-ignore lint/style/useNamingConvention: env var */
-			env: { ...process.env, BENCH_RESULTS_DIR: resultsDir },
 		});
 	} catch (e) {
 		// biome-ignore lint/suspicious/noConsole: report
@@ -102,8 +95,6 @@ function runUIStressTest(resultsDir: string) {
 	try {
 		execSync("npx playwright test test/benchmarking/ui_stress.test.ts", {
 			stdio: "inherit",
-			/* biome-ignore lint/style/useNamingConvention: env var */
-			env: { ...process.env, BENCH_RESULTS_DIR: resultsDir },
 		});
 	} catch (e) {
 		// biome-ignore lint/suspicious/noConsole: report

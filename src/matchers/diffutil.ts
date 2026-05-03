@@ -496,7 +496,7 @@ class Differ {
 			if (!c) {
 				continue;
 			}
-			const highIndexVal = sequence !== 1 ? c.endB : c.endA;
+			const highIndexVal = sequence === 1 ? c.endA : c.endB;
 			if (line < highIndexVal) {
 				return i;
 			}

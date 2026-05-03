@@ -540,7 +540,6 @@ export const DiffCurtain: FC<DiffCurtainProps> = (p) => {
 						transform: `translateY(${activeTops.left - liveTops.left}px)`,
 					}}
 				>
-					{/* biome-ignore lint/performance/useSolidForComponent: React project false positive */}
 					{filtered.map((c) => (
 						<ChunkRenderer
 							key={`${c.startA}-${c.startB}-${c.endA}-${c.endB}`}

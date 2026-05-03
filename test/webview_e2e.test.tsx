@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, it, jest } from "@jest/globals";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+// TODO: seems flaky - has to be after mockMonacoSetup.tsx. Why?
+import { App } from "../src/webview/ui/App.tsx";
 import {
 	createVscodeStub,
 	installResizeObserverMock,
@@ -11,9 +13,6 @@ import {
 	uninstallVscodeApi,
 	type VscodeStub,
 } from "./mockMonacoSetup.tsx";
-
-// TODO: seems flaky - has to be after mockMonacoSetup.tsx. Why?
-import { App } from "../src/webview/ui/App.tsx";
 
 jest.mock("monaco-editor", () => mockCreateMonacoMock());
 jest.mock("@monaco-editor/react", () => mockCreateMonacoReactMockComponent());
@@ -34,43 +33,45 @@ const runTestCase = async (config: {
 	render(<App />);
 
 	await act(() => {
-		window.postMessage(
-			{
-				command: "loadDiff",
+		window.dispatchEvent(
+			new MessageEvent("message", {
 				data: {
-					files: [
-						{ label: "Local", content: config.local },
-						{ label: "Base/Merged", content: config.base },
-						{ label: "Remote", content: config.remote },
-					],
-					diffs: [
-						config.side === "left"
-							? [
-									{
-										tag: "replace",
-										startA: config.start,
-										endA: config.start + 1,
-										startB: config.start,
-										endB: config.start + 1,
-									},
-								]
-							: [],
-						config.side === "right"
-							? [
-									{
-										tag: "replace",
-										startA: config.start,
-										endA: config.start + 1,
-										startB: config.start,
-										endB: config.start + 1,
-									},
-								]
-							: [],
-					],
-					lastExternalChangeVersion: 1,
+					command: "loadDiff",
+					data: {
+						files: [
+							{ label: "Local", content: config.local },
+							{ label: "Base/Merged", content: config.base },
+							{ label: "Remote", content: config.remote },
+						],
+						diffs: [
+							config.side === "left"
+								? [
+										{
+											tag: "replace",
+											startA: config.start,
+											endA: config.start + 1,
+											startB: config.start,
+											endB: config.start + 1,
+										},
+									]
+								: [],
+							config.side === "right"
+								? [
+										{
+											tag: "replace",
+											startA: config.start,
+											endA: config.start + 1,
+											startB: config.start,
+											endB: config.start + 1,
+										},
+									]
+								: [],
+						],
+						lastExternalChangeVersion: 1,
+					},
 				},
-			},
-			"*",
+				origin: "*",
+			}),
 		);
 	});
 

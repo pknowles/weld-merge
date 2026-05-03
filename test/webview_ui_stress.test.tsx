@@ -119,16 +119,16 @@ const createMockModel = (
 				return "";
 			}
 			if (startLine === endLine) {
-				return lines[startLine].substring(
+				return lines[startLine].slice(
 					range.startColumn - 1,
 					range.endColumn - 1,
 				);
 			}
-			let res = `${lines[startLine].substring(range.startColumn - 1)}\n`;
+			let res = `${lines[startLine].slice(range.startColumn - 1)}\n`;
 			for (let i = startLine + 1; i < endLine; i++) {
 				res += `${lines[i]}\n`;
 			}
-			res += lines[endLine].substring(0, range.endColumn - 1);
+			res += lines[endLine].slice(0, range.endColumn - 1);
 			return res;
 		},
 		pushEditOperations: (_before, edits, _after) => {
@@ -147,9 +147,9 @@ const createMockModel = (
 				const before =
 					lines.slice(0, startLine).join("\n") +
 					(startLine > 0 ? "\n" : "") +
-					lineStart.substring(0, startCol);
+					lineStart.slice(0, startCol);
 				const after =
-					lineEnd.substring(endCol) +
+					lineEnd.slice(endCol) +
 					(endLine < lines.length - 1 ? "\n" : "") +
 					lines.slice(endLine + 1).join("\n");
 				nextContent = before + edit.text + after;

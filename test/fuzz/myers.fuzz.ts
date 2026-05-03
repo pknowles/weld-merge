@@ -14,18 +14,18 @@ describe("Myers Fuzzing", () => {
 		(data: Buffer) => {
 			const str = data.toString();
 			const mid = Math.floor(str.length / 2);
-			const s1 = str.substring(0, mid);
-			const s2 = str.substring(mid);
+			const s1 = str.slice(0, mid);
+			const s2 = str.slice(mid);
 
 			const prefixLen = findCommonPrefix(s1, s2);
-			expect(s1.substring(0, prefixLen)).toBe(s2.substring(0, prefixLen));
+			expect(s1.slice(0, prefixLen)).toBe(s2.slice(0, prefixLen));
 			if (prefixLen < s1.length && prefixLen < s2.length) {
 				expect(s1[prefixLen]).not.toBe(s2[prefixLen]);
 			}
 
 			const suffixLen = findCommonSuffix(s1, s2);
-			expect(s1.substring(s1.length - suffixLen)).toBe(
-				s2.substring(s2.length - suffixLen),
+			expect(s1.slice(s1.length - suffixLen)).toBe(
+				s2.slice(s2.length - suffixLen),
 			);
 			if (suffixLen < s1.length && suffixLen < s2.length) {
 				expect(s1[s1.length - suffixLen - 1]).not.toBe(
@@ -48,9 +48,7 @@ describe("Myers Fuzzing", () => {
 			expect(ai).toBeGreaterThanOrEqual(0);
 			expect(bj).toBeGreaterThanOrEqual(0);
 			expect(size).toBeGreaterThanOrEqual(0);
-			expect(s1.substring(ai, ai + size)).toBe(
-				s2.substring(bj, bj + size),
-			);
+			expect(s1.slice(ai, ai + size)).toBe(s2.slice(bj, bj + size));
 		}
 
 		// Structural Invariants: Opcodes
@@ -69,8 +67,8 @@ describe("Myers Fuzzing", () => {
 			lastEndB = chunk.endB;
 
 			if (chunk.tag === "equal") {
-				expect(s1.substring(chunk.startA, chunk.endA)).toBe(
-					s2.substring(chunk.startB, chunk.endB),
+				expect(s1.slice(chunk.startA, chunk.endA)).toBe(
+					s2.slice(chunk.startB, chunk.endB),
 				);
 			} else {
 				// Non-equal segments should not be identical (though they could share substrings)
@@ -101,8 +99,8 @@ describe("Myers Fuzzing", () => {
 		(data: Buffer) => {
 			const str = data.toString();
 			const mid = Math.floor(str.length / 2);
-			const s1 = str.substring(0, mid);
-			const s2 = str.substring(mid);
+			const s1 = str.slice(0, mid);
+			const s2 = str.slice(mid);
 
 			const matcher = new MyersSequenceMatcher<string>(null, s1, s2);
 			verifyMatcher(matcher, s1, s2);
@@ -114,8 +112,8 @@ describe("Myers Fuzzing", () => {
 		(data: Buffer) => {
 			const str = data.toString();
 			const mid = Math.floor(str.length / 2);
-			const s1 = str.substring(0, mid);
-			const s2 = str.substring(mid);
+			const s1 = str.slice(0, mid);
+			const s2 = str.slice(mid);
 
 			const matcher = new InlineMyersSequenceMatcher<string>(
 				null,
@@ -141,8 +139,8 @@ describe("Myers Fuzzing", () => {
 
 			const remaining = data.slice(offset).toString();
 			const mid = Math.floor(remaining.length / 2);
-			const s1 = remaining.substring(0, mid);
-			const s2 = remaining.substring(mid);
+			const s1 = remaining.slice(0, mid);
+			const s2 = remaining.slice(mid);
 
 			// Clamp sync points to string lengths to avoid out of bounds in slice
 			const clampedSyncPoints: [number, number][] = syncPoints

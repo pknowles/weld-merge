@@ -148,59 +148,52 @@ describe("autoMergeAll command error propagation (VS Code host)", () => {
 		);
 		const workspaceUri = workspaceFolder.uri;
 
-		// extensions.getExtension() returns a NEW object each call, so we must
-		// patch extensions.getExtension itself to intercept the git extension.
+		// Patch ext.exports.getAPI directly — ext.exports is shared across all
+		// calls to extensions.getExtension, so this survives wrapper churn and
+		// can be cleanly restored in finally (unlike patching getExtension itself).
 		const conflictUri = Uri.joinPath(workspaceUri, "tracked.txt");
 		const changeEmitter = new EventEmitter<void>();
 
 		let injectedFailureCalls = 0;
-		let getExtensionCalls = 0;
 		const getRepositoryCalls: string[] = [];
 
-		const originalGetExtension = extensions.getExtension.bind(extensions);
-		const extAny = extensions as {
-			getExtension: typeof extensions.getExtension;
+		const gitExt = extensions.getExtension("vscode.git");
+		assert.ok(gitExt, "Git extension must be available");
+		const origGetAPI = gitExt.exports.getAPI.bind(gitExt.exports);
+
+		const mockRepo = {
+			rootUri: workspaceUri,
+			state: {
+				mergeChanges: [{ uri: conflictUri }],
+				onDidChange: changeEmitter.event,
+			},
+			show: (): Promise<string> => {
+				injectedFailureCalls++;
+				return Promise.reject(
+					new Error("forced repository.show failure"),
+				);
+			},
+			getCommit: () => Promise.reject(new Error("not used")),
+			getMergeBase: () => Promise.reject(new Error("not used")),
+			add: () => Promise.reject(new Error("not used")),
 		};
-		extAny.getExtension = ((id: string) => {
-			getExtensionCalls++;
-			const ext = originalGetExtension(id);
-			if (id === "vscode.git" && ext) {
-				const origGetAPI = ext.exports.getAPI.bind(ext.exports);
-				ext.exports.getAPI = (version: number) => {
-					const realApi = origGetAPI(version);
-					const origGetRepo = realApi.getRepository.bind(realApi);
-					realApi.getRepository = (uri: Uri) => {
-						getRepositoryCalls.push(uri.toString());
-						if (uri.toString() === workspaceUri.toString()) {
-							return {
-								rootUri: workspaceUri,
-								state: {
-									mergeChanges: [{ uri: conflictUri }],
-									onDidChange: changeEmitter.event,
-								},
-								show: (): Promise<string> => {
-									injectedFailureCalls++;
-									return Promise.reject(
-										new Error(
-											"forced repository.show failure",
-										),
-									);
-								},
-								getCommit: () =>
-									Promise.reject(new Error("not used")),
-								getMergeBase: () =>
-									Promise.reject(new Error("not used")),
-								add: () =>
-									Promise.reject(new Error("not used")),
-							};
-						}
-						return origGetRepo(uri);
-					};
-					return realApi;
-				};
-			}
-			return ext;
-		}) as typeof extensions.getExtension;
+
+		gitExt.exports.getAPI = (version: number) => {
+			const realApi = origGetAPI(version);
+			Object.defineProperty(realApi, "repositories", {
+				get: () => [mockRepo],
+				configurable: true,
+			});
+			const origGetRepo = realApi.getRepository.bind(realApi);
+			realApi.getRepository = (uri: Uri) => {
+				getRepositoryCalls.push(uri.toString());
+				if (uri.toString() === workspaceUri.toString()) {
+					return mockRepo;
+				}
+				return origGetRepo(uri);
+			};
+			return realApi;
+		};
 
 		try {
 			let commandError: unknown;
@@ -213,7 +206,6 @@ describe("autoMergeAll command error propagation (VS Code host)", () => {
 			const debugInfo = [
 				`workspaceFolders: ${JSON.stringify((workspace.workspaceFolders ?? []).map((f) => f.uri.toString()))}`,
 				`workspaceUri: ${workspaceUri.toString()}`,
-				`getExtensionCalls: ${getExtensionCalls}`,
 				`getRepository calls: [${getRepositoryCalls.join(", ")}]`,
 				`injectedFailureCalls: ${injectedFailureCalls}`,
 				`commandError: ${commandError instanceof Error ? commandError.message : String(commandError)}`,
@@ -231,7 +223,7 @@ describe("autoMergeAll command error propagation (VS Code host)", () => {
 				`Error didn't match.\n${debugInfo}`,
 			);
 		} finally {
-			extAny.getExtension = originalGetExtension;
+			gitExt.exports.getAPI = origGetAPI;
 			changeEmitter.dispose();
 		}
 	});

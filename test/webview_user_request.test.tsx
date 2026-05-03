@@ -75,9 +75,9 @@ jest.mock(
 
 			if (editorRef.current) {
 				const val =
-					props.value !== undefined
-						? props.value
-						: props.defaultValue;
+					props.value === undefined
+						? props.defaultValue
+						: props.value;
 				if (val !== undefined) {
 					editorRef.current.setValue(val);
 				}

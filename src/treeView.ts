@@ -157,33 +157,14 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 	}
 
 	private async _getRootChildren(): Promise<ConflictedTreeItem[]> {
-		const workspaceFolders = workspace.workspaceFolders;
-		if (!workspaceFolders || workspaceFolders.length === 0) {
-			return [];
-		}
-
-		const gitApi = await getGitApi();
-		const repositoriesByRootUri = new Map<string, GitApiRepository>();
-		for (const workspaceFolder of workspaceFolders) {
-			if (!isSupportedScheme(workspaceFolder.uri)) {
-				continue;
-			}
-			const repository = gitApi.getRepository(workspaceFolder.uri);
-			if (!repository) {
-				continue;
-			}
-			repositoriesByRootUri.set(
-				repository.rootUri.toString(),
-				repository,
-			);
-		}
-		if (repositoriesByRootUri.size === 0) {
+		const repositories = getGitApi().repositories.filter((r) =>
+			isSupportedScheme(r.rootUri),
+		);
+		if (repositories.length === 0) {
 			return [];
 		}
 		const perRepositoryItems = await Promise.all(
-			[...repositoriesByRootUri.values()].map((repository) =>
-				this._buildItemsForRepository(repository),
-			),
+			repositories.map((r) => this._buildItemsForRepository(r)),
 		);
 		return perRepositoryItems.flat();
 	}
@@ -323,4 +304,4 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 	}
 }
 
-export { GitFile, ErrorTreeItem, ConflictedFilesProvider };
+export { ConflictedFilesProvider, ErrorTreeItem, GitFile };

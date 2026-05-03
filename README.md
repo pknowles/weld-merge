@@ -1,8 +1,9 @@
 # Weld Merge — A Meld-Style 3-Way Git Merge Tool for VS Code
 
 [![Install](https://img.shields.io/badge/VS%20Code-Install%20Extension-blue?logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=pknowles.meld-auto-merge)
-![Installs](https://img.shields.io/visual-studio-marketplace/i/pknowles.meld-auto-merge?style=flat-square)
-![Rating](https://img.shields.io/visual-studio-marketplace/r/pknowles.meld-auto-merge)
+![OpenVSX Installs](https://img.shields.io/open-vsx/dt/pknowles/meld-auto-merge?label=Open%20VSX%20Installs)
+![VSMarketplace Installs](https://vsmarketplacebadges.dev/installs/pknowles.meld-auto-merge.svg?label=VS%20Marketplace%20Installs)
+![Rating](https://vsmarketplacebadges.dev/rating/pknowles.meld-auto-merge.svg)
 ![Build](https://github.com/pknowles/weld-merge/actions/workflows/ci.yml/badge.svg)
 ![Verified](https://img.shields.io/badge/publisher-verified-brightgreen)
 ![License](https://img.shields.io/github/license/pknowles/meld)

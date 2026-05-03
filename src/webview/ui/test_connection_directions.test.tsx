@@ -112,7 +112,7 @@ describe("Connection Directions and Bounds Checking", () => {
 					rMax: 50,
 					reversed: false,
 				}),
-			).toThrowError(OUT_OF_BOUNDS_REGEX);
+			).toThrow(OUT_OF_BOUNDS_REGEX);
 		});
 	});
 

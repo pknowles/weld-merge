@@ -101,7 +101,7 @@ const CommitHover: FC<{
 					fontFamily: "var(--vscode-editor-font-family, monospace)",
 				}}
 			>
-				{commit.hash.substring(0, 8)}
+				{commit.hash.slice(0, 8)}
 			</span>
 			<button
 				type="button"

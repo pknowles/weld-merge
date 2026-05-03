@@ -483,7 +483,6 @@ export const App: FC = () => {
 	return (
 		<ErrorBoundary>
 			<MeldRoot isConflicted={uiState.isConflicted}>
-				{/* biome-ignore lint/performance: This is React, not Solid */}
 				{[0, 1, 2, 3, 4].map((idx) => (
 					<MeldPane
 						key={idx}

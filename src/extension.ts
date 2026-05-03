@@ -2,6 +2,7 @@
 
 import {
 	commands,
+	type Disposable,
 	type ExtensionContext,
 	ProgressLocation,
 	Range,
@@ -99,97 +100,46 @@ function notifyIfNewConflicts(repoKey: string, repository: GitApiRepository) {
 	lastConflictedFilesPerRepo.set(repoKey, new Set(currentConflicts));
 }
 
-interface TrackedRepository {
-	repoKey: string;
-	rootUri: Uri;
-	repository: GitApiRepository;
-}
-
-function getTrackedRepositories(): TrackedRepository[] {
-	const workspaceFolders = workspace.workspaceFolders;
-	if (!workspaceFolders) {
-		return [];
-	}
-	const gitApi = getGitApi();
-	const repositoriesByRootUri = new Map<string, TrackedRepository>();
-	for (const workspaceFolder of workspaceFolders) {
-		if (!isSupportedScheme(workspaceFolder.uri)) {
-			continue;
-		}
-		const repository = gitApi.getRepository(workspaceFolder.uri);
-		if (!repository) {
-			continue;
-		}
-		repositoriesByRootUri.set(repository.rootUri.toString(), {
-			repoKey: repository.rootUri.toString(),
-			rootUri: repository.rootUri,
-			repository,
-		});
-	}
-	return [...repositoriesByRootUri.values()];
-}
-
-function registerConflictWatchersForRepository(
-	context: ExtensionContext,
+async function refreshRepo(
+	repo: GitApiRepository,
 	conflictedFilesProvider: ConflictedFilesProvider,
-	trackedRepository: TrackedRepository,
-): void {
-	const doRefresh = async () => {
-		try {
-			conflictedFilesProvider.refresh();
-			await notifyIfNewConflicts(
-				trackedRepository.repoKey,
-				trackedRepository.repository,
-			);
-			const stateKey =
-				await MeldCustomEditorProvider.getCurrentConflictStateKey(
-					trackedRepository.repository,
-				);
-			MeldCustomEditorProvider.onConflictStateChanged.fire({
-				repoUri: trackedRepository.rootUri,
-				stateKey,
-			});
-		} catch (error: unknown) {
-			getWeldLogChannel().error(
-				`Refresh watcher failed for ${trackedRepository.rootUri}: ${getErrorMessage(error)}`,
-			);
-		}
-	};
+): Promise<void> {
+	conflictedFilesProvider.refresh();
+	await notifyIfNewConflicts(repo.rootUri.toString(), repo);
+	const stateKey =
+		await MeldCustomEditorProvider.getCurrentConflictStateKey(repo);
+	MeldCustomEditorProvider.onConflictStateChanged.fire({
+		repoUri: repo.rootUri,
+		stateKey,
+	});
+}
 
-	const RefreshDebounceMs = 50;
-	let refreshTimer: NodeJS.Timeout | null = null;
-	const refresh = () => {
-		if (refreshTimer !== null) {
-			clearTimeout(refreshTimer);
-		}
-		refreshTimer = setTimeout(() => {
-			refreshTimer = null;
-			doRefresh().catch((error: unknown) => {
-				getWeldLogChannel().error(
-					`Refresh watcher failed for ${trackedRepository.rootUri}: ${getErrorMessage(error)}`,
-				);
-			});
-		}, RefreshDebounceMs);
+function watchRepo(
+	repo: GitApiRepository,
+	conflictedFilesProvider: ConflictedFilesProvider,
+): Disposable {
+	let timer: NodeJS.Timeout | undefined;
+	const scheduleRefresh = () => {
+		clearTimeout(timer);
+		timer = setTimeout(() => {
+			timer = undefined;
+			refreshRepo(repo, conflictedFilesProvider).catch(
+				(error: unknown) => {
+					getWeldLogChannel().error(
+						`Refresh failed for ${repo.rootUri}: ${getErrorMessage(error)}`,
+					);
+				},
+			);
+		}, 50);
 	};
-	context.subscriptions.push({
+	scheduleRefresh();
+	const sub = repo.state.onDidChange(scheduleRefresh);
+	return {
 		dispose: () => {
-			if (refreshTimer !== null) {
-				clearTimeout(refreshTimer);
-				refreshTimer = null;
-			}
+			clearTimeout(timer);
+			sub.dispose();
 		},
-	});
-
-	const stateChangeSubscription =
-		trackedRepository.repository.state.onDidChange(() => {
-			refresh();
-		});
-	context.subscriptions.push(stateChangeSubscription);
-	doRefresh().catch((error: unknown) => {
-		getWeldLogChannel().error(
-			`Initial watcher refresh failed for ${trackedRepository.rootUri}: ${getErrorMessage(error)}`,
-		);
-	});
+	};
 }
 
 async function getGitFileContent(
@@ -364,16 +314,16 @@ interface ConflictedFileEntry {
 }
 
 function collectConflictedFilesAcrossRepositories(): ConflictedFileEntry[] {
-	const trackedRepositories = getTrackedRepositories();
-	const perRepositoryEntries = trackedRepositories.map((tracked) => {
-		const conflictedFiles = getConflictedFiles(tracked.repository);
-		return conflictedFiles.map<ConflictedFileEntry>((uri) => ({
-			repository: tracked.repository,
-			rootUri: tracked.rootUri,
+	const repos = getGitApi().repositories.filter((r) =>
+		isSupportedScheme(r.rootUri),
+	);
+	return repos.flatMap((repo) =>
+		getConflictedFiles(repo).map<ConflictedFileEntry>((uri) => ({
+			repository: repo,
+			rootUri: repo.rootUri,
 			uri,
-		}));
-	});
-	return perRepositoryEntries.flat();
+		})),
+	);
 }
 
 // Auto-merges every conflicted file in every tracked repository. Logs every
@@ -628,23 +578,49 @@ function registerCommands(
 	);
 }
 
-async function setupWatchers(
+function setupGitRepoWatchers(
 	context: ExtensionContext,
 	conflictedFilesProvider: ConflictedFilesProvider,
-): Promise<void> {
-	const trackedRepositories = await getTrackedRepositories();
-	for (const trackedRepository of trackedRepositories) {
-		registerConflictWatchersForRepository(
-			context,
-			conflictedFilesProvider,
-			trackedRepository,
-		);
+): void {
+	const gitApi = getGitApi();
+	const repoWatchers = new Map<string, Disposable>();
+
+	const onRepoOpened = (repo: GitApiRepository) => {
+		if (!isSupportedScheme(repo.rootUri)) {
+			return;
+		}
+		const key = repo.rootUri.toString();
+		if (repoWatchers.has(key)) {
+			return;
+		}
+		repoWatchers.set(key, watchRepo(repo, conflictedFilesProvider));
+	};
+
+	const onRepoClosed = (repo: GitApiRepository) => {
+		const key = repo.rootUri.toString();
+		repoWatchers.get(key)?.dispose();
+		repoWatchers.delete(key);
+		lastConflictedFilesPerRepo.delete(key);
+		conflictedFilesProvider.refresh();
+	};
+
+	for (const repo of gitApi.repositories) {
+		onRepoOpened(repo);
 	}
 
 	context.subscriptions.push(
-		workspace.onDidSaveTextDocument(() => {
-			conflictedFilesProvider.refresh();
-		}),
+		gitApi.onDidOpenRepository(onRepoOpened),
+		gitApi.onDidCloseRepository(onRepoClosed),
+		workspace.onDidSaveTextDocument(() =>
+			conflictedFilesProvider.refresh(),
+		),
+		{
+			dispose: () => {
+				for (const d of repoWatchers.values()) {
+					d.dispose();
+				}
+			},
+		},
 	);
 }
 
@@ -657,15 +633,13 @@ export interface WeldExtensionApi {
 	setInitialConflictContent: typeof MeldCustomEditorProvider.setInitialConflictContent;
 }
 
-export async function activate(
-	context: ExtensionContext,
-): Promise<WeldExtensionApi> {
+export function activate(context: ExtensionContext): WeldExtensionApi {
 	const logChannel = initializeWeldLogChannel();
 	context.subscriptions.push(logChannel);
 	const conflictedFilesProvider = new ConflictedFilesProvider();
 	registerViews(context, conflictedFilesProvider);
 	registerCommands(context, conflictedFilesProvider);
-	await setupWatchers(context, conflictedFilesProvider);
+	setupGitRepoWatchers(context, conflictedFilesProvider);
 	return {
 		setInitialConflictContent:
 			MeldCustomEditorProvider.setInitialConflictContent,

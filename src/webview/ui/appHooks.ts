@@ -271,7 +271,7 @@ export function usePreviousNonNull<T>(value: T | null): T | null {
 			ref.current = value;
 		}
 	}, [value]);
-	return value !== null ? value : ref.current;
+	return value === null ? ref.current : value;
 }
 
 export function useCommitModelUpdate(deps: CommitDeps) {

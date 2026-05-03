@@ -4,14 +4,12 @@ import process from "node:process";
 import { Bench } from "tinybench";
 import { Differ } from "../../src/matchers/diffutil.ts";
 import { Merger } from "../../src/matchers/merge.ts";
+import { RESULTS_DIR } from "./config.ts";
 import { parseProfile } from "./parser.ts";
 import { withProfiling } from "./profiler.ts";
 
 async function runLogicBenchmark() {
-	const resultsDir =
-		/* biome-ignore lint/complexity/useLiteralKeys: environment variable access */
-		process.env["BENCH_RESULTS_DIR"] ||
-		path.resolve(process.cwd(), "test", "benchmarking", "results");
+	const resultsDir = RESULTS_DIR;
 	if (!fs.existsSync(resultsDir)) {
 		fs.mkdirSync(resultsDir, { recursive: true });
 	}

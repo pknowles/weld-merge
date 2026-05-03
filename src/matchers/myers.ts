@@ -516,7 +516,7 @@ export class InlineMyersSequenceMatcher<T> extends MyersSequenceMatcher<T> {
 			const aSet = new Set<string>();
 			for (let i = 0; i < aSeq.length - 2; i++) {
 				if (typeof aSeq === "string") {
-					aSet.add(aSeq.substring(i, i + 3));
+					aSet.add(aSeq.slice(i, i + 3));
 				} else {
 					aSet.add(aSeq.slice(i, i + 3).join(","));
 				}
@@ -529,7 +529,7 @@ export class InlineMyersSequenceMatcher<T> extends MyersSequenceMatcher<T> {
 			for (let i = 2; i < bSeq.length; i++) {
 				let triplet: string;
 				if (typeof bSeq === "string") {
-					triplet = bSeq.substring(i - 2, i + 1);
+					triplet = bSeq.slice(i - 2, i + 1);
 				} else {
 					triplet = bSeq.slice(i - 2, i + 1).join(",");
 				}

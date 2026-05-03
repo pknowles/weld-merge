@@ -34,6 +34,9 @@ interface GitApi {
 	git: {
 		path: string;
 	};
+	repositories: GitApiRepository[];
+	onDidOpenRepository: Event<GitApiRepository>;
+	onDidCloseRepository: Event<GitApiRepository>;
 	getRepository(uri: Uri): GitApiRepository | null;
 	openRepository(uri: Uri): Promise<GitApiRepository | null>;
 }
@@ -134,5 +137,5 @@ async function resolveRepoContext(uri: Uri): Promise<RepoContext | null> {
 	};
 }
 
-export { getGitApi, isSupportedScheme, fileDisplayString, resolveRepoContext };
 export type { GitApiRepository, RepoContext };
+export { fileDisplayString, getGitApi, isSupportedScheme, resolveRepoContext };
