@@ -11,6 +11,7 @@ import {
 	workspace,
 } from "vscode";
 import {
+	type ConflictState,
 	getConflictedFiles,
 	getGitDirUri,
 	readConflictState,
@@ -107,7 +108,23 @@ class ErrorTreeItem extends TreeItem {
 	}
 }
 
-type ConflictedTreeItem = GitFile | ErrorTreeItem;
+// Persistent, in-tree surface for a non-error condition that the user should
+// notice. Used when the repository is in a conflict operation but the Git API
+// reports no merge changes (e.g. stale state on remote hosts), so the tree
+// would otherwise be silently empty. Carries no command / uri: clicking does
+// nothing, hovering shows the full diagnostic.
+class WarningTreeItem extends TreeItem {
+	override readonly contextValue = "weldWarning";
+
+	constructor(label: string, description: string, tooltip: string) {
+		super(label, TreeItemCollapsibleState.None);
+		this.iconPath = new ThemeIcon("warning");
+		this.description = description;
+		this.tooltip = tooltip;
+	}
+}
+
+type ConflictedTreeItem = GitFile | ErrorTreeItem | WarningTreeItem;
 
 class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 	private readonly _onDidChangeTreeData: EventEmitter<
@@ -180,23 +197,34 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 		repository: GitApiRepository,
 	): Promise<ConflictedTreeItem[]> {
 		try {
-			const unmergedFiles = await this._getUnmergedFiles(repository);
+			const conflictState = await readConflictState(repository);
+			const unmergedFiles = getConflictedFiles(repository);
 			const conflictedItems = this._createConflictedItems(
 				unmergedFiles,
 				repository.rootUri,
 			);
-			const originallyConflictedUris =
-				await this._getOriginallyConflicted(repository);
-			const unmergedFilesStrings = new Set(
-				unmergedFiles.map((f) => f.toString()),
-			);
-			const resolvedFiles = originallyConflictedUris.filter(
-				(f) => !unmergedFilesStrings.has(f.toString()),
+			const resolvedFileUris = await this._getResolvedFileUris(
+				repository,
+				conflictState,
+				unmergedFiles,
 			);
 			const resolvedItems = this._createResolvedItems(
-				resolvedFiles,
+				resolvedFileUris,
 				repository.rootUri,
 			);
+			if (
+				conflictState &&
+				conflictedItems.length === 0 &&
+				resolvedItems.length === 0
+			) {
+				return [
+					new WarningTreeItem(
+						`No conflicts detected during ${conflictState.operation}`,
+						"Git API mismatch",
+						"Git reports a conflict operation in progress but VS Code's Git API returned no merge changes. Try 'Git: Refresh' from the command palette.",
+					),
+				];
+			}
 			return [...conflictedItems, ...resolvedItems];
 		} catch (error: unknown) {
 			return [
@@ -237,20 +265,12 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 		);
 	}
 
-	private _getUnmergedFiles(repository: GitApiRepository): Uri[] {
-		return getConflictedFiles(repository);
-	}
-
-	private async _isInConflictState(
+	private async _getResolvedFileUris(
 		repository: GitApiRepository,
-	): Promise<boolean> {
-		return (await readConflictState(repository)) !== undefined;
-	}
-
-	private async _getOriginallyConflicted(
-		repository: GitApiRepository,
+		conflictState: ConflictState | undefined,
+		unmergedFiles: Uri[],
 	): Promise<Uri[]> {
-		if (!(await this._isInConflictState(repository))) {
+		if (!conflictState) {
 			return [];
 		}
 
@@ -259,9 +279,12 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 		const mergeMsgBytes = await workspace.fs.readFile(mergeMsgPath);
 		const msg = new TextDecoder("utf-8").decode(mergeMsgBytes);
 		const relativePaths = this._parseMergeMsgConflicts(msg.split("\n"));
-		return relativePaths.map((path) =>
-			this._createFileUri(repository.rootUri, path),
+		const unmergedFileStrings = new Set(
+			unmergedFiles.map((f) => f.toString()),
 		);
+		return relativePaths
+			.map((path) => this._createFileUri(repository.rootUri, path))
+			.filter((fileUri) => !unmergedFileStrings.has(fileUri.toString()));
 	}
 
 	private _parseMergeMsgConflicts(lines: string[]): string[] {

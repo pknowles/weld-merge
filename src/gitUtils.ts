@@ -204,3 +204,4 @@ export {
 	getUnresolvedReasons,
 	readConflictState,
 };
+export type { ConflictState };

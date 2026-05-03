@@ -93,7 +93,7 @@ describe("error propagation and tree UI errors (VS Code host)", () => {
 
 	// Real-code exercise of the per-repository catch: a real repository is
 	// placed in merge conflict state (MERGE_HEAD present) but MERGE_MSG is
-	// deliberately not written. _getOriginallyConflicted will then hit a real
+	// deliberately not written. _getResolvedFileUris will then hit a real
 	// FileNotFound from workspace.fs.readFile and the catch in
 	// _buildItemsForRepository must surface a single ErrorTreeItem for that
 	// repo. No prototype mocks: the failure, the catch, and the error-item
