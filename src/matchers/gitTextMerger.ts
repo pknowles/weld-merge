@@ -19,21 +19,21 @@ import type { DiffChunk } from "./myers.ts";
 const CONFLICT_MARKER_LINES = 4;
 
 export class GitTextMerger extends Merger {
-	*merge3FilesGit(markConflicts = true) {
+	merge3FilesGit(markConflicts = true): string {
 		this.differ.unresolved = [];
 		const mergedText: string[] = [];
 
 		const sequences = this._getValidTexts();
 		if (!sequences) {
-			yield "";
-			return;
+			throw new Error(
+				"GitTextMerger.merge3FilesGit called before initialize()",
+			);
 		}
 		const [_, t1] = sequences;
 
 		let state = { lastLine: 0, mergedLine: 0 };
 
 		for (const change of this.differ.allChanges()) {
-			yield null;
 			state = this._processChange({
 				change,
 				state,
@@ -45,7 +45,7 @@ export class GitTextMerger extends Merger {
 
 		this._appendRemainingLines(state.lastLine, t1, mergedText);
 
-		yield mergedText.join("\n");
+		return mergedText.join("\n");
 	}
 
 	private _getValidTexts(): [string[], string[], string[]] | null {

@@ -126,22 +126,8 @@ const runMerge = (
 	// This matches Meld's _merge_files() in filediff.py
 	const merger = new Merger();
 	const sequences = [localLines, baseLines, incomingLines];
-	const initGen = merger.initialize(sequences, sequences);
-	let val = initGen.next();
-	while (!val.done) {
-		val = initGen.next();
-	}
-
-	const mergeGen = merger.merge3Files(true);
-	let res = mergeGen.next();
-	while (!res.done) {
-		res = mergeGen.next();
-	}
-	const result = res.value;
-	if (typeof result !== "string") {
-		throw new Error("Merge engine failed to produce a result string.");
-	}
-	return result;
+	merger.initialize(sequences, sequences);
+	return merger.merge3Files(true);
 };
 
 const runDiff = (
@@ -157,11 +143,7 @@ const runDiff = (
 	// The three-way _auto_merge logic naturally produces 'conflict' tags.
 	const differ = new Differ();
 	const diffSequences = [localLines, workingLines, incomingLines];
-	const diffInit = differ.setSequencesIter(diffSequences);
-	let step = diffInit.next();
-	while (!step.done) {
-		step = diffInit.next();
-	}
+	differ.setSequences(diffSequences);
 
 	// Extract from _merge_cache, not differ.diffs.
 	// differ.diffs is raw Myers output (replace/insert/delete/equal only).
@@ -324,13 +306,7 @@ async function buildBaseDiffPayload(
 	const seqB = side === "left" ? targetLines : baseLines;
 
 	const matcher = new MyersSequenceMatcher(null, seqA, seqB);
-	const work = matcher.initialize();
-	while (true) {
-		const next = work.next();
-		if (next.done) {
-			break;
-		}
-	}
+	matcher.initialize();
 
 	const diffs = matcher.getDifferenceOpcodes();
 

@@ -12,10 +12,7 @@ describe("More Regression Tests: diffutil & myers", () => {
 			[2, 2], // Sync on "C"
 			[4, 4], // Sync on "E"
 		]);
-		const it = matcher.initialize();
-		for (const _ of it) {
-			// consume
-		}
+		matcher.initialize();
 
 		const opcodes = matcher.getOpcodes();
 		expect(opcodes).toBeDefined();
@@ -24,10 +21,7 @@ describe("More Regression Tests: diffutil & myers", () => {
 
 	it("Differ clear() resets state", () => {
 		const diff = new Differ();
-		const it = diff.setSequencesIter([["A"], ["B"]]);
-		for (const _ of it) {
-			/* consume */
-		}
+		diff.setSequences([["A"], ["B"]]);
 		expect(diff.diffs[0].length).toBeGreaterThan(0);
 		diff.clear();
 		expect(diff.diffs[0].length).toBe(0);
@@ -37,14 +31,11 @@ describe("More Regression Tests: diffutil & myers", () => {
 		const diff = new Differ();
 		const p: [() => number, () => number] = [() => 2, () => 2];
 		diff.syncPoints = [[p]];
-		const it = diff.setSequencesIter([
+		diff.setSequences([
 			["A", "B", "C"],
 			["A", "X", "C"],
 			["A", "Y", "C"],
 		]);
-		for (const _ of it) {
-			/* consume */
-		}
 		expect(diff.diffs[0]).toBeDefined();
 	});
 });

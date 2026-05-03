@@ -318,24 +318,9 @@ async function performAutoMerge(
 	const remoteLines = splitLines(remoteContent);
 
 	const sequences = [localLines, baseLines, remoteLines];
-	const initGen = merger.initialize(sequences, sequences);
-	while (!initGen.next().done) {
-		/* iterate */
-	}
+	merger.initialize(sequences, sequences);
 
-	const mergeGen = merger.merge3FilesGit(true);
-	let resMerge = mergeGen.next();
-	while (!resMerge.done) {
-		resMerge = mergeGen.next();
-	}
-	const finalMergedText =
-		resMerge.value !== undefined ? (resMerge.value as string) : null;
-
-	if (finalMergedText === null) {
-		throw new Error(
-			`Merge engine produced no text for ${repoContext.uri}.`,
-		);
-	}
+	const finalMergedText = merger.merge3FilesGit(true);
 
 	const document = await workspace.openTextDocument(documentUri);
 	const fullRange = new Range(

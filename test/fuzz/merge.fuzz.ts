@@ -34,15 +34,8 @@ describe("Merger Fuzzing", () => {
 
 		function runMerge(local: string[][], remote: string[][]) {
 			const merger = new Merger();
-			for (const _ of merger.initialize(local, remote)) {
-				/* consume */
-			}
-			// Merger.merge3Files yields nulls and returns the merged string.
-			// To check chunks, we can iterate over differ.allChanges()
-			const gen = merger.merge3Files(true);
-			while (!gen.next().done) {
-				/* consume nulls */
-			}
+			merger.initialize(local, remote);
+			merger.merge3Files(true);
 
 			// Validate structural invariants on the differ's changes
 			for (const change of merger.differ.allChanges()) {
@@ -65,13 +58,8 @@ describe("Merger Fuzzing", () => {
 		// merge(A, A, A) -> check if all chunks are 'equal'
 		const identityMerger = new Merger();
 		const sameTexts = [texts[0]!, texts[0]!, texts[0]!];
-		for (const _ of identityMerger.initialize(sameTexts, sameTexts)) {
-			/* consume */
-		}
-		const identityGen = identityMerger.merge3Files(true);
-		while (!identityGen.next().done) {
-			/* consume */
-		}
+		identityMerger.initialize(sameTexts, sameTexts);
+		identityMerger.merge3Files(true);
 		for (const change of identityMerger.differ.allChanges()) {
 			for (const chunk of change) {
 				if (chunk) {
@@ -84,13 +72,8 @@ describe("Merger Fuzzing", () => {
 		if (texts[0] && texts[1]) {
 			const convMerger = new Merger();
 			const convTexts = [texts[0]!, texts[1]!, texts[0]!];
-			for (const _ of convMerger.initialize(convTexts, convTexts)) {
-				/* consume */
-			}
-			const convGen = convMerger.merge3Files(true);
-			while (!convGen.next().done) {
-				/* consume */
-			}
+			convMerger.initialize(convTexts, convTexts);
+			convMerger.merge3Files(true);
 			for (const change of convMerger.differ.allChanges()) {
 				const [c0, c1] = change;
 				if (c0 && c1) {

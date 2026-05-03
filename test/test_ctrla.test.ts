@@ -19,10 +19,7 @@ describe("Ctrl+A delete", () => {
 		const oldRight = ["A", "B", "X"];
 
 		const differ = new Differ();
-		const stepIter = differ.setSequencesIter([oldLeft, oldMid, oldRight]);
-		for (const _step of stepIter) {
-			// consume iterator
-		}
+		differ.setSequences([oldLeft, oldMid, oldRight]);
 
 		const newMid = [""]; // Ctrl+A, Delete
 

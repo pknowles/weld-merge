@@ -463,15 +463,11 @@ const loadTestData = (
 	remote = "SAME\nB2\nSAME\nR4\nSAME",
 ) => {
 	const differ = new Differ();
-	const iter = differ.setSequencesIter([
+	differ.setSequences([
 		splitLines(local),
 		splitLines(base),
 		splitLines(remote),
 	]);
-	let s = iter.next();
-	while (!s.done) {
-		s = iter.next();
-	}
 
 	const allChanges = differ.allChanges();
 	const realDiffs = [

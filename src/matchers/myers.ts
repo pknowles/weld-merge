@@ -51,9 +51,7 @@ export class MyersSequenceMatcher<T> {
 
 	getMatchingBlocks(): [number, number, number][] {
 		if (this.matchingBlocks === null) {
-			for (const _ of this.initialize()) {
-				// consume generator
-			}
+			this.initialize();
 		}
 		return this.matchingBlocks as [number, number, number][];
 	}
@@ -327,7 +325,7 @@ export class MyersSequenceMatcher<T> {
 		}
 	}
 
-	*initialize(): Generator<number | null, void, unknown> {
+	initialize(): void {
 		const [a, b] = this.preprocess();
 		const m = a.length;
 		const n = b.length;
@@ -343,9 +341,6 @@ export class MyersSequenceMatcher<T> {
 			let p = -1;
 			while (true) {
 				p += 1;
-				if (p % 100 === 0) {
-					yield null;
-				}
 
 				this._findVerticalSnakes(a, b, {
 					fp,
@@ -374,7 +369,6 @@ export class MyersSequenceMatcher<T> {
 		}
 		this.buildMatchingBlocks(lastsnake);
 		this.postprocess();
-		yield 1;
 	}
 
 	protected _findVerticalSnakes(
@@ -589,20 +583,19 @@ export class SyncPointMyersSequenceMatcher<T> extends MyersSequenceMatcher<T> {
 		this.syncpoints = syncpoints;
 	}
 
-	override *initialize(): Generator<number | null, void, unknown> {
+	override initialize(): void {
 		if (!this.syncpoints || this.syncpoints.length === 0) {
-			yield* super.initialize();
+			super.initialize();
 		} else {
 			const chunks = this._prepareChunks();
 			this.splitMatchingBlocks = [];
 			this.matchingBlocks = [];
 
 			for (const [chunkAi, chunkBi, a, b] of chunks) {
-				yield* this._processChunk(chunkAi, chunkBi, a, b);
+				this._processChunk(chunkAi, chunkBi, a, b);
 			}
 
 			this.matchingBlocks.push([this.a.length, this.b.length, 0]);
-			yield 1;
 		}
 	}
 
@@ -621,15 +614,15 @@ export class SyncPointMyersSequenceMatcher<T> extends MyersSequenceMatcher<T> {
 		return chunks;
 	}
 
-	protected *_processChunk(
+	protected _processChunk(
 		chunkAi: number,
 		chunkBi: number,
 		a: T[] | string,
 		b: T[] | string,
-	): Generator<number | null, void, unknown> {
+	): void {
 		const matchingBlocks: [number, number, number][] = [];
 		const matcher = new MyersSequenceMatcher<T>(this.isjunk, a, b);
-		yield* matcher.initialize();
+		matcher.initialize();
 
 		const blocks = matcher.getMatchingBlocks();
 		for (let idx = 0; idx < blocks.length - 1; idx++) {

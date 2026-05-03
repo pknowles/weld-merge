@@ -19,10 +19,7 @@ describe("Differ with conflict markers", () => {
 		const oldRight = ["A", "B", "X"];
 
 		const differ = new Differ();
-		const it = differ.setSequencesIter([oldLeft, oldMid, oldRight]);
-		for (const _step of it) {
-			// consume iterator
-		}
+		differ.setSequences([oldLeft, oldMid, oldRight]);
 
 		const newMid = [
 			"A",

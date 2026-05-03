@@ -37,33 +37,15 @@ async function runLogicBenchmark() {
 
 	const bench = new Bench();
 
-	bench.add(`Differ.setSequencesIter (${lineCount / 1000}k lines)`, () => {
+	bench.add(`Differ.setSequences (${lineCount / 1000}k lines)`, () => {
 		const differ = new Differ();
-		const iter = differ.setSequencesIter([linesA, linesB, linesC]);
-		let s = iter.next();
-		while (!s.done) {
-			s = iter.next();
-		}
+		differ.setSequences([linesA, linesB, linesC]);
 	});
 
 	bench.add(`Merger.merge3Files (${lineCount / 1000}k lines)`, () => {
 		const merger = new Merger();
-		// Initialize the merger with data
-		const init = merger.initialize(
-			[linesA, linesB, linesC],
-			[linesA, linesB, linesC],
-		);
-		let r1 = init.next();
-		while (!r1.done) {
-			r1 = init.next();
-		}
-
-		// Run the merge
-		const merge = merger.merge3Files();
-		let r2 = merge.next();
-		while (!r2.done) {
-			r2 = merge.next();
-		}
+		merger.initialize([linesA, linesB, linesC], [linesA, linesB, linesC]);
+		merger.merge3Files();
 	});
 
 	// Use our withProfiling utility which correctly handles the CPU profile
@@ -84,8 +66,7 @@ async function runLogicBenchmark() {
 	const stats = parseProfile(profilePath, "meld");
 	const tasks = bench.tasks;
 	const differTask = tasks.find(
-		(t) =>
-			t.name === `Differ.setSequencesIter (${lineCount / 1000}k lines)`,
+		(t) => t.name === `Differ.setSequences (${lineCount / 1000}k lines)`,
 	);
 	// tinybench task period is in MILLISECONDS.
 	/* biome-ignore lint/suspicious/noExplicitAny: tinybench TaskResult union type issue */

@@ -8,21 +8,10 @@ describe("Merger Integration: Live Editing", () => {
 		const remote = ["const a = 1;\n", "const b = 9;\n", "const c = 3;\n"];
 
 		const merger = new Merger();
-		const initGen = merger.initialize(
-			[local, base, remote],
-			[local, base, remote],
-		);
-		for (const _ of initGen) {
-			/* consume */
-		}
+		merger.initialize([local, base, remote], [local, base, remote]);
 
 		// Baseline: we should have a conflict on line with 'b'
-		const mergeGen1 = merger.merge3Files(true);
-		let res1 = mergeGen1.next();
-		while (!res1.done) {
-			res1 = mergeGen1.next();
-		}
-		const initialMerged = res1.value as string;
+		const initialMerged = merger.merge3Files(true);
 
 		// The conflict marker "(??)" should be present
 		expect(initialMerged).toContain("(??)");
@@ -39,13 +28,8 @@ describe("Merger Integration: Live Editing", () => {
 		// Wait, did we change the number of lines? No, sizeChange is 0.
 		merger.differ.changeSequence(1, 1, 0, [local, newBase, remote]);
 
-		// Re-run the merge generator
-		const mergeGen2 = merger.merge3Files(true);
-		let res2 = mergeGen2.next();
-		while (!res2.done) {
-			res2 = mergeGen2.next();
-		}
-		const finalMerged = res2.value as string;
+		// Re-run the merge
+		const finalMerged = merger.merge3Files(true);
 
 		// The output should incorporate the edits
 		// Because the user edited it manually, depending on how autoMerge handles it,
@@ -60,30 +44,17 @@ describe("Merger Integration: Live Editing", () => {
 		const remote = ["A\n", "D\n", "C\n"];
 
 		const merger = new Merger();
-		const initGen = merger.initialize(
-			[local, base, remote],
-			[local, base, remote],
-		);
-		for (const _ of initGen) {
-			/* consume */
-		}
+		merger.initialize([local, base, remote], [local, base, remote]);
 
 		// Simulate user deleting the whole file (sizeChange = -3)
 		merger.differ.changeSequence(1, 0, -3, [local, [], remote]);
-		const mergeGenDel = merger.merge3Files(true);
-		for (const _ of mergeGenDel) {
-			/* consume */
-		}
+		merger.merge3Files(true);
 
 		// Simulate user pasting 5 lines (sizeChange = +5)
 		const newBase = ["1\n", "2\n", "3\n", "4\n", "5\n"];
 		merger.differ.changeSequence(1, 0, 5, [local, newBase, remote]);
-		const mergeGenAdd = merger.merge3Files(true);
-		let resAdd = mergeGenAdd.next();
-		while (!resAdd.done) {
-			resAdd = mergeGenAdd.next();
-		}
+		const finalMerged = merger.merge3Files(true);
 
-		expect(typeof resAdd.value).toBe("string");
+		expect(typeof finalMerged).toBe("string");
 	});
 });

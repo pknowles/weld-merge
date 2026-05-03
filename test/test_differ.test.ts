@@ -8,10 +8,7 @@ describe("Differ algorithm robustness", () => {
 		const oldRight = Array.from({ length: 1000 }, (_, i) => `Line R${i}`);
 
 		const differ = new Differ();
-		const it = differ.setSequencesIter([oldLeft, oldMid, oldRight]);
-		for (const _step of it) {
-			// consume iterator
-		}
+		differ.setSequences([oldLeft, oldMid, oldRight]);
 
 		const newMid = [...oldMid];
 		newMid.splice(100, 800); // delete 800 lines!
@@ -45,10 +42,7 @@ describe("Differ algorithm robustness", () => {
 		const oldRight = Array.from({ length: 100 }, (_, i) => `Line R${i}`);
 
 		const differ = new Differ();
-		const it = differ.setSequencesIter([oldLeft, oldMid, oldRight]);
-		for (const _step of it) {
-			// consume iterator
-		}
+		differ.setSequences([oldLeft, oldMid, oldRight]);
 
 		const newMid: string[] = [];
 

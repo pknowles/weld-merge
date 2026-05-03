@@ -16,15 +16,9 @@ describe("Merger", () => {
 			["line1\n", "line2\n", "line3\n"], // REMOTE
 		];
 
-		const init = merger.initialize(sequences, sequences);
-		let val = init.next();
-		let lastVal = val.value;
-		while (!val.done) {
-			lastVal = val.value;
-			val = init.next();
-		}
+		merger.initialize(sequences, sequences);
 
-		expect(lastVal).toBe(1);
+		expect(merger.texts).toBe(sequences);
 	});
 
 	it("handles Delete/Delete splitting heuristics", () => {
@@ -33,18 +27,9 @@ describe("Merger", () => {
 		const remote = ["A\n", "C\n"]; // B deleted
 
 		const sequences = [local, base, remote];
-		const init = merger.initialize(sequences, sequences);
-		let val = init.next();
-		while (!val.done && val.value === null) {
-			val = init.next();
-		}
+		merger.initialize(sequences, sequences);
 
-		const mergeGen = merger.merge3Files(true);
-		let res = mergeGen.next();
-		while (!res.done) {
-			res = mergeGen.next();
-		}
-		const finalMergedText = res.value ?? null;
+		const finalMergedText = merger.merge3Files(true);
 
 		expect(finalMergedText).not.toBeNull();
 	});
@@ -88,18 +73,9 @@ describe("End-to-End Meld Parity", () => {
 			const merger = new Merger();
 			const sequences = [local, base, remote];
 
-			const initGen = merger.initialize(sequences, sequences);
-			let val = initGen.next();
-			while (!val.done && val.value === null) {
-				val = initGen.next();
-			}
+			merger.initialize(sequences, sequences);
 
-			const mergeGen = merger.merge3Files(true);
-			let res = mergeGen.next();
-			while (!res.done) {
-				res = mergeGen.next();
-			}
-			const finalMergedText = res.value ?? null;
+			const finalMergedText = merger.merge3Files(true);
 
 			// Note: Since our version drops trailing newlines from lines and expected includes them (because of "\n".join())
 			expect(finalMergedText).toBe(expected[i]);

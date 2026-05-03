@@ -44,10 +44,7 @@ describe("Meld Step-by-Step Parity Trace", () => {
 
 		// Sync initial 3-pane state
 		const texts: string[][] = [t.slice(), t.slice(), t.slice()];
-		const init = merger.initialize(texts, texts);
-		for (const _ of init) {
-			/* consume */
-		}
+		merger.initialize(texts, texts);
 
 		for (const stepArr of trace.s) {
 			const [
@@ -93,12 +90,7 @@ describe("Meld Step-by-Step Parity Trace", () => {
 			}
 
 			// 2. Verify final merge output string
-			const mergeGen = merger.merge3Files(true);
-			let res = mergeGen.next();
-			while (!res.done) {
-				res = mergeGen.next();
-			}
-			const finalOutput = res.value as string;
+			const finalOutput = merger.merge3Files(true);
 			expect(finalOutput).toBe(trace.t[expectedMergeResultIndex]);
 
 			// 3. Verify unresolved count (conflict mapping)

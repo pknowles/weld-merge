@@ -967,7 +967,7 @@ class Differ {
 		return false;
 	}
 
-	*setSequencesIter(sequences: string[][]): Generator<number | null> {
+	setSequences(sequences: string[][]): void {
 		this.diffs = [[], [], [], []];
 		this.numSequences = sequences.length;
 		this.seqLength = [0, 0, 0, 0, 0];
@@ -1004,22 +1004,11 @@ class Differ {
 				matcher = new this._matcher(null, seq1, otherSeq);
 			}
 
-			const work = matcher.initialize();
-			while (true) {
-				const step = work.next();
-				if (step.done) {
-					break;
-				}
-				if (step.value === null) {
-					yield null;
-				}
-				// continue initialization
-			}
+			matcher.initialize();
 			this.diffs[i as 0 | 1 | 2 | 3] = matcher.getDifferenceOpcodes();
 		}
 		this._initialized = true;
 		this._updateMergeCache(sequences);
-		yield 1;
 	}
 
 	clear() {

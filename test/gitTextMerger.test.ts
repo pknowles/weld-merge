@@ -1,20 +1,6 @@
 import { describe, expect, it } from "@jest/globals";
 import { GitTextMerger } from "../src/matchers/gitTextMerger.ts";
 
-function initializeMerger(
-	merger: GitTextMerger,
-	local: string[],
-	base: string[],
-	remote: string[],
-) {
-	for (const _ of merger.initialize(
-		[local, base, remote],
-		[local, base, remote],
-	)) {
-		// Exhaust initialization generator.
-	}
-}
-
 function runGitMerge(
 	local: string[],
 	base: string[],
@@ -22,27 +8,12 @@ function runGitMerge(
 	markConflicts = true,
 ) {
 	const merger = new GitTextMerger();
-	initializeMerger(merger, local, base, remote);
-
-	let merged = "";
-	for (const step of merger.merge3FilesGit(markConflicts)) {
-		if (typeof step === "string") {
-			merged = step;
-		}
-	}
-
+	merger.initialize([local, base, remote], [local, base, remote]);
+	const merged = merger.merge3FilesGit(markConflicts);
 	return { merged, unresolved: merger.differ.unresolved };
 }
 
 describe("GitTextMerger/basic", () => {
-	it("returns empty text when merge is run before initialization", () => {
-		const merger = new GitTextMerger();
-
-		const outputs = [...merger.merge3FilesGit(true)];
-
-		expect(outputs).toEqual([""]);
-	});
-
 	it("merges clean non-overlapping changes without conflict markers", () => {
 		const local = ["header", "left-only", "base-line", "tail"];
 		const base = ["header", "base-line", "tail"];

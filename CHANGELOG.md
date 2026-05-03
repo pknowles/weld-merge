@@ -19,6 +19,7 @@
 - **Echo Suppression**: Fixed incorrect `versionBeforeEdit` capture that caused spurious echo suppression during fast edits.
 - **Overwrite Dialog**: Suppressed the unnecessary overwrite confirmation dialog when loading a file with unsaved changes; also suppressed the low-signal warning about missing conflict markers in that case.
 - **Error Visibility**: Tree view now shows an `ErrorTreeItem` (with hover detail) instead of silently rendering an empty list when repository or top-level provider errors occur.
+- **Broken use of yield**: Cleaned up a pervasive broken of yield for what should be regular return statement.
 
 ### Changed
 - **Git API**: The VS Code Git extension is now a required dependency (`extensionDependencies`); `getGitApi` is synchronous.

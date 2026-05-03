@@ -4,7 +4,7 @@ import { Differ } from "../../src/matchers/diffutil.ts";
 
 describe("Differ Fuzzing", () => {
 	it.fuzz(
-		"setSequencesIter and changeSequence should not throw",
+		"setSequences and changeSequence should not throw",
 		(data: Buffer) => {
 			if (data.length < 10) return;
 
@@ -33,9 +33,7 @@ describe("Differ Fuzzing", () => {
 			if (texts.length < 3) return;
 
 			const differ = new Differ();
-			for (const _ of differ.setSequencesIter(texts)) {
-				/* consume */
-			}
+			differ.setSequences(texts);
 
 			function verifyDiffer(d: Differ, currentTexts: string[][]) {
 				// Structural Invariants on every change

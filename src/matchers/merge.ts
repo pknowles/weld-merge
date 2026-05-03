@@ -363,22 +363,9 @@ export class Merger extends Differ {
 		this.differ.unresolved = [];
 	}
 
-	*initialize(
-		sequences: string[][],
-		texts: string[][],
-	): Generator<number | null, void, unknown> {
-		const step = this.differ.setSequencesIter(sequences);
-		while (true) {
-			const result = step.next();
-			if (result.done) {
-				break;
-			}
-			if (result.value === null) {
-				yield null;
-			}
-		}
+	initialize(sequences: string[][], texts: string[][]): void {
+		this.differ.setSequences(sequences);
 		this.texts = texts;
-		yield 1;
 	}
 
 	_applyChange(
@@ -405,16 +392,13 @@ export class Merger extends Differ {
 		return change.endA - change.startA;
 	}
 
-	*merge3Files(
-		markConflicts = true,
-	): Generator<string | null, string | undefined, unknown> {
+	merge3Files(markConflicts = true): string {
 		this.differ.unresolved = [];
 		let lastline = 0;
 		let mergedline = 0;
 		const mergedtext: string[] = [];
 
 		for (const change of this.differ.allChanges()) {
-			yield null;
 			const ch0 = change[0];
 			const ch1 = change[1];
 			const lowMark = this._calculateLowMark(ch0, ch1, lastline);

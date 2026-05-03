@@ -112,32 +112,11 @@ const runMerger = (local: string, base: string, remote: string) => {
 	const remoteLines = splitLines(remote);
 
 	const merger = new Merger();
-	const initGen = merger.initialize(
+	merger.initialize(
 		[localLines, baseLines, remoteLines],
 		[localLines, baseLines, remoteLines],
 	);
-	let resInit = initGen.next();
-	while (!resInit.done) {
-		resInit = initGen.next();
-	}
-
-	const mergeGen = merger.merge3Files(true);
-	let mergedContent = base;
-	let resMerge = mergeGen.next();
-	while (!resMerge.done) {
-		if (resMerge.value !== null && typeof resMerge.value === "string") {
-			mergedContent = resMerge.value;
-		}
-		resMerge = mergeGen.next();
-	}
-	if (
-		resMerge.value !== null &&
-		resMerge.value !== undefined &&
-		typeof resMerge.value === "string"
-	) {
-		mergedContent = resMerge.value;
-	}
-	return mergedContent;
+	return merger.merge3Files(true);
 };
 
 describe("Webview User Requested Test Cases", () => {
@@ -168,15 +147,7 @@ describe("Webview User Requested Test Cases", () => {
 		const mergedLines = splitLines(mergedContent);
 
 		const differ = new Differ();
-		const diffInit = differ.setSequencesIter([
-			localLines,
-			mergedLines,
-			remoteLines,
-		]);
-		let resDiff = diffInit.next();
-		while (!resDiff.done) {
-			resDiff = diffInit.next();
-		}
+		differ.setSequences([localLines, mergedLines, remoteLines]);
 
 		const leftDiffs = differ._mergeCache
 			.map((p) => p[0])

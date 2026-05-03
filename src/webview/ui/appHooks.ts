@@ -146,15 +146,11 @@ function handleLoadDiff(data: LoadDiffData, p: MessageDispatchDeps) {
 	handleConfig(data.config, p);
 
 	const differ = new Differ();
-	const dI = differ.setSequencesIter([
+	differ.setSequences([
 		splitLines(localFile.content),
 		splitLines(mergedFile.content),
 		splitLines(remoteFile.content),
 	]);
-	let s = dI.next();
-	while (!s.done) {
-		s = dI.next();
-	}
 	p.differRef.current = differ;
 
 	// Re-request any base-compare panes that were open before this reload.
