@@ -12,10 +12,10 @@ export default {
 	],
 	coverageThreshold: {
 		global: {
-			branches: 63,
-			functions: 65,
-			lines: 69,
-			statements: 69,
+			branches: 64,
+			functions: 66,
+			lines: 70,
+			statements: 70,
 		},
 	},
 	testPathIgnorePatterns: [

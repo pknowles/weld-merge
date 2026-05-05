@@ -138,6 +138,9 @@
 					"suspicious": {
 						"noConsole": "off",
 						"noMisplacedAssertion": "off"
+					},
+					"style": {
+						"noCommonJs": "off"
 					}
 				}
 			}

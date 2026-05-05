@@ -39,6 +39,7 @@ interface GitApi {
 	onDidCloseRepository: Event<GitApiRepository>;
 	getRepository(uri: Uri): GitApiRepository | null;
 	openRepository(uri: Uri): Promise<GitApiRepository | null>;
+	toGitUri(uri: Uri, ref: string): Uri;
 }
 
 interface RepoContext {
@@ -48,40 +49,6 @@ interface RepoContext {
 }
 
 const SUPPORTED_URI_SCHEMES = new Set(["file", "vscode-remote"]);
-
-// TODO: wtf is this garbage!???
-function decodeUriPath(path: string): string[] {
-	return path
-		.split("/")
-		.filter((segment) => segment.length > 0)
-		.map((segment) => decodeURIComponent(segment));
-}
-
-// TODO: no really!!
-function repoRelativePath(rootUri: Uri, fileUri: Uri): string | null {
-	if (rootUri.scheme !== fileUri.scheme) {
-		return null;
-	}
-	if (rootUri.authority !== fileUri.authority) {
-		return null;
-	}
-
-	const rootSegments = decodeUriPath(rootUri.path);
-	const fileSegments = decodeUriPath(fileUri.path);
-	if (fileSegments.length < rootSegments.length) {
-		return null;
-	}
-	for (const [index, rootSegment] of rootSegments.entries()) {
-		if (fileSegments[index] !== rootSegment) {
-			return null;
-		}
-	}
-	return fileSegments.slice(rootSegments.length).join("/");
-}
-
-function fileDisplayString(_rootUri: Uri, fileUri: Uri): string {
-	return workspace.asRelativePath(fileUri, false);
-}
 
 function isSupportedScheme(uri: Uri): boolean {
 	return SUPPORTED_URI_SCHEMES.has(uri.scheme);
@@ -97,18 +64,14 @@ function getGitApi(): GitApi {
 	return gitExtension.exports.getAPI(1);
 }
 
-async function resolveRepoContext(uri: Uri): Promise<RepoContext | null> {
+function resolveRepoContext(uri: Uri): RepoContext | null {
 	if (!isSupportedScheme(uri)) {
 		return null;
 	}
 
-	const gitApi = await getGitApi();
+	const gitApi = getGitApi();
 	const directRepository = gitApi.getRepository(uri);
 	if (directRepository) {
-		const relativePath = repoRelativePath(directRepository.rootUri, uri);
-		if (relativePath === null) {
-			return null;
-		}
 		return {
 			repository: directRepository,
 			rootUri: directRepository.rootUri,
@@ -125,10 +88,6 @@ async function resolveRepoContext(uri: Uri): Promise<RepoContext | null> {
 	if (!workspaceRepository) {
 		return null;
 	}
-	const relativePath = repoRelativePath(workspaceRepository.rootUri, uri);
-	if (relativePath === null) {
-		return null;
-	}
 
 	return {
 		repository: workspaceRepository,
@@ -138,4 +97,4 @@ async function resolveRepoContext(uri: Uri): Promise<RepoContext | null> {
 }
 
 export type { GitApiRepository, RepoContext };
-export { fileDisplayString, getGitApi, isSupportedScheme, resolveRepoContext };
+export { getGitApi, isSupportedScheme, resolveRepoContext };

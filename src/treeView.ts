@@ -17,7 +17,6 @@ import {
 	readConflictState,
 } from "./gitUtils.ts";
 import {
-	fileDisplayString,
 	type GitApiRepository,
 	getGitApi,
 	isSupportedScheme,
@@ -226,7 +225,7 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 		return files.map(
 			(file) =>
 				new ConflictedFile({
-					label: fileDisplayString(repoUri, file),
+					label: workspace.asRelativePath(file, false),
 					collapsibleState: TreeItemCollapsibleState.None,
 					uri: file,
 					repoPath: repoUri,
@@ -238,7 +237,7 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 		return files.map(
 			(file) =>
 				new ResolvedFile({
-					label: fileDisplayString(rootUri, file),
+					label: workspace.asRelativePath(file, false),
 					collapsibleState: TreeItemCollapsibleState.None,
 					uri: file,
 					repoPath: rootUri,

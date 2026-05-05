@@ -294,7 +294,6 @@ jest.mock("monaco-editor", () => ({
 
 // Mock @monaco-editor/react
 jest.mock("@monaco-editor/react", () => {
-	// biome-ignore lint/style/noCommonJs: jest.mock dynamic require
 	const React = require("react") as typeof import("react");
 	const { useEffect, useRef } = React;
 	return function MockedEditor(props: MockedEditorProps) {

@@ -6,16 +6,21 @@ import {
 	createVscodeStub,
 	installResizeObserverMock,
 	installVscodeApi,
-	createMonacoMock as mockCreateMonacoMock,
-	createMonacoReactMockComponent as mockCreateMonacoReactMockComponent,
 	mountedEditors,
 	resetMountedEditors,
 	uninstallVscodeApi,
 	type VscodeStub,
 } from "./mockMonacoSetup.tsx";
 
-jest.mock("monaco-editor", () => mockCreateMonacoMock());
-jest.mock("@monaco-editor/react", () => mockCreateMonacoReactMockComponent());
+// require() is intentional: jest.mock factories are hoisted before ESM imports initialize
+/* eslint-disable @typescript-eslint/no-require-imports */
+jest.mock("monaco-editor", () =>
+	require("./mockMonacoSetup.tsx").createMonacoMock(),
+);
+jest.mock("@monaco-editor/react", () =>
+	require("./mockMonacoSetup.tsx").createMonacoReactMockComponent(),
+);
+/* eslint-enable @typescript-eslint/no-require-imports */
 
 installResizeObserverMock();
 const vscode: VscodeStub = createVscodeStub();

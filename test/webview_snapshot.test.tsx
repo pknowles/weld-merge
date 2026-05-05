@@ -55,7 +55,6 @@ jest.mock("monaco-editor", () => ({
 
 // Mock @monaco-editor/react
 jest.mock("@monaco-editor/react", () => {
-	// biome-ignore lint/style/noCommonJs: jest mock requirement
 	const { useEffect } = require("react");
 	// biome-ignore lint/suspicious/noExplicitAny: mock
 	return function MockedEditor(props: any) {

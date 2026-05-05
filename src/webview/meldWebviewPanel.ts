@@ -8,7 +8,6 @@ import {
 	EventEmitter,
 	type ExtensionContext,
 	env,
-	extensions,
 	Range,
 	type TextDocument,
 	type TextDocumentContentChangeEvent,
@@ -23,6 +22,7 @@ import {
 import { getUnresolvedReasons, readConflictState } from "../gitUtils.ts";
 import {
 	type GitApiRepository,
+	getGitApi,
 	isSupportedScheme,
 	type RepoContext,
 	resolveRepoContext,
@@ -1046,15 +1046,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			);
 			return;
 		}
-		const gitExt = extensions.getExtension("vscode.git");
-		if (!gitExt) {
-			window.showErrorMessage("Git extension is not available.");
-			return;
-		}
-		if (!gitExt.isActive) {
-			await gitExt.activate();
-		}
-		const gitApi = gitExt.exports.getAPI(1);
+		const gitApi = getGitApi();
 		const baseUri = gitApi.toGitUri(document.uri, ":1");
 		const targetUri = gitApi.toGitUri(
 			document.uri,
