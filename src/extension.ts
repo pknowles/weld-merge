@@ -278,14 +278,6 @@ function handleOpenConflictedFile(file: GitFile) {
 	window.showTextDocument(file.uri);
 }
 
-function splitLines(text: string) {
-	const lines = text.split("\n");
-	if (lines.length > 0 && lines.at(-1) === "") {
-		lines.pop();
-	}
-	return lines;
-}
-
 function getRepoRelativePath(rootPath: string, filePath: string): string {
 	const repoRelativePath = relative(rootPath, filePath).split(sep).join("/");
 	if (
@@ -371,9 +363,9 @@ async function performAutoMerge(
 	]);
 
 	const merger = new GitTextMerger();
-	const localLines = splitLines(localContent);
-	const baseLines = splitLines(baseContent);
-	const remoteLines = splitLines(remoteContent);
+	const localLines = localContent.split("\n");
+	const baseLines = baseContent.split("\n");
+	const remoteLines = remoteContent.split("\n");
 
 	const sequences = [localLines, baseLines, remoteLines];
 	merger.initialize(sequences, sequences);

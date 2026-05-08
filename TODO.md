@@ -11,16 +11,6 @@ The initial merge is correct, but after making changes the diffs/highlighting do
 not get the same result. I have seen this in the real Meld app, but the aim here
 was to match what Meld does exactly, so the current behaviour is incorrect.
 
-There's a million of these everywhere that appear to drop trailing newlines.. for reasons?
-
-  function splitLines(text: string) {
-    const lines = text.split("\n");
-    if (lines.length > 0 && lines.at(-1) === "") {
-      lines.pop();
-    }
-    return lines;
-  }
-
 ## Repository discovery
 
 Race condition on launch: `ConflictedFilesProvider` and

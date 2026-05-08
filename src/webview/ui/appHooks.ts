@@ -20,14 +20,6 @@ import type {
 } from "./types.ts";
 import type { useVscodeMessageBus } from "./useVSCodeMessageBus.ts";
 
-const splitLines = (text: string) => {
-	const lines = text.split("\n");
-	if (lines.length > 0 && lines.at(-1) === "") {
-		lines.pop();
-	}
-	return lines;
-};
-
 const compareChunkOrder = (left: DiffChunk, right: DiffChunk): number => {
 	if (left.startA !== right.startA) {
 		return left.startA - right.startA;
@@ -149,9 +141,9 @@ function handleLoadDiff(data: LoadDiffData, p: MessageDispatchDeps) {
 
 	const differ = new Differ();
 	differ.setSequences([
-		splitLines(localFile.content),
-		splitLines(mergedFile.content),
-		splitLines(remoteFile.content),
+		localFile.content.split("\n"),
+		mergedFile.content.split("\n"),
+		remoteFile.content.split("\n"),
 	]);
 	p.differRef.current = differ;
 
@@ -310,20 +302,20 @@ export function useCommitModelUpdate(deps: CommitDeps) {
 			if (!(cF[1] && cF[2] && cF[3])) {
 				return;
 			}
-			const newM = splitLines(value);
+			const newM = value.split("\n");
 			let nD: PaneDiffs | null = null;
 			const d = differRef.current;
 			if (d) {
-				const oldM = splitLines(cF[2].content);
+				const oldM = cF[2].content.split("\n");
 				let sIdx = 0;
 				const mLen = Math.min(oldM.length, newM.length);
 				while (sIdx < mLen && oldM[sIdx] === newM[sIdx]) {
 					sIdx++;
 				}
 				d.changeSequence(1, sIdx, newM.length - oldM.length, [
-					splitLines(cF[1].content),
+					cF[1].content.split("\n"),
 					newM,
-					splitLines(cF[3].content),
+					cF[3].content.split("\n"),
 				]);
 
 				nD = [...diffsRef.current];

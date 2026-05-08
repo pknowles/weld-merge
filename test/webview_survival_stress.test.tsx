@@ -394,14 +394,6 @@ const mockVscode = {
 // biome-ignore lint/suspicious/noExplicitAny: mock setup
 (window as any).acquireVsCodeApi = () => mockVscode;
 
-const splitLines = (text: string) => {
-	const lines = text.split("\n");
-	if (lines.length > 0 && lines.at(-1) === "") {
-		lines.pop();
-	}
-	return lines;
-};
-
 const random = (seed: number) => {
 	const x = Math.sin(seed) * 10_000;
 	return x - Math.floor(x);
@@ -545,9 +537,9 @@ const loadTestData = (
 ) => {
 	const differ = new Differ();
 	differ.setSequences([
-		splitLines(local),
-		splitLines(base),
-		splitLines(remote),
+		local.split("\n"),
+		base.split("\n"),
+		remote.split("\n"),
 	]);
 
 	const allChanges = differ.allChanges();

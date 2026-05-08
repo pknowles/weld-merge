@@ -109,14 +109,6 @@ const getBaseCommitInfo = async (
 	return await getCommitInfo(repository, mergeBaseHash);
 };
 
-const splitLines = (text: string) => {
-	const lines = text.split("\n");
-	if (lines.length > 0 && lines.at(-1) === "") {
-		lines.pop();
-	}
-	return lines;
-};
-
 const runMerge = (
 	localLines: string[],
 	baseLines: string[],
@@ -254,16 +246,16 @@ async function buildDiffPayload(
 			? undefined
 			: await getCommitInfo(repository, remoteRef);
 
-	const localLines = splitLines(local);
-	const baseLines = splitLines(base);
-	const incomingLines = splitLines(incoming);
+	const localLines = local.split("\n");
+	const baseLines = base.split("\n");
+	const incomingLines = incoming.split("\n");
 
 	const workingContent =
 		options.workingContent ??
 		runMerge(localLines, baseLines, incomingLines);
 	// Diffs are computed against the exact working-pane content we will render.
 	// This keeps hunk actions/highlights aligned with what the user sees.
-	const workingLines = splitLines(workingContent);
+	const workingLines = workingContent.split("\n");
 
 	const { leftDiffs, rightDiffs } = runDiff(
 		localLines,
@@ -299,8 +291,8 @@ async function buildBaseDiffPayload(
 
 	const baseCommit = await getBaseCommitInfo(repository);
 
-	const baseLines = splitLines(base);
-	const targetLines = splitLines(target);
+	const baseLines = base.split("\n");
+	const targetLines = target.split("\n");
 
 	// We only need a 2-way diff for this.
 	// For left side (Base -> Local), a=Base, b=Local

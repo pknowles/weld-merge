@@ -368,14 +368,6 @@ const mockVscode = {
 // biome-ignore lint/suspicious/noExplicitAny: mock setup
 (window as any).acquireVsCodeApi = () => mockVscode;
 
-const splitLines = (text: string) => {
-	const lines = text.split("\n");
-	if (lines.length > 0 && lines.at(-1) === "") {
-		lines.pop();
-	}
-	return lines;
-};
-
 const dedupeChunks = (chunks: DiffChunk[]) => {
 	const seen = new Set<string>();
 	return chunks.filter((c) => {
@@ -463,9 +455,9 @@ const loadTestData = (
 ) => {
 	const differ = new Differ();
 	differ.setSequences([
-		splitLines(local),
-		splitLines(base),
-		splitLines(remote),
+		local.split("\n"),
+		base.split("\n"),
+		remote.split("\n"),
 	]);
 
 	const allChanges = differ.allChanges();

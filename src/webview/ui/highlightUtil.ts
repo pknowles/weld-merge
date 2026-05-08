@@ -1,14 +1,6 @@
 import { diffChars } from "diff";
 import type { DiffChunk, FileState, Highlight } from "./types.ts";
 
-const splitLines = (text: string) => {
-	const lines = text.split("\n");
-	if (lines.length > 0 && lines.at(-1) === "") {
-		lines.pop();
-	}
-	return lines;
-};
-
 interface ReplaceContext {
 	chunk: DiffChunk;
 	useA: boolean;
@@ -25,13 +17,12 @@ const calculateReplaceHighlights = (ctx: ReplaceContext): Highlight[] => {
 	const otherStartLine = useA ? chunk.startB : chunk.startA;
 	const otherEndLine = useA ? chunk.endB : chunk.endA;
 
-	const myLines = splitLines(innerFile.content).slice(startLine, endLine);
+	const myLines = innerFile.content.split("\n").slice(startLine, endLine);
 	const myText = `${myLines.join("\n")}${myLines.length > 0 ? "\n" : ""}`;
 
-	const otherLines = splitLines(outerFile.content).slice(
-		otherStartLine,
-		otherEndLine,
-	);
+	const otherLines = outerFile.content
+		.split("\n")
+		.slice(otherStartLine, otherEndLine);
 	const otherText = `${otherLines.join("\n")}${otherLines.length > 0 ? "\n" : ""}`;
 
 	const changes = diffChars(myText, otherText);

@@ -98,18 +98,10 @@ jest.mock(
 		},
 );
 
-const splitLines = (text: string) => {
-	const lines = text.split("\n");
-	if (lines.length > 0 && lines.at(-1) === "") {
-		lines.pop();
-	}
-	return lines;
-};
-
 const runMerger = (local: string, base: string, remote: string) => {
-	const localLines = splitLines(local);
-	const baseLines = splitLines(base);
-	const remoteLines = splitLines(remote);
+	const localLines = local.split("\n");
+	const baseLines = base.split("\n");
+	const remoteLines = remote.split("\n");
 
 	const merger = new Merger();
 	merger.initialize(
@@ -142,9 +134,9 @@ describe("Webview User Requested Test Cases", () => {
 
 		const mergedContent = runMerger(local, base, remote);
 
-		const localLines = splitLines(local);
-		const remoteLines = splitLines(remote);
-		const mergedLines = splitLines(mergedContent);
+		const localLines = local.split("\n");
+		const remoteLines = remote.split("\n");
+		const mergedLines = mergedContent.split("\n");
 
 		const differ = new Differ();
 		differ.setSequences([localLines, mergedLines, remoteLines]);
