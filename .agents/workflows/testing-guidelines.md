@@ -42,3 +42,13 @@ Stop here and ask the user to check your progress.
 7. For each of your validation ideas, evaluate how well they will work. Do they actually verify whether the feature works in spirit? I.e. not just that the code does what it does. Do they test solid invariants that match the use cases, allowing for the implementation to change yet still verify it produces the right result?
 8. Replace any useless tests you found with test that would catch incorrect usage and repeat the above negative testing thought experiment.
 9. Review to ensure we’re not adding brittle, tautological tests that would fail on valid implementation changes
+
+## Mistakes
+
+The following code is a bug. Yes, showing this runs the risk of encouraging LLMs
+to use it, but this pattern has appears and caused headaches at least twice that
+I noticed.
+
+```
+import { MeldCustomEditorProvider } from "../../../src/webview/meldWebviewPanel.ts";
+```

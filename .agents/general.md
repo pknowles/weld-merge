@@ -22,6 +22,7 @@ Read ./standards/core.md and any relevant ./standards/* before designing or writ
   - Did you regress any code comments? E.g. by deleting them
   - Did you add any code duplication, or miss opportunities for easy code factoring?
   - Did you duplicate operations, add anything that could regress performance, or miss any performance improvement opportunities?
+  - Did you forget to clean up any speculative fixes that you did not verify were needed?
 - Are all formatting/linting/validation/testing passing?
 - Do not create spurious `.md` analysis files; keep history in commits.
 - Update project documentation if your change affects architecture, flow, or object names.

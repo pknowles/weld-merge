@@ -16,7 +16,11 @@ import {
 	ConflictedFilesProvider,
 	ErrorTreeItem,
 } from "../../../src/treeView.ts";
-import { makeRepo, openRepoInGitExtension } from "./helpers.ts";
+import {
+	makeRepo,
+	openRepoInGitExtension,
+	waitForRepoClose,
+} from "./helpers.ts";
 
 const TOP_LEVEL_FAILURE_REGEX = /forced top-level failure/;
 const PER_REPO_LABEL_REGEX = /Failed to list conflicts for/;
@@ -128,7 +132,9 @@ describe("error propagation and tree UI errors (VS Code host)", () => {
 				PER_REPO_FILENOTFOUND_REGEX,
 			);
 		} finally {
+			const closePromise = waitForRepoClose(repoPath);
 			await rm(repoPath, { recursive: true, force: true });
+			await closePromise;
 		}
 	});
 });

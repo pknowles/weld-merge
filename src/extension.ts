@@ -624,13 +624,14 @@ function setupGitRepoWatchers(
 	);
 }
 
-// Shape of `extensions.getExtension(...).exports` for this extension. Kept
-// minimal on purpose: every entry must be a real reusable operation against
-// the live extension state. Do not add test-only hooks here; tests should
-// exercise real command / event boundaries and mock at prototype / git-API
-// level instead.
+// Shape of `extensions.getExtension(...).exports` for this extension.
+// MeldCustomEditorProvider is exposed so that tests can instantiate the
+// bundled class rather than a source-imported copy, keeping all static
+// fields (e.g. onConflictStateChanged) on the same module instance as the
+// running extension.
 export interface WeldExtensionApi {
 	setInitialConflictContent: typeof MeldCustomEditorProvider.setInitialConflictContent;
+	meldCustomEditorProvider: typeof MeldCustomEditorProvider;
 }
 
 export function activate(context: ExtensionContext): WeldExtensionApi {
@@ -643,6 +644,7 @@ export function activate(context: ExtensionContext): WeldExtensionApi {
 	return {
 		setInitialConflictContent:
 			MeldCustomEditorProvider.setInitialConflictContent,
+		meldCustomEditorProvider: MeldCustomEditorProvider,
 	};
 }
 

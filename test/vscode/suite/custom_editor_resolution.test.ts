@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
-import { describe, it } from "mocha";
+import { before, describe, it } from "mocha";
 import type { TextDocument, WebviewPanel } from "vscode";
-import { Uri } from "vscode";
+import { extensions, Uri } from "vscode";
+import type { WeldExtensionApi } from "../../../src/extension.ts";
 import type { RepoContext } from "../../../src/repoContext.ts";
-import { MeldCustomEditorProvider } from "../../../src/webview/meldWebviewPanel.ts";
+import type { MeldCustomEditorProvider } from "../../../src/webview/meldWebviewPanel.ts";
 import {
 	makeRepo,
 	makeRepoFile,
 	openRepoInGitExtension,
 	runGit,
+	waitForRepoClose,
 } from "./helpers.ts";
 
 interface CapturedInitArgs {
@@ -34,6 +36,19 @@ type InitializeWebviewFn = (
 	repoContext: RepoContext,
 ) => void;
 
+// Resolved in the before() hook to the bundled class so that static fields
+// (e.g. onConflictStateChanged) are the same instance as the running extension.
+let MeldProviderClass: typeof MeldCustomEditorProvider;
+
+before(async () => {
+	const ext = extensions.getExtension("pknowles.meld-auto-merge");
+	if (!ext) {
+		throw new Error("weld extension must be discoverable");
+	}
+	const api = (await ext.activate()) as WeldExtensionApi;
+	MeldProviderClass = api.meldCustomEditorProvider;
+});
+
 function makeFakePanel(): FakePanel {
 	return {
 		webview: {
@@ -48,7 +63,7 @@ function makeDocument(uri: Uri): TextDocument {
 }
 
 async function resolveEditorHtml(documentUri: Uri): Promise<string> {
-	const provider = new MeldCustomEditorProvider(Uri.file("/tmp"));
+	const provider = new MeldProviderClass(Uri.file("/tmp"));
 	const panel = makeFakePanel();
 	await provider.resolveCustomTextEditor(
 		makeDocument(documentUri),
@@ -78,7 +93,7 @@ async function assertRepoContextResolution(
 	relativeFilePath: string,
 ): Promise<CapturedInitArgs[]> {
 	await openRepoInGitExtension(repoPath);
-	const provider = new MeldCustomEditorProvider(Uri.file("/tmp"));
+	const provider = new MeldProviderClass(Uri.file("/tmp"));
 	const panel = makeFakePanel();
 	const captured: CapturedInitArgs[] = [];
 	stubInitializeWebview(provider, captured);
@@ -135,7 +150,9 @@ describe("MeldCustomEditorProvider.resolveCustomTextEditor", () => {
 				`${repoPath}/src/deep/path/file.ts`,
 			);
 		} finally {
+			const closePromise = waitForRepoClose(repoPath);
 			await rm(repoPath, { recursive: true, force: true });
+			await closePromise;
 		}
 	});
 
@@ -160,8 +177,10 @@ describe("MeldCustomEditorProvider.resolveCustomTextEditor", () => {
 				`${worktreePath}/worktree-file.ts`,
 			);
 		} finally {
+			const closePromise = waitForRepoClose(worktreePath);
 			await rm(repoPath, { recursive: true, force: true });
 			await rm(worktreePath, { recursive: true, force: true });
+			await closePromise;
 		}
 	});
 });

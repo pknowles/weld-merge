@@ -9,6 +9,7 @@ import {
 	makeRepoFile,
 	openRepoInGitExtension,
 	runGit,
+	waitForRepoClose,
 } from "./helpers.ts";
 
 describe("repoContext.resolveRepoContext (VS Code host)", () => {
@@ -28,7 +29,9 @@ describe("repoContext.resolveRepoContext (VS Code host)", () => {
 			assert.equal(repoContext.rootUri.fsPath, repoPath);
 			assert.equal(repoContext.uri.toString(), fileUri.toString());
 		} finally {
+			const closePromise = waitForRepoClose(repoPath);
 			await rm(repoPath, { recursive: true, force: true });
+			await closePromise;
 		}
 	});
 
@@ -50,8 +53,10 @@ describe("repoContext.resolveRepoContext (VS Code host)", () => {
 			assert.equal(repoContext.rootUri.fsPath, worktreePath);
 			assert.equal(repoContext.uri.toString(), fileUri.toString());
 		} finally {
+			const closePromise = waitForRepoClose(worktreePath);
 			await rm(repoPath, { recursive: true, force: true });
 			await rm(worktreePath, { recursive: true, force: true });
+			await closePromise;
 		}
 	});
 
@@ -67,8 +72,11 @@ describe("repoContext.resolveRepoContext (VS Code host)", () => {
 			assert.equal(repoContext.rootUri.fsPath, repoPathB);
 			assert.equal(repoContext.uri.toString(), fileUri.toString());
 		} finally {
+			const closeA = waitForRepoClose(repoPathA);
+			const closeB = waitForRepoClose(repoPathB);
 			await rm(repoPathA, { recursive: true, force: true });
 			await rm(repoPathB, { recursive: true, force: true });
+			await Promise.all([closeA, closeB]);
 		}
 	});
 
@@ -81,7 +89,9 @@ describe("repoContext.resolveRepoContext (VS Code host)", () => {
 			const repoContext = await resolveRepoContext(outsideUri);
 			assert.equal(repoContext, null);
 		} finally {
+			const closePromise = waitForRepoClose(repoPath);
 			await rm(repoPath, { recursive: true, force: true });
+			await closePromise;
 		}
 	});
 });

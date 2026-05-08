@@ -1,5 +1,10 @@
 # Future Improvements & Known Issues
 
+## Top priority
+
+1. Merge conflicts for deleted files need special handling
+2. Auto-merge is still deleting end of file newlines
+
 ## Behaviour Differences to GNOME Meld
 
 The initial merge is correct, but after making changes the diffs/highlighting do

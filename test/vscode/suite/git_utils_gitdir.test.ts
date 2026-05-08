@@ -5,7 +5,12 @@ import { describe, it } from "mocha";
 import { Uri } from "vscode";
 import { getGitDirUri, readConflictState } from "../../../src/gitUtils.ts";
 import { getGitApi } from "../../../src/repoContext.ts";
-import { makeRepo, openRepoInGitExtension, runGit } from "./helpers.ts";
+import {
+	makeRepo,
+	openRepoInGitExtension,
+	runGit,
+	waitForRepoClose,
+} from "./helpers.ts";
 
 async function getRepository(repoPath: string) {
 	const gitApi = await getGitApi();
@@ -32,7 +37,9 @@ describe("gitUtils gitdir resolution (VS Code host)", () => {
 			assert.equal(state.operation, "merge");
 			assert.equal(state.otherRef, "MERGE_HEAD");
 		} finally {
+			const closePromise = waitForRepoClose(repoPath);
 			await rm(repoPath, { recursive: true, force: true });
+			await closePromise;
 		}
 	});
 
@@ -56,8 +63,10 @@ describe("gitUtils gitdir resolution (VS Code host)", () => {
 			assert.equal(state.operation, "merge");
 			assert.equal(state.otherRef, "MERGE_HEAD");
 		} finally {
+			const closePromise = waitForRepoClose(worktreePath);
 			await rm(repoPath, { recursive: true, force: true });
 			await rm(worktreePath, { recursive: true, force: true });
+			await closePromise;
 		}
 	});
 
@@ -68,7 +77,9 @@ describe("gitUtils gitdir resolution (VS Code host)", () => {
 			const state = await readConflictState(repository);
 			assert.equal(state, undefined);
 		} finally {
+			const closePromise = waitForRepoClose(repoPath);
 			await rm(repoPath, { recursive: true, force: true });
+			await closePromise;
 		}
 	});
 });
