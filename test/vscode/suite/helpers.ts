@@ -90,6 +90,59 @@ function makeSecondConflict(repoPath: string): void {
 	}
 }
 
+// Creates a delete/modify conflict where local deleted tracked.txt and remote
+// modified it. Result: DELETED_BY_US — stage 2 absent, stage 3 present.
+function makeDeletedByUsConflict(repoPath: string): void {
+	runGit(["checkout", "-b", "other"], repoPath);
+	writeFileSync(join(repoPath, "tracked.txt"), "remote modification\n");
+	runGit(["add", "--", "tracked.txt"], repoPath);
+	runGit(["commit", "-m", "remote modifies"], repoPath);
+	runGit(["checkout", "-"], repoPath);
+	runGit(["rm", "--", "tracked.txt"], repoPath);
+	runGit(["commit", "-m", "local deletes"], repoPath);
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits 1 for a conflict — expected
+	}
+}
+
+// Creates a delete/modify conflict where remote deleted tracked.txt and local
+// modified it. Result: DELETED_BY_THEM — stage 2 present, stage 3 absent.
+function makeDeletedByThemConflict(repoPath: string): void {
+	runGit(["checkout", "-b", "other"], repoPath);
+	runGit(["rm", "--", "tracked.txt"], repoPath);
+	runGit(["commit", "-m", "remote deletes"], repoPath);
+	runGit(["checkout", "-"], repoPath);
+	writeFileSync(join(repoPath, "tracked.txt"), "local modification\n");
+	runGit(["add", "--", "tracked.txt"], repoPath);
+	runGit(["commit", "-m", "local modifies"], repoPath);
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits 1 for a conflict — expected
+	}
+}
+
+// Creates a both-added conflict on conflict.txt (not present in the initial
+// commit). Both branches add different content. Result: BOTH_ADDED — stage 1
+// absent, stages 2 and 3 present.
+function makeBothAddedConflict(repoPath: string): void {
+	runGit(["checkout", "-b", "other"], repoPath);
+	writeFileSync(join(repoPath, "conflict.txt"), "remote version\n");
+	runGit(["add", "--", "conflict.txt"], repoPath);
+	runGit(["commit", "-m", "remote adds conflict.txt"], repoPath);
+	runGit(["checkout", "-"], repoPath);
+	writeFileSync(join(repoPath, "conflict.txt"), "local version\n");
+	runGit(["add", "--", "conflict.txt"], repoPath);
+	runGit(["commit", "-m", "local adds conflict.txt"], repoPath);
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits 1 for a conflict — expected
+	}
+}
+
 // Waits for the git extension to fire onDidCloseRepository for repoPath.
 // Subscribe BEFORE deleting the repo directory so no events are missed.
 // Returns immediately if the repo is not currently registered.
@@ -147,7 +200,10 @@ function waitForMergeChanges(
 }
 
 export {
+	makeBothAddedConflict,
 	makeConflict,
+	makeDeletedByThemConflict,
+	makeDeletedByUsConflict,
 	makeRepo,
 	makeRepoFile,
 	makeSecondConflict,

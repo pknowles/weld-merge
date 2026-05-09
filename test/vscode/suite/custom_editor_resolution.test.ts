@@ -1,16 +1,21 @@
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
+import { join } from "node:path";
 import { before, describe, it } from "mocha";
 import type { TextDocument, WebviewPanel } from "vscode";
 import { extensions, Uri } from "vscode";
 import type { WeldExtensionApi } from "../../../src/extension.ts";
-import type { RepoContext } from "../../../src/repoContext.ts";
+import { getGitApi, type RepoContext } from "../../../src/repoContext.ts";
 import type { MeldCustomEditorProvider } from "../../../src/webview/meldWebviewPanel.ts";
 import {
+	makeBothAddedConflict,
+	makeDeletedByThemConflict,
+	makeDeletedByUsConflict,
 	makeRepo,
 	makeRepoFile,
 	openRepoInGitExtension,
 	runGit,
+	waitForMergeChanges,
 	waitForRepoClose,
 } from "./helpers.ts";
 
@@ -180,6 +185,84 @@ describe("MeldCustomEditorProvider.resolveCustomTextEditor", () => {
 			const closePromise = waitForRepoClose(worktreePath);
 			await rm(repoPath, { recursive: true, force: true });
 			await rm(worktreePath, { recursive: true, force: true });
+			await closePromise;
+		}
+	});
+});
+
+describe("MeldCustomEditorProvider.resolveCustomTextEditor — conflict type routing", () => {
+	async function resolveAndCapture(
+		repoPath: string,
+		fileName: string,
+	): Promise<{ html: string; captured: CapturedInitArgs[] }> {
+		await openRepoInGitExtension(repoPath);
+		const repo = getGitApi().getRepository(Uri.file(repoPath));
+		assert.ok(repo);
+		await waitForMergeChanges(repo, 1);
+		const provider = new MeldProviderClass(Uri.file("/tmp"));
+		const panel = makeFakePanel();
+		const captured: CapturedInitArgs[] = [];
+		stubInitializeWebview(provider, captured);
+		await provider.resolveCustomTextEditor(
+			makeDocument(Uri.file(join(repoPath, fileName))),
+			panel as unknown as WebviewPanel,
+			{} as never,
+		);
+		return { html: panel.webview.html, captured };
+	}
+
+	it("shows delete/modify message and skips 3-way init when local deleted and remote modified", async () => {
+		const repoPath = await makeRepo("weld-deleted-by-us-");
+		try {
+			makeDeletedByUsConflict(repoPath);
+			const { html, captured } = await resolveAndCapture(
+				repoPath,
+				"tracked.txt",
+			);
+			assert.equal(captured.length, 0);
+			assert.equal(
+				html,
+				"<p>Delete/modify conflict. Use the prompt above to resolve.</p>",
+			);
+		} finally {
+			const closePromise = waitForRepoClose(repoPath);
+			await rm(repoPath, { recursive: true, force: true });
+			await closePromise;
+		}
+	});
+
+	it("shows delete/modify message and skips 3-way init when remote deleted and local modified", async () => {
+		const repoPath = await makeRepo("weld-deleted-by-them-");
+		try {
+			makeDeletedByThemConflict(repoPath);
+			const { html, captured } = await resolveAndCapture(
+				repoPath,
+				"tracked.txt",
+			);
+			assert.equal(captured.length, 0);
+			assert.equal(
+				html,
+				"<p>Delete/modify conflict. Use the prompt above to resolve.</p>",
+			);
+		} finally {
+			const closePromise = waitForRepoClose(repoPath);
+			await rm(repoPath, { recursive: true, force: true });
+			await closePromise;
+		}
+	});
+
+	it("proceeds to 3-way merge init for both-added conflicts", async () => {
+		const repoPath = await makeRepo("weld-both-added-");
+		try {
+			makeBothAddedConflict(repoPath);
+			const { captured } = await resolveAndCapture(
+				repoPath,
+				"conflict.txt",
+			);
+			assert.equal(captured.length, 1);
+		} finally {
+			const closePromise = waitForRepoClose(repoPath);
+			await rm(repoPath, { recursive: true, force: true });
 			await closePromise;
 		}
 	});

@@ -2,6 +2,7 @@ import { type Event, extensions, type Uri, workspace } from "vscode";
 
 interface GitApiChange {
 	uri: Uri;
+	status: number;
 }
 
 interface GitApiCommit {

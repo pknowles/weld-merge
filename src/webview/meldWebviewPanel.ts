@@ -19,7 +19,13 @@ import {
 	window,
 	workspace,
 } from "vscode";
-import { getUnresolvedReasons, readConflictState } from "../gitUtils.ts";
+import {
+	GIT_STATUS_BOTH_DELETED,
+	GIT_STATUS_DELETED_BY_THEM,
+	GIT_STATUS_DELETED_BY_US,
+	getUnresolvedReasons,
+	readConflictState,
+} from "../gitUtils.ts";
 import {
 	type GitApiRepository,
 	getGitApi,
@@ -257,6 +263,37 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			return;
 		}
 
+		const conflictStatus = repoContext.repository.state.mergeChanges.find(
+			(c) => c.uri.fsPath === document.uri.fsPath,
+		)?.status;
+
+		if (conflictStatus === GIT_STATUS_BOTH_DELETED) {
+			window.showErrorMessage(
+				`Unexpected conflict state for ${document.uri.fsPath}: both sides deleted this file. Git should have auto-resolved this.`,
+			);
+			webviewPanel.webview.html =
+				"<p>Unexpected conflict state: both sides deleted this file.</p>";
+			return;
+		}
+
+		if (
+			conflictStatus === GIT_STATUS_DELETED_BY_US ||
+			conflictStatus === GIT_STATUS_DELETED_BY_THEM
+		) {
+			const remainingStage =
+				conflictStatus === GIT_STATUS_DELETED_BY_US ? 3 : 2;
+			webviewPanel.webview.html =
+				"<p>Delete/modify conflict. Use the prompt above to resolve.</p>";
+			this._handleDeleteModifyConflict(
+				document,
+				repoContext,
+				remainingStage,
+			).catch((error: unknown) => {
+				throw error;
+			});
+			return;
+		}
+
 		webviewPanel.webview.options = {
 			enableScripts: true,
 			localResourceRoots: [Uri.joinPath(this.extensionUri, "out")],
@@ -265,6 +302,44 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		// Listener attached BEFORE setting html so "ready" is never missed
 		// regardless of how fast the webview boots (especially over SSH).
 		this._initializeWebview(document, webviewPanel, repoContext);
+	}
+
+	private async _handleDeleteModifyConflict(
+		document: TextDocument,
+		repoContext: RepoContext,
+		remainingStage: 2 | 3,
+	): Promise<void> {
+		const { uri, repository } = repoContext;
+		const remainingLabel = remainingStage === 2 ? "Local" : "Remote";
+		const deletedLabel = remainingStage === 2 ? "Remote" : "Local";
+		const gitApi = getGitApi();
+		const baseUri = gitApi.toGitUri(document.uri, ":1");
+		const remainingUri = gitApi.toGitUri(
+			document.uri,
+			`:${remainingStage}`,
+		);
+		try {
+			await commands.executeCommand(
+				"vscode.diff",
+				baseUri,
+				remainingUri,
+				`${basename(uri.fsPath)} (Base ↔ ${remainingLabel})`,
+			);
+		} catch (e) {
+			const err = e instanceof Error ? e.message : String(e);
+			window.showErrorMessage(`Failed to open diff: ${err}`);
+		}
+		const choice = await window.showWarningMessage(
+			`Delete/modify conflict: ${deletedLabel} deleted "${basename(uri.fsPath)}" but ${remainingLabel} modified it.`,
+			"Keep File",
+			"Delete File",
+		);
+		if (choice === "Keep File") {
+			await repository.add([uri.fsPath]);
+		} else if (choice === "Delete File") {
+			await workspace.fs.delete(uri);
+			await repository.add([uri.fsPath]);
+		}
 	}
 
 	private _initializeWebview(

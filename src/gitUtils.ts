@@ -197,11 +197,21 @@ function getUnresolvedReasons(text: string): string[] {
 	return reasons;
 }
 
+// Numeric constants from the VS Code git extension API (vscode.git v1) Status enum.
+const GIT_STATUS_DELETED_BY_US = 14; // local deleted, remote modified — stage 2 absent
+const GIT_STATUS_DELETED_BY_THEM = 15; // remote deleted, local modified — stage 3 absent
+const GIT_STATUS_BOTH_ADDED = 16; // both sides added the file — stage 1 (base) absent
+const GIT_STATUS_BOTH_DELETED = 17; // both sides deleted — should be auto-resolved by git
+
+export type { ConflictState };
 export {
 	execGit,
+	GIT_STATUS_BOTH_ADDED,
+	GIT_STATUS_BOTH_DELETED,
+	GIT_STATUS_DELETED_BY_THEM,
+	GIT_STATUS_DELETED_BY_US,
 	getConflictedFiles,
 	getGitDirUri,
 	getUnresolvedReasons,
 	readConflictState,
 };
-export type { ConflictState };

@@ -21,7 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Uri } from "vscode";
 import { getGitExecutable } from "../gitPath.ts";
-import { readConflictState } from "../gitUtils.ts";
+import { GIT_STATUS_BOTH_ADDED, readConflictState } from "../gitUtils.ts";
 import { Differ } from "../matchers/diffutil.ts";
 import { Merger } from "../matchers/merge.ts";
 import { MyersSequenceMatcher } from "../matchers/myers.ts";
@@ -165,8 +165,11 @@ async function fetchConflictStages(
 	repository: GitApiRepository,
 	file: Uri,
 ): Promise<ConflictStages> {
+	const isBothAdded =
+		repository.state.mergeChanges.find((c) => c.uri.fsPath === file.fsPath)
+			?.status === GIT_STATUS_BOTH_ADDED;
 	const [base, local, incoming] = await Promise.all([
-		getGitState(repository, file, GIT_STAGE_BASE),
+		isBothAdded ? "" : getGitState(repository, file, GIT_STAGE_BASE),
 		getGitState(repository, file, GIT_STAGE_LOCAL),
 		getGitState(repository, file, GIT_STAGE_REMOTE),
 	]);
@@ -324,5 +327,9 @@ async function buildBaseDiffPayload(
 	};
 }
 
-export { buildDiffPayload, buildBaseDiffPayload };
-export { buildInitialConflictedState, fetchConflictStages };
+export {
+	buildBaseDiffPayload,
+	buildDiffPayload,
+	buildInitialConflictedState,
+	fetchConflictStages,
+};
