@@ -37,11 +37,13 @@ import type { MutationTestResult } from "mutation-testing-report-schema";
 
 interface StrykerReport extends MutationTestResult {}
 
+const SLACK = 1;
+
 const REGEXES = {
-	branches: /branches:\s*\d+/,
-	functions: /functions:\s*\d+/,
-	lines: /lines:\s*\d+/,
-	statements: /statements:\s*\d+/,
+	branches: /branches:\s*(\d+)/,
+	functions: /functions:\s*(\d+)/,
+	lines: /lines:\s*(\d+)/,
+	statements: /statements:\s*(\d+)/,
 };
 
 /**
@@ -81,11 +83,42 @@ function ratchetJestCoverage(): boolean {
 		const jestConfigPath = join(cwd(), "jest.config.js");
 		let jestConfig = readFileSync(jestConfigPath, "utf8");
 
+		const currentThresholds: Record<keyof typeof REGEXES, number> = {
+			branches: Number.parseInt(
+				jestConfig.match(REGEXES.branches)?.[1] ?? "0",
+				10,
+			),
+			functions: Number.parseInt(
+				jestConfig.match(REGEXES.functions)?.[1] ?? "0",
+				10,
+			),
+			lines: Number.parseInt(
+				jestConfig.match(REGEXES.lines)?.[1] ?? "0",
+				10,
+			),
+			statements: Number.parseInt(
+				jestConfig.match(REGEXES.statements)?.[1] ?? "0",
+				10,
+			),
+		};
+
 		const newThresholds = {
-			branches: Math.floor(total.branches.pct),
-			functions: Math.floor(total.functions.pct),
-			lines: Math.floor(total.lines.pct),
-			statements: Math.floor(total.statements.pct),
+			branches: Math.max(
+				currentThresholds.branches,
+				Math.floor(total.branches.pct) - SLACK,
+			),
+			functions: Math.max(
+				currentThresholds.functions,
+				Math.floor(total.functions.pct) - SLACK,
+			),
+			lines: Math.max(
+				currentThresholds.lines,
+				Math.floor(total.lines.pct) - SLACK,
+			),
+			statements: Math.max(
+				currentThresholds.statements,
+				Math.floor(total.statements.pct) - SLACK,
+			),
 		};
 
 		// biome-ignore lint/suspicious/noConsole: script output
@@ -149,14 +182,17 @@ function ratchetStrykerScore(): boolean {
 			return false;
 		}
 
-		const breakScore = Math.floor(score);
-		// biome-ignore lint/suspicious/noConsole: script output
-		console.log("New Stryker Break Threshold:", breakScore);
-
 		const strykerConfigPath = join(cwd(), "stryker.config.json");
 		const strykerConfig: StrykerConfig = JSON.parse(
 			readFileSync(strykerConfigPath, "utf8"),
 		);
+
+		const breakScore = Math.max(
+			strykerConfig.thresholds?.break ?? 0,
+			Math.floor(score) - SLACK,
+		);
+		// biome-ignore lint/suspicious/noConsole: script output
+		console.log("New Stryker Break Threshold:", breakScore);
 
 		if (strykerConfig.thresholds) {
 			strykerConfig.thresholds.break = breakScore;
