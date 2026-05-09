@@ -352,6 +352,17 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		const stagesPromise = fetchConflictStages(
 			repoContext.repository,
 			repoContext.uri,
+		).catch(
+			(): Awaited<ReturnType<typeof fetchConflictStages>> => ({
+				// When an 3-view editor tab is restored on next launch and there is
+				// no conflict, we don't have the original merge context to show. We
+				// choose to initialize the views as empty and keep the editor open
+				// to remind the user what they were doing last and let them close
+				// it manually.
+				base: "",
+				local: "",
+				incoming: "",
+			}),
 		);
 
 		// Per-editor sync state shared by all callbacks for this panel.
