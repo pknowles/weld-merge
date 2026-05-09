@@ -16,6 +16,7 @@ import type {
 	MonacoContentChange,
 	PayloadDiffs,
 	PayloadFiles,
+	WebviewErrorPayload,
 } from "./types.ts";
 import type { useVscodeMessageBus } from "./useVSCodeMessageBus.ts";
 
@@ -78,6 +79,7 @@ interface MessageHandlersDeps {
 	setBaseCompareHighlighting: (b: boolean) => void;
 	setIsConflicted: (isConflicted: boolean) => void;
 	setRenderTrigger: (p: (p: number) => number) => void;
+	setError: (error: WebviewErrorPayload) => void;
 	commitModelUpdate: (v: string) => void;
 	resolveClipboardRead: (id: number, text: string) => void;
 	vscodeApi: ReturnType<typeof useVscodeMessageBus>;
@@ -160,6 +162,25 @@ function handleLoadDiff(data: LoadDiffData, p: MessageDispatchDeps) {
 	if (wasRightOpen) {
 		p.vscodeApi?.postMessage({ command: "requestBaseDiff", side: "right" });
 	}
+}
+
+function normalizeWebviewError(message: {
+	title?: unknown;
+	message?: unknown;
+	details?: unknown;
+}): WebviewErrorPayload {
+	return {
+		title:
+			typeof message.title === "string"
+				? message.title
+				: "Error: exception while loading diff",
+		message:
+			typeof message.message === "string"
+				? message.message
+				: "Unknown exception",
+		details:
+			typeof message.details === "string" ? message.details : undefined,
+	};
 }
 
 function handleLoadBaseDiff(data: BaseDiffPayload, p: MessageDispatchDeps) {
@@ -346,6 +367,7 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 		setBaseCompareHighlighting,
 		setIsConflicted,
 		setRenderTrigger,
+		setError,
 		commitModelUpdate,
 		resolveClipboardRead,
 		vscodeApi,
@@ -366,6 +388,7 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 			setBaseCompareHighlighting,
 			setIsConflicted,
 			setRenderTrigger,
+			setError,
 			commitModelUpdate,
 			resolveClipboardRead,
 			vscodeApi,
@@ -401,6 +424,9 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 				case "conflictStateLost":
 					setIsConflicted(false);
 					break;
+				case "error":
+					setError(normalizeWebviewError(m));
+					break;
 				case "clipboardText":
 					resolveClipboardRead(Number(m.requestId), m.text as string);
 					break;
@@ -422,6 +448,7 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 		setIsConflicted,
 		setDebounceDelay,
 		setDiffs,
+		setError,
 		setFiles,
 		setLastExternalChangeVersion,
 		setRenderTrigger,

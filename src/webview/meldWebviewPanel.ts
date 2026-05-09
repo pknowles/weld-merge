@@ -199,6 +199,31 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		return conflictUri;
 	}
 
+	private static _formatWebviewException(
+		error: unknown,
+		command: WebviewMessage["command"],
+	): { title: string; message: string; details?: string | undefined } {
+		const title =
+			command === "ready"
+				? "Error: exception during ready callback"
+				: `Error: exception while handling '${command}'`;
+		if (error instanceof Error) {
+			const message =
+				error.name === "Error"
+					? error.message
+					: `${error.name}: ${error.message}`;
+			return {
+				title,
+				message,
+				details: error.stack,
+			};
+		}
+		return {
+			title,
+			message: String(error),
+		};
+	}
+
 	static async getCurrentConflictStateKey(
 		repository: GitApiRepository,
 	): Promise<string | undefined> {
@@ -386,33 +411,43 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 
 		const messageListener = webviewPanel.webview.onDidReceiveMessage(
 			async (msg: WebviewMessage) => {
-				if (msg.command === "ready") {
-					await this._handleReadyMessage(
-						readyState,
-						{
-							document,
-							webviewPanel,
-							repoContext,
-							editState,
-							disposables,
-							stagesPromise,
-						},
-						config,
-					);
-					return;
-				}
+				try {
+					if (msg.command === "ready") {
+						await this._handleReadyMessage(
+							readyState,
+							{
+								document,
+								webviewPanel,
+								repoContext,
+								editState,
+								disposables,
+								stagesPromise,
+							},
+							config,
+						);
+						return;
+					}
 
-				if (!readyState.snapshot) {
-					// Non-ready messages before the snapshot is computed are dropped.
-					return;
-				}
+					if (!readyState.snapshot) {
+						// Non-ready messages before the snapshot is computed are dropped.
+						return;
+					}
 
-				await this._handleMessage(msg, {
-					document,
-					webviewPanel,
-					repoContext,
-					editState,
-				});
+					await this._handleMessage(msg, {
+						document,
+						webviewPanel,
+						repoContext,
+						editState,
+					});
+				} catch (error) {
+					await webviewPanel.webview.postMessage({
+						command: "error",
+						...MeldCustomEditorProvider._formatWebviewException(
+							error,
+							msg.command,
+						),
+					});
+				}
 			},
 		);
 		disposables.push(messageListener);

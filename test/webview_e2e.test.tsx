@@ -150,6 +150,31 @@ describe("Webview E2E - Chunk Actions", () => {
 		const mergedEditor = await runTestCase(tc);
 		expect(mergedEditor?.getValue()).toBe(tc.expected);
 	});
+
+	it("renders ready callback exceptions as an obvious error alert", async () => {
+		render(<App />);
+
+		await act(() => {
+			window.dispatchEvent(
+				new MessageEvent("message", {
+					data: {
+						command: "error",
+						title: "Error: exception during ready callback",
+						message: "Cannot load tracked.txt",
+						details: "Error: Cannot load tracked.txt\n    at test",
+					},
+					origin: "*",
+				}),
+			);
+		});
+
+		expect(screen.getByRole("alert")).toHaveTextContent(
+			"Error: exception during ready callback",
+		);
+		expect(screen.getByRole("alert")).toHaveTextContent(
+			"Cannot load tracked.txt",
+		);
+	});
 });
 
 const setupApp = async () => {

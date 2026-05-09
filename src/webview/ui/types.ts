@@ -72,6 +72,12 @@ export interface BaseDiffPayload {
 	diffs: DiffChunk[];
 }
 
+export interface WebviewErrorPayload {
+	title: string;
+	message: string;
+	details?: string | undefined;
+}
+
 export const DIFF_WIDTH = 40;
 export const ANIMATION_DURATION = 430;
 export const ANIMATION_TRANSITION = "margin 0.4s cubic-bezier(0.4, 0, 0.2, 1)";

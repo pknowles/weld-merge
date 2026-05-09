@@ -17,6 +17,7 @@ import type {
 	FileState,
 	Highlight as MeldHighlight,
 	MonacoContentChange,
+	WebviewErrorPayload,
 } from "./types.ts";
 import { ANIMATION_DURATION, DIFF_WIDTH } from "./types.ts";
 import { useClipboardOverrides } from "./useClipboardOverrides.ts";
@@ -24,6 +25,50 @@ import { useSynchronizedScrolling } from "./useSynchronizedScrolling.ts";
 import { useVscodeMessageBus } from "./useVSCodeMessageBus.ts";
 
 const DEFAULT_DEBOUNCE_DELAY = 300;
+
+const LoadingError: FC<{ error: WebviewErrorPayload }> = ({ error }) => (
+	<div
+		role="alert"
+		style={{
+			color: "var(--vscode-foreground)",
+			backgroundColor: "var(--vscode-editor-background)",
+			borderLeft: "4px solid var(--vscode-errorForeground, #f48771)",
+			margin: "20px",
+			padding: "12px 16px",
+			fontFamily: "var(--vscode-font-family, sans-serif)",
+			maxWidth: "900px",
+			whiteSpace: "normal",
+		}}
+	>
+		<div
+			style={{
+				color: "var(--vscode-errorForeground, #f48771)",
+				fontWeight: 700,
+				marginBottom: "8px",
+			}}
+		>
+			{error.title}
+		</div>
+		<div style={{ marginBottom: error.details ? "12px" : 0 }}>
+			{error.message}
+		</div>
+		{error.details ? (
+			<pre
+				style={{
+					backgroundColor:
+						"var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.12))",
+					color: "var(--vscode-editor-foreground)",
+					margin: 0,
+					overflowX: "auto",
+					padding: "8px",
+					whiteSpace: "pre-wrap",
+				}}
+			>
+				{error.details}
+			</pre>
+		) : null}
+	</div>
+);
 
 const GlobalStyles: FC = () => (
 	<style>
@@ -284,6 +329,7 @@ const useAppCoreData = () => {
 		useState(true);
 	const [isConflicted, setIsConflicted] = useState(true);
 	const [renderTrigger, setRenderTrigger] = useState(0);
+	const [error, setError] = useState<WebviewErrorPayload | null>(null);
 	const editorRefArray = useRef<editor.IStandaloneCodeEditor[]>([]);
 	const diffsAreReversedRef = useRef<boolean[]>([false, true, false, false]);
 	return {
@@ -308,6 +354,8 @@ const useAppCoreData = () => {
 		setIsConflicted,
 		renderTrigger,
 		setRenderTrigger,
+		error,
+		setError,
 		editorRefArray,
 		diffsAreReversedRef,
 	};
@@ -337,6 +385,7 @@ const useAppStateMessageHandlers = (
 		setBaseCompareHighlighting: d.setBaseCompareHighlighting,
 		setIsConflicted: d.setIsConflicted,
 		setRenderTrigger: d.setRenderTrigger,
+		setError: d.setError,
 		commitModelUpdate,
 		resolveClipboardRead: s.resolveClipboardRead,
 		vscodeApi: s.vscodeApi,
@@ -457,6 +506,7 @@ const useAppState = () => {
 
 	return {
 		files: d.files,
+		error: d.error,
 		uiState,
 		uiActions,
 		applyExternalEditsRef: d.applyExternalEditsRef,
@@ -464,7 +514,8 @@ const useAppState = () => {
 };
 
 export const App: FC = () => {
-	const { files, uiState, uiActions, applyExternalEditsRef } = useAppState();
+	const { files, error, uiState, uiActions, applyExternalEditsRef } =
+		useAppState();
 
 	if (files[1] === null) {
 		return (
@@ -475,7 +526,7 @@ export const App: FC = () => {
 					fontFamily: "sans-serif",
 				}}
 			>
-				Loading Diff...
+				{error ? <LoadingError error={error} /> : "Loading Diff..."}
 			</div>
 		);
 	}

@@ -18,3 +18,14 @@
   - `restoreConflictedFile - stage detection` verifies native delete/modify conflicts stay unresolved after restore.
   - `restoreConflictedFile - after dialog resolution` verifies restore recreates the unmerged index after a user has already staged Keep/Delete through the dialog.
   - `assertDeleteModifyConflictRestored()` checks the working-tree content, `git ls-files -u` stages, and `git status --short` conflict code (`DU`/`UD`).
+
+## Webview Ready Error Surface
+
+- `src/webview/meldWebviewPanel.ts`
+  - `_formatWebviewException()` turns exceptions thrown while handling webview messages into structured error payloads. The ready callback title is intentionally explicit: `Error: exception during ready callback`.
+
+- `src/webview/ui/App.tsx`
+  - `LoadingError` renders structured error payloads as an alert while the merge editor is still waiting for initial diff data.
+
+- `test/webview_e2e.test.tsx`
+  - `renders ready callback exceptions as an obvious error alert` verifies the webview displays the structured error title and message.
