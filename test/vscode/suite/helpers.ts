@@ -1,11 +1,16 @@
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { readFileSync, writeFileSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Uri } from "vscode";
-import type { GitApiRepository } from "../../../src/repoContext.ts";
+import type {
+	GitApiRepository,
+	RepoContext,
+} from "../../../src/repoContext.ts";
 import { getGitApi } from "../../../src/repoContext.ts";
+
+const LS_FILES_STAGE_REGEX = /^\S+ \S+ (\d+)\t/;
 
 function runGit(args: string[], cwd: string): string {
 	return execFileSync("git", args, {
@@ -199,7 +204,71 @@ function waitForMergeChanges(
 	});
 }
 
+// Creates a repo, sets up a conflict, opens it in the git extension, runs the
+// test callback with the repo path and repository, then cleans up.
+async function withConflictRepo(
+	prefix: string,
+	makeConflictFn: (repoPath: string) => void,
+	testFn: (repoPath: string, repo: GitApiRepository) => Promise<void>,
+): Promise<void> {
+	const repoPath = await makeRepo(prefix);
+	makeConflictFn(repoPath);
+	await openRepoInGitExtension(repoPath);
+	const repo = getGitApi().getRepository(Uri.file(repoPath));
+	if (!repo) {
+		throw new Error(`Expected git repository at ${repoPath}`);
+	}
+	await waitForMergeChanges(repo, 1);
+	try {
+		await testFn(repoPath, repo);
+	} finally {
+		const closePromise = waitForRepoClose(repoPath);
+		await rm(repoPath, { recursive: true, force: true });
+		await closePromise;
+	}
+}
+
+// Builds a RepoContext for a file in an already-open repository.
+function getRepoContext(repoPath: string, fileName: string): RepoContext {
+	const repo = getGitApi().getRepository(Uri.file(repoPath));
+	if (!repo) {
+		throw new Error(`Expected git repository at ${repoPath}`);
+	}
+	return {
+		uri: Uri.file(join(repoPath, fileName)),
+		rootUri: Uri.file(repoPath),
+		repository: repo,
+	};
+}
+
+// Returns the set of index stage numbers present for a file (from git ls-files -u).
+function lsFilesStages(repoPath: string, fileName: string): Set<number> {
+	const output = runGit(
+		["ls-files", "-u", "--", join(repoPath, fileName)],
+		repoPath,
+	);
+	const stages = new Set<number>();
+	for (const line of output.split("\n")) {
+		const match = LS_FILES_STAGE_REGEX.exec(line);
+		if (match) {
+			stages.add(Number(match[1]));
+		}
+	}
+	return stages;
+}
+
+// Returns working-tree file content, or null if the file does not exist.
+function workingTreeContent(repoPath: string, fileName: string): string | null {
+	try {
+		return readFileSync(join(repoPath, fileName), "utf8");
+	} catch {
+		return null;
+	}
+}
+
 export {
+	getRepoContext,
+	lsFilesStages,
 	makeBothAddedConflict,
 	makeConflict,
 	makeDeletedByThemConflict,
@@ -211,4 +280,6 @@ export {
 	runGit,
 	waitForMergeChanges,
 	waitForRepoClose,
+	withConflictRepo,
+	workingTreeContent,
 };

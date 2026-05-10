@@ -1,5 +1,6 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
+import { relative, sep } from "node:path";
 import {
 	commands,
 	type Disposable,
@@ -12,9 +13,15 @@ import {
 	workspace,
 } from "vscode";
 import {
+	type ConflictState,
 	execGit,
+	execGitWithInput,
+	GIT_STATUS_BOTH_DELETED,
+	GIT_STATUS_DELETED_BY_THEM,
+	GIT_STATUS_DELETED_BY_US,
 	getConflictedFiles,
 	getUnresolvedReasons,
+	readConflictState,
 } from "./gitUtils.ts";
 import { getWeldLogChannel, initializeWeldLogChannel } from "./log.ts";
 import { GitTextMerger } from "./matchers/gitTextMerger.ts";
@@ -29,6 +36,16 @@ import { ConflictedFilesProvider, type GitFile } from "./treeView.ts";
 import { MeldCustomEditorProvider } from "./webview/meldWebviewPanel.ts";
 
 const lastConflictedFilesPerRepo: Map<string, Set<string>> = new Map();
+const ZERO_OBJECT_ID = "0000000000000000000000000000000000000000";
+const LS_TREE_ENTRY_REGEX = /^(\d{6})\s+\S+\s+([0-9a-fA-F]+)\t/;
+const CHECKOUT_MISSING_STAGES_REGEX =
+	/path ['"].+['"] does not have all necessary versions/;
+
+interface TreeEntry {
+	mode: string;
+	objectId: string;
+}
+
 function getErrorMessage(error: unknown): string {
 	if (error instanceof Error) {
 		const messages: string[] = [];
@@ -223,6 +240,27 @@ async function handleOpenMeldDiff(file?: GitFile) {
 	if (!repoContext) {
 		return;
 	}
+	const conflictStatus = repoContext.repository.state.mergeChanges.find(
+		(c) => c.uri.fsPath === repoContext.uri.fsPath,
+	)?.status;
+	if (conflictStatus === GIT_STATUS_BOTH_DELETED) {
+		window.showErrorMessage(
+			`Unexpected conflict state for ${repoContext.uri.fsPath}: both sides deleted this file. Git should have auto-resolved this.`,
+		);
+		return;
+	}
+	if (
+		conflictStatus === GIT_STATUS_DELETED_BY_US ||
+		conflictStatus === GIT_STATUS_DELETED_BY_THEM
+	) {
+		const remainingStage =
+			conflictStatus === GIT_STATUS_DELETED_BY_US ? 3 : 2;
+		await MeldCustomEditorProvider.handleDeleteModifyConflict(
+			repoContext,
+			remainingStage,
+		);
+		return;
+	}
 	commands.executeCommand(
 		"vscode.openWith",
 		repoContext.uri,
@@ -246,6 +284,76 @@ function splitLines(text: string) {
 		lines.pop();
 	}
 	return lines;
+}
+
+function getRepoRelativePath(rootPath: string, filePath: string): string {
+	const repoRelativePath = relative(rootPath, filePath).split(sep).join("/");
+	if (
+		repoRelativePath.length === 0 ||
+		repoRelativePath.startsWith("../") ||
+		repoRelativePath === ".." ||
+		repoRelativePath.includes("\n") ||
+		repoRelativePath.includes("\t")
+	) {
+		throw new Error(`Cannot restore ${filePath}: invalid repository path.`);
+	}
+	return repoRelativePath;
+}
+
+function parseTreeEntry(
+	output: string,
+	ref: string,
+	filePath: string,
+): TreeEntry {
+	const match = LS_TREE_ENTRY_REGEX.exec(output);
+	if (!(match?.[1] && match[2])) {
+		throw new Error(
+			`Cannot restore ${filePath}: ${ref} has no tree entry.`,
+		);
+	}
+	return { mode: match[1], objectId: match[2] };
+}
+
+async function readTreeEntry(
+	ref: string,
+	repoRelativePath: string,
+	cwd: string,
+	filePath: string,
+): Promise<TreeEntry> {
+	const output = await execGit(["ls-tree", ref, "--", repoRelativePath], cwd);
+	return parseTreeEntry(output, ref, filePath);
+}
+
+function isCheckoutMissingStagesError(error: unknown): boolean {
+	return CHECKOUT_MISSING_STAGES_REGEX.test(getErrorMessage(error));
+}
+
+async function restoreDeleteModifyConflict(
+	repoContext: RepoContext,
+	survivingRef: "HEAD" | ConflictState["otherRef"],
+	survivingStage: 2 | 3,
+	mergeBase: string,
+): Promise<void> {
+	const { uri, rootUri } = repoContext;
+	const filePath = uri.fsPath;
+	const cwd = rootUri.fsPath;
+	const repoRelativePath = getRepoRelativePath(cwd, filePath);
+	const [baseEntry, survivingEntry] = await Promise.all([
+		readTreeEntry(mergeBase, repoRelativePath, cwd, filePath),
+		readTreeEntry(survivingRef, repoRelativePath, cwd, filePath),
+	]);
+
+	await execGit(["checkout", survivingRef, "--", repoRelativePath], cwd);
+	await execGitWithInput(
+		["update-index", "--index-info"],
+		cwd,
+		[
+			`0 ${ZERO_OBJECT_ID}\t${repoRelativePath}`,
+			`${baseEntry.mode} ${baseEntry.objectId} 1\t${repoRelativePath}`,
+			`${survivingEntry.mode} ${survivingEntry.objectId} ${survivingStage}\t${repoRelativePath}`,
+			"",
+		].join("\n"),
+	);
 }
 
 // Runs Weld's three-way merge for a single conflicted file and writes the
@@ -416,10 +524,7 @@ async function handleCheckoutConflicted(
 	}
 
 	try {
-		await execGit(
-			["checkout", "-m", "--", repoContext.uri.fsPath],
-			repoContext.rootUri.fsPath,
-		);
+		await restoreConflictedFile(repoContext);
 		MeldCustomEditorProvider.onRequestRefresh.fire(documentUri);
 		window.showInformationMessage(
 			`Checked out conflicted version of ${repoContext.uri}`,
@@ -430,6 +535,54 @@ async function handleCheckoutConflicted(
 		window.showErrorMessage(message);
 		getWeldLogChannel().error(message);
 	}
+}
+
+// git checkout -m fails for delete/modify conflicts because one index stage is
+// absent. Instead: try checkout -m first (works for both-modified). If that
+// fails, detect the deleted side, restore the surviving content, and recreate
+// the unmerged index stages so Git still reports the delete/modify conflict.
+async function restoreConflictedFile(repoContext: RepoContext): Promise<void> {
+	const { uri, rootUri, repository } = repoContext;
+	const filePath = uri.fsPath;
+	const cwd = rootUri.fsPath;
+	try {
+		await execGit(["checkout", "-m", "--", filePath], cwd);
+		return;
+	} catch (error: unknown) {
+		if (!isCheckoutMissingStagesError(error)) {
+			throw new Error(
+				`Cannot restore ${filePath}: checkout -m failed unexpectedly: ${getErrorMessage(error)}`,
+				{ cause: error },
+			);
+		}
+	}
+	const conflictState = await readConflictState(repository);
+	if (!conflictState) {
+		throw new Error(
+			`Cannot restore ${filePath}: no active merge/cherry-pick/rebase state found.`,
+		);
+	}
+	const { otherRef } = conflictState;
+	const mergeBase = await repository.getMergeBase("HEAD", otherRef);
+	const localDiff = await execGit(
+		["diff", "--name-status", mergeBase, "HEAD", "--", filePath],
+		cwd,
+	);
+	if (localDiff.trimStart().startsWith("D")) {
+		await restoreDeleteModifyConflict(repoContext, otherRef, 3, mergeBase);
+		return;
+	}
+	const remoteDiff = await execGit(
+		["diff", "--name-status", mergeBase, otherRef, "--", filePath],
+		cwd,
+	);
+	if (remoteDiff.trimStart().startsWith("D")) {
+		await restoreDeleteModifyConflict(repoContext, "HEAD", 2, mergeBase);
+		return;
+	}
+	throw new Error(
+		`Cannot restore ${filePath}: checkout -m failed but neither side appears to have deleted it.`,
+	);
 }
 
 async function handleRerereForget(
@@ -632,6 +785,7 @@ function setupGitRepoWatchers(
 export interface WeldExtensionApi {
 	setInitialConflictContent: typeof MeldCustomEditorProvider.setInitialConflictContent;
 	meldCustomEditorProvider: typeof MeldCustomEditorProvider;
+	restoreConflictedFile: typeof restoreConflictedFile;
 }
 
 export function activate(context: ExtensionContext): WeldExtensionApi {
@@ -645,6 +799,7 @@ export function activate(context: ExtensionContext): WeldExtensionApi {
 		setInitialConflictContent:
 			MeldCustomEditorProvider.setInitialConflictContent,
 		meldCustomEditorProvider: MeldCustomEditorProvider,
+		restoreConflictedFile,
 	};
 }
 

@@ -1,6 +1,6 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { FileType, Uri, workspace } from "vscode";
 import { getGitExecutable } from "./gitPath.ts";
 import type { GitApiRepository } from "./repoContext.ts";
@@ -148,14 +148,49 @@ function execGit(args: string[], cwd: string): Promise<string> {
 			getGitExecutable(),
 			args,
 			{ cwd, maxBuffer: MAX_BUFFER_SIZE },
-			(err, stdout) => {
+			(err, stdout, stderr) => {
 				if (err) {
-					reject(err);
+					reject(
+						new Error(
+							`git ${args.join(" ")} failed: ${stderr || err.message}`,
+							{ cause: err },
+						),
+					);
 				} else {
 					resolve(stdout);
 				}
 			},
 		);
+	});
+}
+
+function execGitWithInput(
+	args: string[],
+	cwd: string,
+	input: string,
+): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const child = spawn(getGitExecutable(), args, {
+			cwd,
+			stdio: ["pipe", "pipe", "pipe"],
+		});
+		const stdoutChunks: Buffer[] = [];
+		const stderrChunks: Buffer[] = [];
+		child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+		child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+		child.on("error", reject);
+		child.on("close", (code) => {
+			if (code === 0) {
+				resolve(Buffer.concat(stdoutChunks).toString("utf8"));
+				return;
+			}
+			reject(
+				new Error(
+					`git ${args.join(" ")} failed with exit code ${code}: ${Buffer.concat(stderrChunks).toString("utf8")}`,
+				),
+			);
+		});
+		child.stdin.end(input);
 	});
 }
 
@@ -206,6 +241,7 @@ const GIT_STATUS_BOTH_DELETED = 17; // both sides deleted — should be auto-res
 export type { ConflictState };
 export {
 	execGit,
+	execGitWithInput,
 	GIT_STATUS_BOTH_ADDED,
 	GIT_STATUS_BOTH_DELETED,
 	GIT_STATUS_DELETED_BY_THEM,

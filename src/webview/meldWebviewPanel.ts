@@ -284,8 +284,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 				conflictStatus === GIT_STATUS_DELETED_BY_US ? 3 : 2;
 			webviewPanel.webview.html =
 				"<p>Delete/modify conflict. Use the prompt above to resolve.</p>";
-			this._handleDeleteModifyConflict(
-				document,
+			MeldCustomEditorProvider.handleDeleteModifyConflict(
 				repoContext,
 				remainingStage,
 			).catch((error: unknown) => {
@@ -304,8 +303,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		this._initializeWebview(document, webviewPanel, repoContext);
 	}
 
-	private async _handleDeleteModifyConflict(
-		document: TextDocument,
+	static async handleDeleteModifyConflict(
 		repoContext: RepoContext,
 		remainingStage: 2 | 3,
 	): Promise<void> {
@@ -313,27 +311,30 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		const remainingLabel = remainingStage === 2 ? "Local" : "Remote";
 		const deletedLabel = remainingStage === 2 ? "Remote" : "Local";
 		const gitApi = getGitApi();
-		const baseUri = gitApi.toGitUri(document.uri, ":1");
-		const remainingUri = gitApi.toGitUri(
-			document.uri,
-			`:${remainingStage}`,
-		);
-		try {
-			await commands.executeCommand(
-				"vscode.diff",
-				baseUri,
-				remainingUri,
-				`${basename(uri.fsPath)} (Base ↔ ${remainingLabel})`,
-			);
-		} catch (e) {
-			const err = e instanceof Error ? e.message : String(e);
-			window.showErrorMessage(`Failed to open diff: ${err}`);
-		}
+		const baseUri = gitApi.toGitUri(uri, ":1");
+		const remainingUri = gitApi.toGitUri(uri, `:${remainingStage}`);
+		const diffTitle = `${basename(uri.fsPath)} (Base ↔ ${remainingLabel})`;
 		const choice = await window.showWarningMessage(
 			`Delete/modify conflict: ${deletedLabel} deleted "${basename(uri.fsPath)}" but ${remainingLabel} modified it.`,
+			{ modal: true },
 			"Keep File",
 			"Delete File",
+			"Compare",
 		);
+		if (choice === "Compare") {
+			try {
+				await commands.executeCommand(
+					"vscode.diff",
+					baseUri,
+					remainingUri,
+					diffTitle,
+				);
+			} catch (e) {
+				const err = e instanceof Error ? e.message : String(e);
+				window.showErrorMessage(`Failed to open diff: ${err}`);
+			}
+			return;
+		}
 		if (choice === "Keep File") {
 			await repository.add([uri.fsPath]);
 		} else if (choice === "Delete File") {

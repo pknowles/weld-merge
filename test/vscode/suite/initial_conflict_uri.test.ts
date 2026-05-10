@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, it } from "mocha";
+import sinon from "sinon";
 import {
 	commands,
 	EventEmitter,
@@ -77,12 +78,14 @@ describe("error propagation and tree UI errors (VS Code host)", () => {
 	// Top-level failure: entire tree replaced with single error item
 	it("shows a single top-level tree error item when list loading fails", async () => {
 		const provider = new ConflictedFilesProvider();
-		const target = provider as unknown as {
-			_getRootChildren: () => Promise<unknown[]>;
-		};
-		const originalGetRootChildren = target._getRootChildren.bind(provider);
-		target._getRootChildren = () =>
-			Promise.reject(new Error("forced top-level failure"));
+		const stub = sinon
+			.stub(
+				provider as unknown as {
+					_getRootChildren: () => Promise<unknown[]>;
+				},
+				"_getRootChildren",
+			)
+			.rejects(new Error("forced top-level failure"));
 		try {
 			const children = await provider.getChildren();
 			assert.equal(children.length, 1);
@@ -91,7 +94,7 @@ describe("error propagation and tree UI errors (VS Code host)", () => {
 			assert.equal(first.label, "Failed to list conflicts");
 			assert.match(String(first.description), TOP_LEVEL_FAILURE_REGEX);
 		} finally {
-			target._getRootChildren = originalGetRootChildren;
+			stub.restore();
 		}
 	});
 
@@ -184,22 +187,24 @@ describe("autoMergeAll command error propagation (VS Code host)", () => {
 			add: () => Promise.reject(new Error("not used")),
 		};
 
-		gitExt.exports.getAPI = (version: number) => {
-			const realApi = origGetAPI(version);
-			Object.defineProperty(realApi, "repositories", {
-				get: () => [mockRepo],
-				configurable: true,
+		const getAPIStub = sinon
+			.stub(gitExt.exports, "getAPI")
+			.callsFake((...args: unknown[]) => {
+				const realApi = origGetAPI(args[0] as number);
+				Object.defineProperty(realApi, "repositories", {
+					get: () => [mockRepo],
+					configurable: true,
+				});
+				const origGetRepo = realApi.getRepository.bind(realApi);
+				realApi.getRepository = (uri: Uri) => {
+					getRepositoryCalls.push(uri.toString());
+					if (uri.toString() === workspaceUri.toString()) {
+						return mockRepo;
+					}
+					return origGetRepo(uri);
+				};
+				return realApi;
 			});
-			const origGetRepo = realApi.getRepository.bind(realApi);
-			realApi.getRepository = (uri: Uri) => {
-				getRepositoryCalls.push(uri.toString());
-				if (uri.toString() === workspaceUri.toString()) {
-					return mockRepo;
-				}
-				return origGetRepo(uri);
-			};
-			return realApi;
-		};
 
 		try {
 			let commandError: unknown;
@@ -229,7 +234,7 @@ describe("autoMergeAll command error propagation (VS Code host)", () => {
 				`Error didn't match.\n${debugInfo}`,
 			);
 		} finally {
-			gitExt.exports.getAPI = origGetAPI;
+			getAPIStub.restore();
 			changeEmitter.dispose();
 		}
 	});
