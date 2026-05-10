@@ -58,7 +58,6 @@ export interface WebviewPayload {
 		diffs: PayloadDiffs;
 		isConflicted: boolean;
 		config?: {
-			debounceDelay: number;
 			syntaxHighlighting: boolean;
 			baseCompareHighlighting: boolean;
 			smoothScrolling: boolean;

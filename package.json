@@ -186,11 +186,6 @@
 		"configuration": {
 			"title": "Weld Merge",
 			"properties": {
-				"weld.mergeEditor.debounceDelay": {
-					"type": "integer",
-					"default": 300,
-					"description": "Delay in milliseconds before recomputing diff highlights while typing in the merge editor."
-				},
 				"weld.mergeEditor.syntaxHighlighting": {
 					"type": "boolean",
 					"default": true,

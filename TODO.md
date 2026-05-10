@@ -215,6 +215,8 @@ Gemini's summary of jscpd (currently thresholded in `.jscpd.json`):
     - Keep effect dep arrays narrow and stable; if a dep is a new object each render, hoist it or memoize it at the source rather than widening the dep list.
   - *Ratchet render-count baselines after the real fix*: `test/webview_render_count.test.tsx` pins today's App-level render counts via React's `Profiler` API. Observed today: mount + `loadDiff` = 5 commits; single user edit in merged = 1 commit. The per-edit number is already optimal — but it's only that low because the test runs a single edit inside one `act()` batch; multi-pane scroll sync, layout change cascades, and the `renderTrigger` global invalidator (every Monaco `onDidChangeContent` / `onDidLayoutChange` bumps App) will show up as soon as realistic scenarios are tested. Add scenarios (initial scroll, `fullSync`, compare-with-base toggle, typing with layout changes) as `renderTrigger` is removed, and lower the `EXPECTED_*` constants at the top of that file each time. Do not raise a baseline to accommodate a new regression.
 
+Rename _mergeCache. It's more of a "current merged change list" than a cache. Maybe mergedDiffChunks?
+
 ## Testing Improvements
 
 Add tests for opening deleted-by-us and deleted-by-them conflicts that have been resolved as deleting. Currently I think we still try to open these files even though they don't exist on disk.

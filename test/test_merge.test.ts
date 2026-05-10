@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { beforeEach, describe, it } from "@jest/globals";
+import { beforeEach, describe, expect, it } from "@jest/globals";
 import { Merger } from "../src/matchers/merge.ts";
 
 describe("Merger", () => {
@@ -80,5 +80,44 @@ describe("End-to-End Meld Parity", () => {
 			// Note: Since our version drops trailing newlines from lines and expected includes them (because of "\n".join())
 			expect(finalMergedText).toBe(expected[i]);
 		}
+	});
+});
+
+describe("trailing newline preservation", () => {
+	it("round-trip: file content with trailing newline is reconstructed exactly", () => {
+		const fileContent = "a\nb\nc\n";
+		const lines = fileContent.split("\n");
+		const merger = new Merger();
+		merger.initialize([lines, lines, lines], [lines, lines, lines]);
+		expect(merger.merge3Files(true)).toBe(fileContent);
+	});
+
+	it("round-trip: file content without trailing newline is reconstructed exactly", () => {
+		const fileContent = "a\nb\nc";
+		const lines = fileContent.split("\n");
+		const merger = new Merger();
+		merger.initialize([lines, lines, lines], [lines, lines, lines]);
+		expect(merger.merge3Files(true)).toBe(fileContent);
+	});
+
+	it("trailing newline is preserved when local and remote differ", () => {
+		const local = "a\nb_local\nc\n".split("\n");
+		const base = "a\nb\nc\n".split("\n");
+		const remote = "a\nb_remote\nc\n".split("\n");
+		const merger = new Merger();
+		merger.initialize([local, base, remote], [local, base, remote]);
+		expect(merger.merge3Files(true).endsWith("\n")).toBe(true);
+	});
+
+	it("trailing newline is preserved after an incremental edit", () => {
+		const base = "a\nb\nc\n".split("\n");
+		const local = "a\nb\nc\n".split("\n");
+		const remote = "a\nb\nc\n".split("\n");
+		const merger = new Merger();
+		merger.initialize([local, base, remote], [local, base, remote]);
+		const edited = "a\nX\nc\n".split("\n");
+		merger.texts = [local, edited, remote];
+		merger.differ.changeSequence(1, 1, 0, [local, edited, remote]);
+		expect(merger.merge3Files(true).endsWith("\n")).toBe(true);
 	});
 });

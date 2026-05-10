@@ -43,6 +43,12 @@ Stop here and ask the user to check your progress.
 8. Replace any useless tests you found with test that would catch incorrect usage and repeat the above negative testing thought experiment.
 9. Review to ensure we’re not adding brittle, tautological tests that would fail on valid implementation changes
 
+Review before and after implementing.
+
+10. Do your tests test real project code? I.e. you're not reimplementing anything.
+11. Do your tests verify output and results? I.e. they are not verifying implementation details.
+12. Do you have a broad sampling of input data to pipeclean all the code paths, both common and edge cases?
+
 ## Mistakes
 
 The following code is a bug. Yes, showing this runs the risk of encouraging LLMs

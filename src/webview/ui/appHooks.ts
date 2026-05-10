@@ -9,6 +9,10 @@ import {
 	getChunkText,
 } from "./editorActions.ts";
 import { getPaneHighlights } from "./highlightUtil.ts";
+import {
+	applyMeldStyleContentChanges,
+	contentChangeForFullReplacement,
+} from "./mergedPaneEdits.ts";
 import type {
 	BaseDiffPayload,
 	DiffChunk,
@@ -66,13 +70,12 @@ interface MessageHandlersDeps {
 	setFiles: (f: PaneFiles) => void;
 	setDiffs: (d: PaneDiffs) => void;
 	setLastExternalChangeVersion: (v: number) => void;
-	setDebounceDelay: (d: number) => void;
 	setSyntaxHighlighting: (s: boolean) => void;
 	setBaseCompareHighlighting: (b: boolean) => void;
 	setIsConflicted: (isConflicted: boolean) => void;
 	setRenderTrigger: (p: (p: number) => number) => void;
 	setError: (error: WebviewErrorPayload) => void;
-	commitModelUpdate: (v: string) => void;
+	commitMergedContentChanges: (changes: MonacoContentChange[]) => void;
 	resolveClipboardRead: (id: number, text: string) => void;
 	vscodeApi: ReturnType<typeof useVscodeMessageBus>;
 	differRef: React.MutableRefObject<Differ | null>;
@@ -90,7 +93,6 @@ interface LoadDiffData {
 	diffs: PayloadDiffs;
 	isConflicted?: boolean;
 	config: {
-		debounceDelay?: number;
 		syntaxHighlighting?: boolean;
 		baseCompareHighlighting?: boolean;
 	};
@@ -100,9 +102,6 @@ interface LoadDiffData {
 function handleConfig(config: LoadDiffData["config"], p: MessageHandlersDeps) {
 	if (!config) {
 		return;
-	}
-	if (config.debounceDelay !== undefined) {
-		p.setDebounceDelay(config.debounceDelay);
 	}
 	if (config.syntaxHighlighting !== undefined) {
 		p.setSyntaxHighlighting(config.syntaxHighlighting);
@@ -201,6 +200,7 @@ function handleExternalEdit(
 		p.lastExternalChangeVersionRef.current = m.lastExternalChangeVersion;
 		p.setLastExternalChangeVersion(m.lastExternalChangeVersion);
 		p.applyExternalEditsRef.current?.applyIncrementalEdits(m.changes);
+		p.commitMergedContentChanges(m.changes);
 	}
 }
 
@@ -212,14 +212,13 @@ function handleFullSync(
 		p.lastExternalChangeVersionRef.current = m.lastExternalChangeVersion;
 		p.setLastExternalChangeVersion(m.lastExternalChangeVersion);
 		p.applyExternalEditsRef.current?.applyFullSync(m.content);
-
-		const nF = [...p.filesRef.current] as PaneFiles;
-		if (nF[2]) {
-			nF[2] = { ...nF[2], content: m.content };
-			p.filesRef.current = nF;
-			p.setFiles(nF);
+		const mergedContent = p.filesRef.current[2]?.content;
+		if (mergedContent === undefined) {
+			throw new Error("fullSync received before merged pane loaded");
 		}
-		p.commitModelUpdate(m.content);
+		p.commitMergedContentChanges([
+			contentChangeForFullReplacement(mergedContent, m.content),
+		]);
 	}
 }
 
@@ -287,7 +286,7 @@ export function usePreviousNonNull<T>(value: T | null): T | null {
 	return value === null ? ref.current : value;
 }
 
-export function useCommitModelUpdate(deps: CommitDeps) {
+export function useCommitMergedContentChanges(deps: CommitDeps) {
 	const {
 		filesRef,
 		diffsRef,
@@ -297,50 +296,47 @@ export function useCommitModelUpdate(deps: CommitDeps) {
 		differRef,
 	} = deps;
 	return useCallback(
-		(value: string) => {
+		(changes: MonacoContentChange[]) => {
 			const cF = filesRef.current;
 			if (!(cF[1] && cF[2] && cF[3])) {
 				return;
 			}
-			const newM = value.split("\n");
-			let nD: PaneDiffs | null = null;
 			const d = differRef.current;
-			if (d) {
-				const oldM = cF[2].content.split("\n");
-				let sIdx = 0;
-				const mLen = Math.min(oldM.length, newM.length);
-				while (sIdx < mLen && oldM[sIdx] === newM[sIdx]) {
-					sIdx++;
-				}
-				d.changeSequence(1, sIdx, newM.length - oldM.length, [
-					cF[1].content.split("\n"),
-					newM,
-					cF[3].content.split("\n"),
-				]);
-
-				nD = [...diffsRef.current];
-				const leftDiffs = d._mergeCache
-					.map((p) => p[0])
-					.filter((c): c is DiffChunk => c !== null);
-				const rightDiffs = d._mergeCache
-					.map((p) => p[1])
-					.filter((c): c is DiffChunk => c !== null);
-				assertDiffChunksWellFormed(leftDiffs, "commitModelUpdate left");
-				assertDiffChunksWellFormed(
-					rightDiffs,
-					"commitModelUpdate right",
+			if (!d) {
+				throw new Error(
+					"merged content changed before differ initialized",
 				);
-				nD[1] = leftDiffs;
-				nD[2] = rightDiffs;
-				diffsRef.current = nD;
 			}
+			const value = applyMeldStyleContentChanges(
+				d,
+				cF[1].content.split("\n"),
+				cF[2].content,
+				cF[3].content.split("\n"),
+				changes,
+			);
+			const nD = [...diffsRef.current] as PaneDiffs;
+			const leftDiffs = d._mergeCache
+				.map((p) => p[0])
+				.filter((c): c is DiffChunk => c !== null);
+			const rightDiffs = d._mergeCache
+				.map((p) => p[1])
+				.filter((c): c is DiffChunk => c !== null);
+			assertDiffChunksWellFormed(
+				leftDiffs,
+				"commitMergedContentChanges left",
+			);
+			assertDiffChunksWellFormed(
+				rightDiffs,
+				"commitMergedContentChanges right",
+			);
+			nD[1] = leftDiffs;
+			nD[2] = rightDiffs;
+			diffsRef.current = nD;
 			const nF = [...cF] as PaneFiles;
 			nF[2] = { ...cF[2], content: value };
 			filesRef.current = nF;
 			setFiles(nF);
-			if (nD) {
-				setDiffs(nD);
-			}
+			setDiffs(nD);
 			setRenderTrigger((prev) => prev + 1);
 		},
 		[setFiles, setDiffs, setRenderTrigger, filesRef, diffsRef, differRef],
@@ -354,13 +350,12 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 		setFiles,
 		setDiffs,
 		setLastExternalChangeVersion,
-		setDebounceDelay,
 		setSyntaxHighlighting,
 		setBaseCompareHighlighting,
 		setIsConflicted,
 		setRenderTrigger,
 		setError,
-		commitModelUpdate,
+		commitMergedContentChanges,
 		resolveClipboardRead,
 		vscodeApi,
 		differRef,
@@ -375,13 +370,12 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 			setFiles,
 			setDiffs,
 			setLastExternalChangeVersion,
-			setDebounceDelay,
 			setSyntaxHighlighting,
 			setBaseCompareHighlighting,
 			setIsConflicted,
 			setRenderTrigger,
 			setError,
-			commitModelUpdate,
+			commitMergedContentChanges,
 			resolveClipboardRead,
 			vscodeApi,
 			differRef,
@@ -430,7 +424,7 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 		return () => window.removeEventListener("message", handleMessage);
 	}, [
 		applyExternalEditsRef,
-		commitModelUpdate,
+		commitMergedContentChanges,
 		differRef,
 		diffsRef,
 		filesRef,
@@ -438,7 +432,6 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 		resolveClipboardRead,
 		setBaseCompareHighlighting,
 		setIsConflicted,
-		setDebounceDelay,
 		setDiffs,
 		setError,
 		setFiles,

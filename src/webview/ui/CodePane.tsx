@@ -509,8 +509,9 @@ const useCodePaneSyncRefs = (
 	p: CodePaneProps,
 	sendSaveRef: React.MutableRefObject<() => void>,
 	syncActionsRef: React.MutableRefObject<{
-		sendContentChanged: (changes: editor.IModelContentChange[]) => void;
-		onEdit: (value: string | undefined, index: number) => void;
+		handleMergedContentChanged: (
+			changes: editor.IModelContentChange[],
+		) => void;
 	}>,
 ) => {
 	useEffect(() => {
@@ -519,10 +520,9 @@ const useCodePaneSyncRefs = (
 
 	useEffect(() => {
 		syncActionsRef.current = {
-			sendContentChanged: p.actions.sendContentChanged,
-			onEdit: p.actions.onEdit,
+			handleMergedContentChanged: p.actions.handleMergedContentChanged,
 		};
-	}, [p.actions.sendContentChanged, p.actions.onEdit, syncActionsRef]);
+	}, [p.actions.handleMergedContentChanged, syncActionsRef]);
 };
 
 const useCodePaneRenderTrigger = (
@@ -559,8 +559,7 @@ const useCodePaneLogic = (p: CodePaneProps) => {
 	const decRef = useRef<string[]>([]);
 	const sendSaveRef = useRef(p.actions.sendSave);
 	const syncActionsRef = useRef({
-		sendContentChanged: p.actions.sendContentChanged,
-		onEdit: p.actions.onEdit,
+		handleMergedContentChanged: p.actions.handleMergedContentChanged,
 	});
 	useCodePaneSyncRefs(p, sendSaveRef, syncActionsRef);
 	useCodePaneRenderTrigger(ed, p.actions.setRenderTrigger);
@@ -634,16 +633,14 @@ const useCodePaneLogic = (p: CodePaneProps) => {
 
 		const disposable = m.onDidChangeContent((ev) => {
 			if (!isApplyingSync.current) {
-				syncActionsRef.current.sendContentChanged(ev.changes);
+				syncActionsRef.current.handleMergedContentChanged(ev.changes);
 			}
-			const v = m.getValue();
-			syncActionsRef.current.onEdit(v, p.index);
 		});
 
 		return () => {
 			disposable.dispose();
 		};
-	}, [ed, p.isMiddle, p.index]);
+	}, [ed, p.isMiddle]);
 
 	useEffect(() => {
 		if (p.isMiddle || !ed) {

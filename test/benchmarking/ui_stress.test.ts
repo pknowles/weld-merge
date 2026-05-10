@@ -41,9 +41,7 @@ test.describe("Webview UI Stress Benchmark", () => {
 								[], // Let the app calculate diffs
 								[],
 							],
-							config: {
-								debounceDelay: 0, // For benchmarking responsiveness
-							},
+							config: {},
 						},
 					},
 					"*",

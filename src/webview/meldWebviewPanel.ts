@@ -110,8 +110,6 @@ import type {
  * ============================================================================
  */
 
-const DEFAULT_DEBOUNCE_DELAY = 300;
-
 interface ConflictStateChangeEvent {
 	repoUri: Uri;
 	stateKey: string | undefined;
@@ -697,9 +695,6 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 	private _getWebviewConfig() {
 		const config = workspace.getConfiguration("weld");
 		return {
-			debounceDelay:
-				config.get<number>("mergeEditor.debounceDelay") ??
-				DEFAULT_DEBOUNCE_DELAY,
 			syntaxHighlighting:
 				config.get<boolean>("mergeEditor.syntaxHighlighting") ?? true,
 			baseCompareHighlighting:
@@ -1086,7 +1081,6 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		webviewPanel: WebviewPanel,
 	) {
 		if (
-			e.affectsConfiguration("weld.mergeEditor.debounceDelay") ||
 			e.affectsConfiguration("weld.mergeEditor.syntaxHighlighting") ||
 			e.affectsConfiguration(
 				"weld.mergeEditor.baseCompareHighlighting",

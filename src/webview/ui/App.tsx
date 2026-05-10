@@ -1,4 +1,3 @@
-import debounce from "lodash.debounce";
 import type { editor } from "monaco-editor";
 import { type FC, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PaneDiffs, PaneFiles } from "./appHooks.ts";
@@ -7,7 +6,7 @@ import {
 	useAppHighlights,
 	useAppMessageHandlers,
 	useAppNavigation,
-	useCommitModelUpdate,
+	useCommitMergedContentChanges,
 	usePreviousNonNull,
 } from "./appHooks.ts";
 import { ErrorBoundary } from "./ErrorBoundary.tsx";
@@ -23,8 +22,6 @@ import { ANIMATION_DURATION, DIFF_WIDTH } from "./types.ts";
 import { useClipboardOverrides } from "./useClipboardOverrides.ts";
 import { useSynchronizedScrolling } from "./useSynchronizedScrolling.ts";
 import { useVscodeMessageBus } from "./useVSCodeMessageBus.ts";
-
-const DEFAULT_DEBOUNCE_DELAY = 300;
 
 const LoadingError: FC<{ error: WebviewErrorPayload }> = ({ error }) => (
 	<div
@@ -205,9 +202,8 @@ interface MeldUIActionsProps {
 	highlights: (idx: number) => MeldHighlight[];
 	requestClipboardText: () => Promise<string>;
 	writeClipboardText: (t: string) => Promise<void>;
-	commitModelUpdate: (v: string) => void;
+	commitMergedContentChanges: (changes: MonacoContentChange[]) => void;
 	setRenderTrigger: (p: (p: number) => number) => void;
-	debounceDelay: number;
 	lastExternalChangeVersionRef: React.MutableRefObject<number>;
 }
 
@@ -261,15 +257,14 @@ const useMeldUIActions = (p: MeldUIActionsProps) =>
 			getHighlights: p.highlights,
 			requestClipboardText: p.requestClipboardText,
 			writeClipboardText: p.writeClipboardText,
-			onEdit: debounce((v: string | undefined, i: number) => {
-				if (v !== undefined && i === 2) {
-					p.commitModelUpdate(v);
-				}
-			}, p.debounceDelay),
-			sendContentChanged: (changes: editor.IModelContentChange[]) => {
+			handleMergedContentChanged: (
+				changes: editor.IModelContentChange[],
+			) => {
+				const protocolChanges = changes.map(monacoChangeToProtocol);
+				p.commitMergedContentChanges(protocolChanges);
 				p.vscodeApi?.postMessage({
 					command: "contentChanged",
-					changes: changes.map(monacoChangeToProtocol),
+					changes: protocolChanges,
 					lastExternalChangeVersion:
 						p.lastExternalChangeVersionRef.current,
 				});
@@ -297,8 +292,7 @@ const useMeldUIActions = (p: MeldUIActionsProps) =>
 			p.highlights,
 			p.requestClipboardText,
 			p.writeClipboardText,
-			p.commitModelUpdate,
-			p.debounceDelay,
+			p.commitMergedContentChanges,
 			p.setRenderTrigger,
 			p.lastExternalChangeVersionRef,
 		],
@@ -323,7 +317,6 @@ const useAppCoreData = () => {
 		applyIncrementalEdits: (changes: MonacoContentChange[]) => void;
 		applyFullSync: (content: string) => void;
 	} | null>(null);
-	const [debounceDelay, setDebounceDelay] = useState(DEFAULT_DEBOUNCE_DELAY);
 	const [syntaxHighlighting, setSyntaxHighlighting] = useState(true);
 	const [baseCompareHighlighting, setBaseCompareHighlighting] =
 		useState(true);
@@ -344,8 +337,6 @@ const useAppCoreData = () => {
 		setLastExternalChangeVersion,
 		lastExternalChangeVersionRef,
 		applyExternalEditsRef,
-		debounceDelay,
-		setDebounceDelay,
 		syntaxHighlighting,
 		setSyntaxHighlighting,
 		baseCompareHighlighting,
@@ -372,7 +363,7 @@ const useAppServices = (
 const useAppStateMessageHandlers = (
 	d: ReturnType<typeof useAppCoreData>,
 	s: ReturnType<typeof useAppServices>,
-	commitModelUpdate: (v: string) => void,
+	commitMergedContentChanges: (changes: MonacoContentChange[]) => void,
 ) => {
 	useAppMessageHandlers({
 		filesRef: d.filesRef,
@@ -380,13 +371,12 @@ const useAppStateMessageHandlers = (
 		setFiles: d.setFiles,
 		setDiffs: d.setDiffs,
 		setLastExternalChangeVersion: d.setLastExternalChangeVersion,
-		setDebounceDelay: d.setDebounceDelay,
 		setSyntaxHighlighting: d.setSyntaxHighlighting,
 		setBaseCompareHighlighting: d.setBaseCompareHighlighting,
 		setIsConflicted: d.setIsConflicted,
 		setRenderTrigger: d.setRenderTrigger,
 		setError: d.setError,
-		commitModelUpdate,
+		commitMergedContentChanges,
 		resolveClipboardRead: s.resolveClipboardRead,
 		vscodeApi: s.vscodeApi,
 		differRef: d.differRef,
@@ -453,7 +443,7 @@ const useAppState = () => {
 	const prevBR = usePreviousNonNull(d.files[4]);
 	const prevDL = usePreviousNonNull(d.diffs[0]);
 	const prevDR = usePreviousNonNull(d.diffs[3]);
-	const commitModelUpdate = useCommitModelUpdate({
+	const commitMergedContentChanges = useCommitMergedContentChanges({
 		filesRef: d.filesRef,
 		diffsRef: d.diffsRef,
 		setFiles: d.setFiles,
@@ -462,7 +452,7 @@ const useAppState = () => {
 		differRef: d.differRef,
 	});
 
-	useAppStateMessageHandlers(d, s, commitModelUpdate);
+	useAppStateMessageHandlers(d, s, commitMergedContentChanges);
 
 	const { renderBL, renderBR } = useBaseAnimation(d.files);
 	const uiState = useUIState({
@@ -498,9 +488,8 @@ const useAppState = () => {
 		highlights,
 		requestClipboardText: s.requestClipboardText,
 		writeClipboardText: s.writeClipboardText,
-		commitModelUpdate,
+		commitMergedContentChanges,
 		setRenderTrigger: d.setRenderTrigger,
-		debounceDelay: d.debounceDelay,
 		lastExternalChangeVersionRef: d.lastExternalChangeVersionRef,
 	});
 
