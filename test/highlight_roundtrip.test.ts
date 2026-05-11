@@ -39,6 +39,7 @@ const toFiles = (texts: string[][]): FileState[] =>
 	texts.slice(0, 3).map((lines, i) => ({
 		label: ["local", "base", "remote"][i] ?? "",
 		content: lines.join("\n"),
+		lines,
 	}));
 
 const toWebviewFiles = (
@@ -47,9 +48,9 @@ const toWebviewFiles = (
 	remote: string[],
 ): [null, FileState, FileState, FileState, null] => [
 	null,
-	{ label: "Local", content: local.join("\n") },
-	{ label: "Merged", content: merged.join("\n") },
-	{ label: "Remote", content: remote.join("\n") },
+	{ label: "Local", content: local.join("\n"), lines: local },
+	{ label: "Merged", content: merged.join("\n"), lines: merged },
+	{ label: "Remote", content: remote.join("\n"), lines: remote },
 	null,
 ];
 

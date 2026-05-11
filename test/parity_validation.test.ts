@@ -41,6 +41,7 @@ const toFiles = (texts: string[][]): FileState[] =>
 	texts.slice(0, 3).map((lines, i) => ({
 		label: ["local", "base", "remote"][i] ?? "",
 		content: lines.join("\n"),
+		lines,
 	}));
 
 const toWebviewFiles = (
