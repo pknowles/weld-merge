@@ -8,7 +8,15 @@ interface TextPoint {
 
 const splitLines = (content: string): string[] => content.split("\n");
 
-const countLineBreaks = (text: string): number => text.split("\n").length - 1;
+const countLineBreaks = (text: string): number => {
+	let count = 0;
+	for (const char of text) {
+		if (char === "\n") {
+			count++;
+		}
+	}
+	return count;
+};
 
 const compareChangesDescending = (
 	left: MonacoContentChange,

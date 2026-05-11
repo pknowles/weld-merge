@@ -1,6 +1,12 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 import type { DiffChunkTag } from "../../matchers/myers.ts";
 
+interface WireFileState {
+	label: string;
+	content: string;
+	commit?: Commit | undefined;
+}
+
 export interface Commit {
 	hash: string;
 	title: string;
@@ -10,11 +16,8 @@ export interface Commit {
 	body: string;
 }
 
-export interface FileState {
-	label: string;
-	content: string;
-	lines?: string[];
-	commit?: Commit | undefined;
+export interface FileState extends WireFileState {
+	lines: string[];
 }
 
 export interface DiffChunk {
@@ -48,7 +51,7 @@ export interface MonacoContentChange {
 // remote) and two diff lanes (local<->merged, merged<->remote). Using tuples
 // keeps this contract in the type system so consumers cannot accidentally
 // widen to `T | undefined` and reach for `?? []` fallbacks.
-export type PayloadFiles = [FileState, FileState, FileState];
+export type PayloadFiles = [WireFileState, WireFileState, WireFileState];
 export type PayloadDiffs = [DiffChunk[], DiffChunk[]];
 
 export interface WebviewPayload {
@@ -68,7 +71,7 @@ export interface WebviewPayload {
 
 export interface BaseDiffPayload {
 	side: "left" | "right";
-	file: FileState;
+	file: WireFileState;
 	diffs: DiffChunk[];
 }
 

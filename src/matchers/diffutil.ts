@@ -117,13 +117,11 @@ class Differ {
 	_oldMergeCache = new Set<string>();
 	_changedChunks: [DiffChunk | null, DiffChunk | null] | [] = [];
 	_mergeCache: [DiffChunk | null, DiffChunk | null][] = [];
-	_lineCache: [
-		LineCacheEntry[],
-		LineCacheEntry[],
-		LineCacheEntry[],
-		LineCacheEntry[],
-		LineCacheEntry[],
-	] = [[], [], [], [], []];
+	_paneChunkBounds: [
+		{ index: number; start: number; end: number }[],
+		{ index: number; start: number; end: number }[],
+		{ index: number; start: number; end: number }[],
+	] = [[], [], []];
 	ignoreBlanks = false;
 	_initialized = false;
 	_hasMergeableChanges: [boolean, boolean, boolean, boolean] = [
@@ -200,148 +198,42 @@ class Differ {
 			}
 		}
 
-		this._updateLineCache();
+		this._updatePaneChunkBounds();
 		this.emit("diffs-changed", null);
 	}
 
-	_updateLineCache() {
-		for (const i of PANE_INDICES_5) {
-			this._lineCache[i] = new Array(this.seqLength[i] + 1).fill([
-				null,
-				null,
-				null,
-			]);
-		}
-
-		const prev: [number | null, number | null, number | null] = [
-			null,
-			null,
-			null,
-		];
-		const next: [number | null, number | null, number | null] = [
-			this._findNextChunk(0, 0, -1),
-			this._findNextChunk(0, 1, -1),
-			this._findNextChunk(1, 2, -1),
-		];
-		const oldEnd: [number, number, number] = [0, 0, 0];
-
-		for (const [i, c] of this._mergeCache.entries()) {
-			this._updateLineCacheForChunk({
-				index: i,
-				chunkPair: c,
-				prev,
-				next,
-				oldEnd,
-			});
-		}
-
-		this._fillRemainingLineCache(oldEnd, prev, next);
+	private _pushBound(
+		pane: 0 | 1 | 2,
+		index: number,
+		start: number,
+		end: number,
+	) {
+		this._paneChunkBounds[pane].push({
+			index,
+			start,
+			end: start === end ? end + 1 : end,
+		});
 	}
 
-	private _findNextChunk(
-		diffIdx: 0 | 1,
-		seq: number,
-		current: number,
-	): number | null {
-		const lastChunk = this._mergeCache.length;
-		if (seq === 1 && current + 1 < lastChunk) {
-			return current + 1;
-		}
-		for (let j = current + 1; j < lastChunk; j++) {
-			const pair = this._mergeCache[j];
-			if (pair && pair[diffIdx] !== null) {
-				return j;
-			}
-		}
-		return null;
-	}
-
-	private _updateLineCacheForChunk(params: {
-		index: number;
-		chunkPair: [DiffChunk | null, DiffChunk | null];
-		prev: [number | null, number | null, number | null];
-		next: [number | null, number | null, number | null];
-		oldEnd: [number, number, number];
-	}) {
-		const { index: i, chunkPair: c, prev, next, oldEnd } = params;
-		const seqParams = [
-			{
-				diff: 0 as const,
-				seq: 0 as const,
-				getKey: (x: DiffChunk) => [x.startB, x.endB] as const,
-			},
-			{
-				diff: 0 as const,
-				seq: 1 as const,
-				getKey: (x: DiffChunk) => [x.startA, x.endA] as const,
-			},
-			{
-				diff: 1 as const,
-				seq: 2 as const,
-				getKey: (x: DiffChunk) => [x.startB, x.endB] as const,
-			},
-		] as const;
-
-		for (const param of seqParams) {
-			const { diff: diffValue, seq: seqValue, getKey } = param;
-			let actualDiff: 0 | 1 = diffValue;
-			let chunk = c[diffValue];
-			if (chunk === null) {
-				if (seqValue === 1) {
-					actualDiff = 1;
-					chunk = c[1];
-				} else {
-					continue;
-				}
-			}
-			if (!chunk) {
+	private _updatePaneChunkBounds() {
+		this._paneChunkBounds = [[], [], []];
+		for (let i = 0; i < this._mergeCache.length; i++) {
+			const pair = this._mergeCache[i];
+			if (!pair) {
 				continue;
 			}
 
-			const [start, end] = getKey(chunk);
-			const last = oldEnd[seqValue];
-			if (start > last) {
-				for (let k = last; k < start; k++) {
-					this._lineCache[seqValue][k] = [
-						null,
-						prev[seqValue],
-						next[seqValue],
-					];
-				}
+			if (pair[0]) {
+				this._pushBound(0, i, pair[0].startB, pair[0].endB);
 			}
 
-			const realEnd = start === end ? end + 1 : end;
-			next[seqValue] = this._findNextChunk(actualDiff, seqValue, i);
-
-			for (let k = start; k < realEnd; k++) {
-				this._lineCache[seqValue][k] = [
-					i,
-					prev[seqValue],
-					next[seqValue],
-				];
+			const p1 = pair[0] || pair[1];
+			if (p1) {
+				this._pushBound(1, i, p1.startA, p1.endA);
 			}
 
-			prev[seqValue] = i;
-			oldEnd[seqValue] = realEnd;
-		}
-	}
-
-	private _fillRemainingLineCache(
-		oldEnd: [number, number, number],
-		prev: [number | null, number | null, number | null],
-		next: [number | null, number | null, number | null],
-	) {
-		for (let seq = 0; seq < THREE_PANES; seq++) {
-			const last = oldEnd[seq as 0 | 1 | 2];
-			const cache = this._lineCache[seq as 0 | 1 | 2];
-			if (last < cache.length) {
-				for (let k = last; k < cache.length; k++) {
-					cache[k] = [
-						null,
-						prev[seq as 0 | 1 | 2],
-						next[seq as 0 | 1 | 2],
-					];
-				}
+			if (pair[1]) {
+				this._pushBound(2, i, pair[1].startB, pair[1].endB);
 			}
 		}
 	}
@@ -533,12 +425,92 @@ class Differ {
 		return chunk;
 	}
 
-	locateChunk(pane: number, line: number): LineCacheEntry {
-		const cache = this._lineCache[pane as 0 | 1 | 2 | 3 | 4];
-		if (cache && line < cache.length) {
-			return cache[line] || [null, null, null];
+	private _binarySearchChunk(
+		boundsArray: { index: number; start: number; end: number }[],
+		line: number,
+	) {
+		let low = 0;
+		let high = boundsArray.length - 1;
+		let foundIndex: number | null = null;
+		let nearestIdx = -1;
+
+		while (low <= high) {
+			const mid = Math.floor((low + high) / 2);
+			const b = boundsArray[mid];
+			if (!b) {
+				break;
+			}
+
+			if (line >= b.start && line < b.end) {
+				foundIndex = b.index;
+				nearestIdx = mid;
+				break;
+			}
+			if (line < b.start) {
+				high = mid - 1;
+				nearestIdx = mid;
+			} else {
+				low = mid + 1;
+				nearestIdx = mid;
+			}
 		}
-		return [null, null, null];
+		return { foundIndex, nearestIdx };
+	}
+
+	private _resolveChunkNeighbors(
+		boundsArray: { index: number; start: number; end: number }[],
+		line: number,
+		foundIndex: number | null,
+		nearestIdx: number,
+	) {
+		const prevB = boundsArray[nearestIdx - 1];
+		const currB = boundsArray[nearestIdx];
+		const nextB = boundsArray[nearestIdx + 1];
+
+		if (foundIndex !== null) {
+			return {
+				prevIndex: prevB ? prevB.index : null,
+				nextIndex: nextB ? nextB.index : null,
+			};
+		}
+
+		if (nearestIdx !== -1 && currB) {
+			if (line < currB.start) {
+				return {
+					prevIndex: prevB ? prevB.index : null,
+					nextIndex: currB.index,
+				};
+			}
+			return {
+				prevIndex: currB.index,
+				nextIndex: nextB ? nextB.index : null,
+			};
+		}
+
+		return { prevIndex: null, nextIndex: null };
+	}
+
+	locateChunk(pane: number, line: number): LineCacheEntry {
+		if (pane < 0 || pane > 2) {
+			return [null, null, null];
+		}
+		const boundsArray = this._paneChunkBounds[pane as 0 | 1 | 2];
+		if (!boundsArray || boundsArray.length === 0) {
+			return [null, null, null];
+		}
+
+		const { foundIndex, nearestIdx } = this._binarySearchChunk(
+			boundsArray,
+			line,
+		);
+		const { prevIndex, nextIndex } = this._resolveChunkNeighbors(
+			boundsArray,
+			line,
+			foundIndex,
+			nearestIdx,
+		);
+
+		return [foundIndex, prevIndex, nextIndex];
 	}
 
 	allChanges() {

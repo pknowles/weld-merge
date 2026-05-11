@@ -8,11 +8,8 @@ interface ReplaceContext {
 	outerFile: FileState;
 }
 
-const getFileLines = (file: FileState): string[] =>
-	file.lines ?? file.content.split("\n");
-
 const sliceText = (file: FileState, startLine: number, endLine: number) => {
-	const lines = getFileLines(file).slice(startLine, endLine);
+	const lines = file.lines.slice(startLine, endLine);
 	return `${lines.join("\n")}${lines.length > 0 ? "\n" : ""}`;
 };
 
