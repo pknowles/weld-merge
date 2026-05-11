@@ -11,7 +11,8 @@ import {
 import { getPaneHighlights } from "./highlightUtil.ts";
 import {
 	applyMeldStyleContentChanges,
-	contentChangeForFullReplacement,
+	contentChangeForFullReplacementFromLines,
+	splitLines,
 } from "./mergedPaneEdits.ts";
 import type {
 	BaseDiffPayload,
@@ -64,6 +65,12 @@ const assertDiffChunksWellFormed = (chunks: DiffChunk[], label: string) => {
 	}
 };
 
+interface DiffLineState {
+	localLines: string[];
+	mergedLines: string[];
+	remoteLines: string[];
+}
+
 interface MessageHandlersDeps {
 	filesRef: React.MutableRefObject<PaneFiles>;
 	diffsRef: React.MutableRefObject<PaneDiffs>;
@@ -79,6 +86,7 @@ interface MessageHandlersDeps {
 	resolveClipboardRead: (id: number, text: string) => void;
 	vscodeApi: ReturnType<typeof useVscodeMessageBus>;
 	differRef: React.MutableRefObject<Differ | null>;
+	diffLineStateRef: React.MutableRefObject<DiffLineState | null>;
 	lastExternalChangeVersionRef: React.MutableRefObject<number>;
 	applyExternalEditsRef: React.RefObject<{
 		applyIncrementalEdits: (changes: MonacoContentChange[]) => void;
@@ -122,10 +130,21 @@ function handleLoadDiff(data: LoadDiffData, p: MessageDispatchDeps) {
 	const wasLeftOpen = p.filesRef.current[0] !== null;
 	const wasRightOpen = p.filesRef.current[4] !== null;
 
+	const diffLineState: DiffLineState = {
+		localLines: splitLines(localFile.content),
+		mergedLines: splitLines(mergedFile.content),
+		remoteLines: splitLines(remoteFile.content),
+	};
 	// PaneFiles still has the 5-slot shape (baseLeft, local, merged, remote,
 	// baseRight). The base-compare slots are filled lazily via loadBaseDiff,
 	// so they start as null here. See TODO.md "PaneFiles / PaneDiffs".
-	const iF: PaneFiles = [null, localFile, mergedFile, remoteFile, null];
+	const iF: PaneFiles = [
+		null,
+		{ ...localFile, lines: diffLineState.localLines },
+		{ ...mergedFile, lines: diffLineState.mergedLines },
+		{ ...remoteFile, lines: diffLineState.remoteLines },
+		null,
+	];
 	const iD: PaneDiffs = [null, leftDiffs, rightDiffs, null];
 	p.filesRef.current = iF;
 	p.setFiles(iF);
@@ -140,11 +159,12 @@ function handleLoadDiff(data: LoadDiffData, p: MessageDispatchDeps) {
 
 	const differ = new Differ();
 	differ.setSequences([
-		localFile.content.split("\n"),
-		mergedFile.content.split("\n"),
-		remoteFile.content.split("\n"),
+		diffLineState.localLines,
+		diffLineState.mergedLines,
+		diffLineState.remoteLines,
 	]);
 	p.differRef.current = differ;
+	p.diffLineStateRef.current = diffLineState;
 
 	// Re-request any base-compare panes that were open before this reload.
 	if (wasLeftOpen) {
@@ -181,7 +201,7 @@ function handleLoadBaseDiff(data: BaseDiffPayload, p: MessageDispatchDeps) {
 		side === "left" ? "loadBaseDiff left" : "loadBaseDiff right",
 	);
 	const nF = [...p.filesRef.current] as PaneFiles;
-	nF[side === "left" ? 0 : 4] = file;
+	nF[side === "left" ? 0 : 4] = { ...file, lines: splitLines(file.content) };
 	p.filesRef.current = nF;
 	p.setFiles(nF);
 
@@ -212,13 +232,22 @@ function handleFullSync(
 		p.lastExternalChangeVersionRef.current = m.lastExternalChangeVersion;
 		p.setLastExternalChangeVersion(m.lastExternalChangeVersion);
 		p.applyExternalEditsRef.current?.applyFullSync(m.content);
-		const mergedContent = p.filesRef.current[2]?.content;
-		if (mergedContent === undefined) {
-			throw new Error("fullSync received before merged pane loaded");
+		const diffLineState = p.diffLineStateRef.current;
+		if (diffLineState === null) {
+			throw new Error("fullSync received before diff lines loaded");
 		}
 		p.commitMergedContentChanges([
-			contentChangeForFullReplacement(mergedContent, m.content),
+			contentChangeForFullReplacementFromLines(
+				diffLineState.mergedLines,
+				m.content,
+			),
 		]);
+		const nF = [...p.filesRef.current] as PaneFiles;
+		if (nF[2]) {
+			nF[2] = { ...nF[2], content: m.content };
+			p.filesRef.current = nF;
+			p.setFiles(nF);
+		}
 	}
 }
 
@@ -260,6 +289,7 @@ interface CommitDeps {
 	setDiffs: (d: PaneDiffs) => void;
 	setRenderTrigger: (p: (p: number) => number) => void;
 	differRef: React.MutableRefObject<Differ | null>;
+	diffLineStateRef: React.MutableRefObject<DiffLineState | null>;
 }
 
 export type PaneFiles = [
@@ -294,6 +324,7 @@ export function useCommitMergedContentChanges(deps: CommitDeps) {
 		setDiffs,
 		setRenderTrigger,
 		differRef,
+		diffLineStateRef,
 	} = deps;
 	return useCallback(
 		(changes: MonacoContentChange[]) => {
@@ -307,11 +338,17 @@ export function useCommitMergedContentChanges(deps: CommitDeps) {
 					"merged content changed before differ initialized",
 				);
 			}
-			const value = applyMeldStyleContentChanges(
+			const diffLineState = diffLineStateRef.current;
+			if (diffLineState === null) {
+				throw new Error(
+					"merged content changed before diff lines initialized",
+				);
+			}
+			applyMeldStyleContentChanges(
 				d,
-				cF[1].content.split("\n"),
-				cF[2].content,
-				cF[3].content.split("\n"),
+				diffLineState.localLines,
+				diffLineState.mergedLines,
+				diffLineState.remoteLines,
 				changes,
 			);
 			const nD = [...diffsRef.current] as PaneDiffs;
@@ -333,13 +370,21 @@ export function useCommitMergedContentChanges(deps: CommitDeps) {
 			nD[2] = rightDiffs;
 			diffsRef.current = nD;
 			const nF = [...cF] as PaneFiles;
-			nF[2] = { ...cF[2], content: value };
+			nF[2] = { ...cF[2], lines: diffLineState.mergedLines };
 			filesRef.current = nF;
 			setFiles(nF);
 			setDiffs(nD);
 			setRenderTrigger((prev) => prev + 1);
 		},
-		[setFiles, setDiffs, setRenderTrigger, filesRef, diffsRef, differRef],
+		[
+			setFiles,
+			setDiffs,
+			setRenderTrigger,
+			filesRef,
+			diffsRef,
+			differRef,
+			diffLineStateRef,
+		],
 	);
 }
 
@@ -359,6 +404,7 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 		resolveClipboardRead,
 		vscodeApi,
 		differRef,
+		diffLineStateRef,
 		lastExternalChangeVersionRef,
 		applyExternalEditsRef,
 	} = p;
@@ -379,6 +425,7 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 			resolveClipboardRead,
 			vscodeApi,
 			differRef,
+			diffLineStateRef,
 			lastExternalChangeVersionRef,
 			applyExternalEditsRef,
 		};
@@ -426,6 +473,7 @@ export const useAppMessageHandlers = (p: MessageHandlersDeps) => {
 		applyExternalEditsRef,
 		commitMergedContentChanges,
 		differRef,
+		diffLineStateRef,
 		diffsRef,
 		filesRef,
 		lastExternalChangeVersionRef,
@@ -585,3 +633,5 @@ export const useAppChunkActions = (
 		],
 	);
 };
+
+export type { DiffLineState };

@@ -13,6 +13,7 @@ export interface Commit {
 export interface FileState {
 	label: string;
 	content: string;
+	lines?: string[];
 	commit?: Commit | undefined;
 }
 

@@ -1,6 +1,6 @@
 import type { editor } from "monaco-editor";
 import { type FC, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { PaneDiffs, PaneFiles } from "./appHooks.ts";
+import type { DiffLineState, PaneDiffs, PaneFiles } from "./appHooks.ts";
 import {
 	useAppChunkActions,
 	useAppHighlights,
@@ -261,13 +261,16 @@ const useMeldUIActions = (p: MeldUIActionsProps) =>
 				changes: editor.IModelContentChange[],
 			) => {
 				const protocolChanges = changes.map(monacoChangeToProtocol);
-				p.commitMergedContentChanges(protocolChanges);
-				p.vscodeApi?.postMessage({
-					command: "contentChanged",
-					changes: protocolChanges,
-					lastExternalChangeVersion:
-						p.lastExternalChangeVersionRef.current,
-				});
+				try {
+					p.commitMergedContentChanges(protocolChanges);
+				} finally {
+					p.vscodeApi?.postMessage({
+						command: "contentChanged",
+						changes: protocolChanges,
+						lastExternalChangeVersion:
+							p.lastExternalChangeVersionRef.current,
+					});
+				}
 			},
 			sendSave: () => {
 				p.vscodeApi?.postMessage({
@@ -310,6 +313,7 @@ const useAppCoreData = () => {
 	const [diffs, setDiffs] = useState<PaneDiffs>([null, null, null, null]);
 	const diffsRef = useRef<PaneDiffs>([null, null, null, null]);
 	const differRef = useRef(null);
+	const diffLineStateRef = useRef<DiffLineState | null>(null);
 	const [lastExternalChangeVersion, setLastExternalChangeVersion] =
 		useState(0);
 	const lastExternalChangeVersionRef = useRef(0);
@@ -333,6 +337,7 @@ const useAppCoreData = () => {
 		setDiffs,
 		diffsRef,
 		differRef,
+		diffLineStateRef,
 		lastExternalChangeVersion,
 		setLastExternalChangeVersion,
 		lastExternalChangeVersionRef,
@@ -380,6 +385,7 @@ const useAppStateMessageHandlers = (
 		resolveClipboardRead: s.resolveClipboardRead,
 		vscodeApi: s.vscodeApi,
 		differRef: d.differRef,
+		diffLineStateRef: d.diffLineStateRef,
 		lastExternalChangeVersionRef: d.lastExternalChangeVersionRef,
 		applyExternalEditsRef: d.applyExternalEditsRef,
 	});
@@ -450,6 +456,7 @@ const useAppState = () => {
 		setDiffs: d.setDiffs,
 		setRenderTrigger: d.setRenderTrigger,
 		differRef: d.differRef,
+		diffLineStateRef: d.diffLineStateRef,
 	});
 
 	useAppStateMessageHandlers(d, s, commitMergedContentChanges);
