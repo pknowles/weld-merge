@@ -8,6 +8,14 @@ interface ReplaceContext {
 	outerFile: FileState;
 }
 
+const getFileLines = (file: FileState): string[] =>
+	file.lines ?? file.content.split("\n");
+
+const sliceText = (file: FileState, startLine: number, endLine: number) => {
+	const lines = getFileLines(file).slice(startLine, endLine);
+	return `${lines.join("\n")}${lines.length > 0 ? "\n" : ""}`;
+};
+
 const calculateReplaceHighlights = (ctx: ReplaceContext): Highlight[] => {
 	const { chunk, useA, innerFile, outerFile } = ctx;
 	const replaceHighlights: Highlight[] = [];
@@ -17,13 +25,8 @@ const calculateReplaceHighlights = (ctx: ReplaceContext): Highlight[] => {
 	const otherStartLine = useA ? chunk.startB : chunk.startA;
 	const otherEndLine = useA ? chunk.endB : chunk.endA;
 
-	const myLines = innerFile.content.split("\n").slice(startLine, endLine);
-	const myText = `${myLines.join("\n")}${myLines.length > 0 ? "\n" : ""}`;
-
-	const otherLines = outerFile.content
-		.split("\n")
-		.slice(otherStartLine, otherEndLine);
-	const otherText = `${otherLines.join("\n")}${otherLines.length > 0 ? "\n" : ""}`;
+	const myText = sliceText(innerFile, startLine, endLine);
+	const otherText = sliceText(outerFile, otherStartLine, otherEndLine);
 
 	const changes = diffChars(myText, otherText);
 	let currentLine = startLine + 1;
