@@ -28,7 +28,7 @@
 		"git conflict"
 	],
 	"engines": {
-		"vscode": "^1.80.0"
+		"vscode": "^1.105.0"
 	},
 	"categories": [
 		"Other"
@@ -383,7 +383,7 @@
 		"@types/react": "^19.2.14",
 		"@types/react-dom": "^19.2.3",
 		"@types/sinon": "^21.0.1",
-		"@types/vscode": "^1.118.0",
+		"@types/vscode": "^1.105.0",
 		"@vscode/test-electron": "^2.5.2",
 		"dependency-cruiser": "^17.4.0",
 		"diff": "^9.0.0",

@@ -2,9 +2,9 @@
 
 [![Install](https://img.shields.io/badge/VS%20Code-Install%20Extension-blue?logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=pknowles.meld-auto-merge)
 ![OpenVSX Installs](https://img.shields.io/open-vsx/dt/pknowles/meld-auto-merge?label=Open%20VSX%20Installs)
-![VSMarketplace Installs](https://vsmarketplacebadges.dev/installs/pknowles.meld-auto-merge.svg?label=VS%20Marketplace%20Installs)
-![Rating](https://vsmarketplacebadges.dev/rating/pknowles.meld-auto-merge.svg)
-![Build](https://github.com/pknowles/weld-merge/actions/workflows/ci.yml/badge.svg)
+![VSMarketplace Installs](https://vsmarketplacebadges.dev/installs/pknowles.meld-auto-merge.png?label=VS%20Marketplace%20Installs)
+![Rating](https://vsmarketplacebadges.dev/rating/pknowles.meld-auto-merge.png)
+![Build](https://github.com/pknowles/weld-merge/actions/workflows/ci.yml/badge.png)
 ![Verified](https://img.shields.io/badge/publisher-verified-brightgreen)
 ![License](https://img.shields.io/github/license/pknowles/meld)
 
