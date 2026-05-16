@@ -6,10 +6,16 @@
   - `restoreConflictedFile()` first uses `git checkout -m` for normal conflicts.
   - `restoreDeleteModifyConflict()` restores delete/modify conflicts by checking out the surviving side's content, then recreating unmerged index stages with `git update-index --index-info`.
   - `getRepoRelativePath()` converts an absolute VS Code file URI path into the repository-relative path required by Git index plumbing.
+  - Command handlers take a concrete `ConflictedItem`; command dispatchers use the `ConflictedItem` carried by tree rows when present, and only resolve from a URI for active-editor/webview entrypoints.
+
+- `src/treeView.ts`
+  - `GitFile.conflictedItem` keeps the VS Code Git API repository context attached to conflict-tree command arguments, so commands do not rediscover the repository from the URI.
 
 - `src/gitUtils.ts`
   - `execGit()` runs Git commands and returns stdout.
   - `execGitWithInput()` runs Git commands that need stdin, currently used for `git update-index --index-info`.
+  - `findMergeChange()` locates a file in VS Code Git API `mergeChanges` by canonical URI string rather than `fsPath`, preserving remote URI identity.
+  - `getConflictRouting()` routes normal, delete/modify, and unexpected both-deleted conflicts from VS Code Git API `mergeChanges.status` using named `GitStatus` constants. `repository.show()` is only used where callers need stage content, not as a conflict-shape probe.
 
 - `test/vscode/suite/custom_editor_resolution.test.ts`
   - `MeldCustomEditorProvider.resolveCustomTextEditor - conflict type routing` verifies delete/modify routing, both-added editor initialization, and the stubbed both-deleted safety path.

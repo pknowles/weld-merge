@@ -7,7 +7,7 @@ import {
 	type ExtensionContext,
 	ProgressLocation,
 	Range,
-	type Uri,
+	Uri,
 	WorkspaceEdit,
 	window,
 	workspace,
@@ -16,23 +16,22 @@ import {
 	type ConflictState,
 	execGit,
 	execGitWithInput,
-	GIT_STATUS_BOTH_DELETED,
-	GIT_STATUS_DELETED_BY_THEM,
-	GIT_STATUS_DELETED_BY_US,
+	findMergeChange,
 	getConflictedFiles,
+	getConflictRouting,
 	getUnresolvedReasons,
 	readConflictState,
 } from "./gitUtils.ts";
 import { getWeldLogChannel, initializeWeldLogChannel } from "./log.ts";
 import { GitTextMerger } from "./matchers/gitTextMerger.ts";
 import {
+	type ConflictedItem,
+	conflictedItemFromUri,
 	type GitApiRepository,
 	getGitApi,
 	isSupportedScheme,
-	type RepoContext,
-	resolveRepoContext,
 } from "./repoContext.ts";
-import { ConflictedFilesProvider, type GitFile } from "./treeView.ts";
+import { ConflictedFilesProvider, GitFile } from "./treeView.ts";
 import { MeldCustomEditorProvider } from "./webview/meldWebviewPanel.ts";
 
 const lastConflictedFilesPerRepo: Map<string, Set<string>> = new Map();
@@ -44,6 +43,10 @@ const CHECKOUT_MISSING_STAGES_REGEX =
 interface TreeEntry {
 	mode: string;
 	objectId: string;
+}
+
+interface UriCommandArg {
+	uri: Uri;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -175,21 +178,30 @@ async function getGitFileContent(
 	}
 }
 
-function getTargetDocumentUri(file?: GitFile): Uri | null {
-	if (file) {
-		return file.uri;
-	}
+function isUriCommandArg(value: unknown): value is UriCommandArg {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		"uri" in value &&
+		(value as { uri: unknown }).uri instanceof Uri
+	);
+}
+
+function getActiveDocumentUri(): Uri | null {
 	const editor = window.activeTextEditor;
-	if (!editor?.document || editor.document.isUntitled) {
+	if (!editor) {
+		return null;
+	}
+	if (editor.document.isUntitled) {
 		return null;
 	}
 	return editor.document.uri;
 }
 
-async function resolveCommandRepoContext(
+async function resolveConflictedItemFromUri(
 	documentUri: Uri,
 	commandName: string,
-): Promise<RepoContext | null> {
+): Promise<ConflictedItem | null> {
 	if (!isSupportedScheme(documentUri)) {
 		const message = `Cannot run ${commandName}: unsupported URI scheme "${documentUri.scheme}".`;
 		window.showErrorMessage(message);
@@ -197,14 +209,14 @@ async function resolveCommandRepoContext(
 		return null;
 	}
 	try {
-		const repoContext = await resolveRepoContext(documentUri);
-		if (!repoContext) {
+		const conflictedItem = await conflictedItemFromUri(documentUri);
+		if (!conflictedItem) {
 			const message = `Cannot run ${commandName}: file is not in a git repository.`;
 			window.showErrorMessage(message);
 			getWeldLogChannel().error(message);
 			return null;
 		}
-		return repoContext;
+		return conflictedItem;
 	} catch (error: unknown) {
 		const message = `Cannot run ${commandName}: ${getErrorMessage(error)}`;
 		window.showErrorMessage(message);
@@ -213,57 +225,42 @@ async function resolveCommandRepoContext(
 	}
 }
 
-async function handleOpenMergeEditor(file?: GitFile) {
-	const documentUri = getTargetDocumentUri(file);
+function resolveActiveEditorConflictedItem(
+	commandName: string,
+): Promise<ConflictedItem | null> {
+	const documentUri = getActiveDocumentUri();
 	if (!documentUri) {
-		return;
+		return Promise.resolve(null);
 	}
-	const repoContext = await resolveCommandRepoContext(
-		documentUri,
-		"open merge editor",
-	);
-	if (!repoContext) {
-		return;
-	}
-	commands.executeCommand("git.openMergeEditor", repoContext.uri);
+	return resolveConflictedItemFromUri(documentUri, commandName);
 }
 
-async function handleOpenMeldDiff(file?: GitFile) {
-	const documentUri = getTargetDocumentUri(file);
-	if (!documentUri) {
-		return;
-	}
-	const repoContext = await resolveCommandRepoContext(
-		documentUri,
-		"open Weld diff",
+function handleOpenMergeEditor(conflictedItem: ConflictedItem) {
+	commands.executeCommand("git.openMergeEditor", conflictedItem.uri);
+}
+
+async function handleOpenMeldDiff(conflictedItem: ConflictedItem) {
+	const conflictChange = findMergeChange(
+		conflictedItem.repository,
+		conflictedItem.uri,
 	);
-	if (!repoContext) {
-		return;
-	}
-	const conflictStatus = repoContext.repository.state.mergeChanges.find(
-		(c) => c.uri.fsPath === repoContext.uri.fsPath,
-	)?.status;
-	if (conflictStatus === GIT_STATUS_BOTH_DELETED) {
+	const conflictRouting = getConflictRouting(conflictChange);
+	if (conflictRouting.kind === "bothDeleted") {
 		window.showErrorMessage(
-			`Unexpected conflict state for ${repoContext.uri.fsPath}: both sides deleted this file. Git should have auto-resolved this.`,
+			`Unexpected conflict state for ${conflictedItem.uri.fsPath}: both sides deleted this file. Git should have auto-resolved this.`,
 		);
 		return;
 	}
-	if (
-		conflictStatus === GIT_STATUS_DELETED_BY_US ||
-		conflictStatus === GIT_STATUS_DELETED_BY_THEM
-	) {
-		const remainingStage =
-			conflictStatus === GIT_STATUS_DELETED_BY_US ? 3 : 2;
+	if (conflictRouting.kind === "deleteModify") {
 		await MeldCustomEditorProvider.handleDeleteModifyConflict(
-			repoContext,
-			remainingStage,
+			conflictedItem,
+			conflictRouting.remainingStage,
 		);
 		return;
 	}
 	commands.executeCommand(
 		"vscode.openWith",
-		repoContext.uri,
+		conflictedItem.uri,
 		MeldCustomEditorProvider.viewType,
 	);
 }
@@ -321,7 +318,7 @@ function isCheckoutMissingStagesError(error: unknown): boolean {
 }
 
 async function restoreDeleteModifyConflict(
-	repoContext: RepoContext,
+	repoContext: ConflictedItem,
 	survivingRef: "HEAD" | ConflictState["otherRef"],
 	survivingStage: 2 | 3,
 	mergeBase: string,
@@ -353,13 +350,13 @@ async function restoreDeleteModifyConflict(
 // the single-file command and the batch "auto-merge all" flow can surface the
 // real reason instead of swallowing it.
 async function performAutoMerge(
-	repoContext: RepoContext,
+	conflictedItem: ConflictedItem,
 	documentUri: Uri,
 ): Promise<void> {
 	const [baseContent, localContent, remoteContent] = await Promise.all([
-		getGitFileContent(repoContext.repository, repoContext.uri, 1),
-		getGitFileContent(repoContext.repository, repoContext.uri, 2),
-		getGitFileContent(repoContext.repository, repoContext.uri, 3),
+		getGitFileContent(conflictedItem.repository, conflictedItem.uri, 1),
+		getGitFileContent(conflictedItem.repository, conflictedItem.uri, 2),
+		getGitFileContent(conflictedItem.repository, conflictedItem.uri, 3),
 	]);
 
 	const merger = new GitTextMerger();
@@ -382,28 +379,18 @@ async function performAutoMerge(
 	edit.replace(documentUri, fullRange, finalMergedText);
 	const applied = await workspace.applyEdit(edit);
 	if (!applied) {
-		throw new Error(`Failed to apply merged text to ${repoContext.uri}.`);
+		throw new Error(
+			`Failed to apply merged text to ${conflictedItem.uri}.`,
+		);
 	}
 }
 
 async function handleAutoMerge(
-	file: GitFile | undefined,
+	conflictedItem: ConflictedItem,
+	documentUri: Uri,
 	conflictedFilesProvider: ConflictedFilesProvider,
 ) {
-	const documentUri = getTargetDocumentUri(file);
-	if (!documentUri) {
-		throw new Error("Weld auto-merge: no active text editor.");
-	}
-
-	const repoContext = await resolveCommandRepoContext(
-		documentUri,
-		"Weld auto-merge",
-	);
-	if (!repoContext) {
-		return;
-	}
-
-	await performAutoMerge(repoContext, documentUri);
+	await performAutoMerge(conflictedItem, documentUri);
 	conflictedFilesProvider.refresh();
 }
 
@@ -445,7 +432,7 @@ async function handleAutoMergeAll(
 		(progress: { report: (value: { message?: string }) => void }) =>
 		async (entry: ConflictedFileEntry): Promise<void> => {
 			progress.report({ message: `Merging ${entry.uri}...` });
-			const repoContext: RepoContext = {
+			const repoContext: ConflictedItem = {
 				repository: entry.repository,
 				rootUri: entry.rootUri,
 				uri: entry.uri,
@@ -491,23 +478,12 @@ async function handleAutoMergeAll(
 }
 
 async function handleCheckoutConflicted(
-	file: GitFile | undefined,
+	conflictedItem: ConflictedItem,
+	documentUri: Uri,
 	conflictedFilesProvider: ConflictedFilesProvider,
 ) {
-	const documentUri = getTargetDocumentUri(file);
-	if (!documentUri) {
-		return;
-	}
-	const repoContext = await resolveCommandRepoContext(
-		documentUri,
-		"checkout conflicted file",
-	);
-	if (!repoContext) {
-		return;
-	}
-
 	const confirm = await window.showWarningMessage(
-		`Are you sure you want to checkout the conflicted version of ${repoContext.uri} (-m)? This will overwrite your current file.`,
+		`Are you sure you want to checkout the conflicted version of ${conflictedItem.uri} (-m)? This will overwrite your current file.`,
 		{ modal: true },
 		"Yes",
 	);
@@ -516,10 +492,10 @@ async function handleCheckoutConflicted(
 	}
 
 	try {
-		await restoreConflictedFile(repoContext);
+		await restoreConflictedFile(conflictedItem);
 		MeldCustomEditorProvider.onRequestRefresh.fire(documentUri);
 		window.showInformationMessage(
-			`Checked out conflicted version of ${repoContext.uri}`,
+			`Checked out conflicted version of ${conflictedItem.uri}`,
 		);
 		conflictedFilesProvider.refresh();
 	} catch (e: unknown) {
@@ -533,7 +509,9 @@ async function handleCheckoutConflicted(
 // absent. Instead: try checkout -m first (works for both-modified). If that
 // fails, detect the deleted side, restore the surviving content, and recreate
 // the unmerged index stages so Git still reports the delete/modify conflict.
-async function restoreConflictedFile(repoContext: RepoContext): Promise<void> {
+async function restoreConflictedFile(
+	repoContext: ConflictedItem,
+): Promise<void> {
 	const { uri, rootUri, repository } = repoContext;
 	const filePath = uri.fsPath;
 	const cwd = rootUri.fsPath;
@@ -578,23 +556,11 @@ async function restoreConflictedFile(repoContext: RepoContext): Promise<void> {
 }
 
 async function handleRerereForget(
-	file: GitFile | undefined,
+	conflictedItem: ConflictedItem,
 	conflictedFilesProvider: ConflictedFilesProvider,
 ) {
-	const documentUri = getTargetDocumentUri(file);
-	if (!documentUri) {
-		return;
-	}
-	const repoContext = await resolveCommandRepoContext(
-		documentUri,
-		"rerere forget",
-	);
-	if (!repoContext) {
-		return;
-	}
-
 	const confirm = await window.showWarningMessage(
-		`Are you sure you want to forget the recorded rerere resolution for ${repoContext.uri}?`,
+		`Are you sure you want to forget the recorded rerere resolution for ${conflictedItem.uri}?`,
 		{ modal: true },
 		"Yes",
 	);
@@ -604,11 +570,11 @@ async function handleRerereForget(
 
 	try {
 		await execGit(
-			["rerere", "forget", "--", repoContext.uri.fsPath],
-			repoContext.rootUri.fsPath,
+			["rerere", "forget", "--", conflictedItem.uri.fsPath],
+			conflictedItem.rootUri.fsPath,
 		);
 		window.showInformationMessage(
-			`Forgot recorded resolution for ${repoContext.uri}`,
+			`Forgot recorded resolution for ${conflictedItem.uri}`,
 		);
 		conflictedFilesProvider.refresh();
 	} catch (e: unknown) {
@@ -619,30 +585,10 @@ async function handleRerereForget(
 }
 
 async function handleSmartAdd(
-	file: GitFile | undefined,
+	conflictedItem: ConflictedItem,
+	text: string,
 	conflictedFilesProvider: ConflictedFilesProvider,
 ) {
-	let documentUri: Uri | null = null;
-	let text: string;
-
-	if (file) {
-		documentUri = file.uri;
-		const doc = await workspace.openTextDocument(documentUri);
-		await doc.save();
-		text = doc.getText();
-	} else {
-		const editor = window.activeTextEditor;
-		if (!editor?.document || editor.document.isUntitled) {
-			return;
-		}
-		await editor.document.save();
-		documentUri = editor.document.uri;
-		text = editor.document.getText();
-	}
-	if (!documentUri) {
-		return;
-	}
-
 	const unresolvedReasons = getUnresolvedReasons(text);
 	if (unresolvedReasons.length > 0) {
 		window.showErrorMessage(
@@ -651,22 +597,223 @@ async function handleSmartAdd(
 		return false;
 	}
 
-	const repoContext = await resolveCommandRepoContext(
-		documentUri,
-		"git add resolved file",
-	);
-	if (!repoContext) {
-		return;
-	}
-
 	try {
-		await repoContext.repository.add([repoContext.uri.fsPath]);
+		await conflictedItem.repository.add([conflictedItem.uri.fsPath]);
 		conflictedFilesProvider.refresh();
 		return true;
 	} catch (e: unknown) {
 		showExceptionMessage("Git Add Failed", e);
 		return false;
 	}
+}
+
+async function readSavedDocument(uri: Uri): Promise<string> {
+	const document = await workspace.openTextDocument(uri);
+	await document.save();
+	return document.getText();
+}
+
+async function handleTreeAutoMerge(
+	file: GitFile,
+	conflictedFilesProvider: ConflictedFilesProvider,
+) {
+	await handleAutoMerge(
+		file.conflictedItem,
+		file.uri,
+		conflictedFilesProvider,
+	);
+}
+
+async function handleActiveEditorAutoMerge(
+	conflictedFilesProvider: ConflictedFilesProvider,
+) {
+	const documentUri = getActiveDocumentUri();
+	if (!documentUri) {
+		throw new Error("Weld auto-merge: no active text editor.");
+	}
+	const conflictedItem = await resolveConflictedItemFromUri(
+		documentUri,
+		"Weld auto-merge",
+	);
+	if (!conflictedItem) {
+		return;
+	}
+	await handleAutoMerge(conflictedItem, documentUri, conflictedFilesProvider);
+}
+
+async function handleTreeCheckoutConflicted(
+	file: GitFile,
+	conflictedFilesProvider: ConflictedFilesProvider,
+) {
+	await handleCheckoutConflicted(
+		file.conflictedItem,
+		file.uri,
+		conflictedFilesProvider,
+	);
+}
+
+async function handleActiveEditorCheckoutConflicted(
+	conflictedFilesProvider: ConflictedFilesProvider,
+) {
+	const documentUri = getActiveDocumentUri();
+	if (!documentUri) {
+		return;
+	}
+	const conflictedItem = await resolveConflictedItemFromUri(
+		documentUri,
+		"checkout conflicted file",
+	);
+	if (!conflictedItem) {
+		return;
+	}
+	await handleCheckoutConflicted(
+		conflictedItem,
+		documentUri,
+		conflictedFilesProvider,
+	);
+}
+
+async function handleTreeSmartAdd(
+	file: GitFile,
+	conflictedFilesProvider: ConflictedFilesProvider,
+) {
+	const text = await readSavedDocument(file.uri);
+	return handleSmartAdd(file.conflictedItem, text, conflictedFilesProvider);
+}
+
+async function handleUriSmartAdd(
+	target: UriCommandArg,
+	conflictedFilesProvider: ConflictedFilesProvider,
+) {
+	const text = await readSavedDocument(target.uri);
+	const conflictedItem = await resolveConflictedItemFromUri(
+		target.uri,
+		"git add resolved file",
+	);
+	if (!conflictedItem) {
+		return;
+	}
+	return handleSmartAdd(conflictedItem, text, conflictedFilesProvider);
+}
+
+async function handleActiveEditorSmartAdd(
+	conflictedFilesProvider: ConflictedFilesProvider,
+) {
+	const editor = window.activeTextEditor;
+	if (!editor) {
+		return;
+	}
+	if (editor.document.isUntitled) {
+		return;
+	}
+	await editor.document.save();
+	const conflictedItem = await resolveConflictedItemFromUri(
+		editor.document.uri,
+		"git add resolved file",
+	);
+	if (!conflictedItem) {
+		return;
+	}
+	return handleSmartAdd(
+		conflictedItem,
+		editor.document.getText(),
+		conflictedFilesProvider,
+	);
+}
+
+async function handleOpenMergeEditorCommand(
+	target: GitFile | UriCommandArg | undefined,
+) {
+	if (target instanceof GitFile) {
+		handleOpenMergeEditor(target.conflictedItem);
+		return;
+	}
+	if (isUriCommandArg(target)) {
+		const conflictedItem = await resolveConflictedItemFromUri(
+			target.uri,
+			"open merge editor",
+		);
+		if (!conflictedItem) {
+			return;
+		}
+		handleOpenMergeEditor(conflictedItem);
+		return;
+	}
+	const conflictedItem =
+		await resolveActiveEditorConflictedItem("open merge editor");
+	if (!conflictedItem) {
+		return;
+	}
+	handleOpenMergeEditor(conflictedItem);
+}
+
+async function handleOpenMeldDiffCommand(
+	target: GitFile | UriCommandArg | undefined,
+) {
+	if (target instanceof GitFile) {
+		await handleOpenMeldDiff(target.conflictedItem);
+		return;
+	}
+	if (isUriCommandArg(target)) {
+		const conflictedItem = await resolveConflictedItemFromUri(
+			target.uri,
+			"open Weld diff",
+		);
+		if (!conflictedItem) {
+			return;
+		}
+		await handleOpenMeldDiff(conflictedItem);
+		return;
+	}
+	const conflictedItem =
+		await resolveActiveEditorConflictedItem("open Weld diff");
+	if (!conflictedItem) {
+		return;
+	}
+	await handleOpenMeldDiff(conflictedItem);
+}
+
+async function handleRerereForgetCommand(
+	target: GitFile | UriCommandArg | undefined,
+	conflictedFilesProvider: ConflictedFilesProvider,
+) {
+	if (target instanceof GitFile) {
+		await handleRerereForget(
+			target.conflictedItem,
+			conflictedFilesProvider,
+		);
+		return;
+	}
+	if (isUriCommandArg(target)) {
+		const conflictedItem = await resolveConflictedItemFromUri(
+			target.uri,
+			"rerere forget",
+		);
+		if (!conflictedItem) {
+			return;
+		}
+		await handleRerereForget(conflictedItem, conflictedFilesProvider);
+		return;
+	}
+	const conflictedItem =
+		await resolveActiveEditorConflictedItem("rerere forget");
+	if (!conflictedItem) {
+		return;
+	}
+	await handleRerereForget(conflictedItem, conflictedFilesProvider);
+}
+
+function handleSmartAddCommand(
+	target: GitFile | UriCommandArg | undefined,
+	conflictedFilesProvider: ConflictedFilesProvider,
+) {
+	if (target instanceof GitFile) {
+		return handleTreeSmartAdd(target, conflictedFilesProvider);
+	}
+	if (isUriCommandArg(target)) {
+		return handleUriSmartAdd(target, conflictedFilesProvider);
+	}
+	return handleActiveEditorSmartAdd(conflictedFilesProvider);
 }
 
 function registerViews(
@@ -694,31 +841,49 @@ function registerCommands(
 		),
 		commands.registerCommand(
 			"meld-auto-merge.openMergeEditor",
-			(file?: GitFile) => handleOpenMergeEditor(file),
+			(target: GitFile | UriCommandArg | undefined) =>
+				handleOpenMergeEditorCommand(target),
 		),
 		commands.registerCommand(
 			"meld-auto-merge.openMeldDiff",
-			(file?: GitFile) => handleOpenMeldDiff(file),
+			(target: GitFile | UriCommandArg | undefined) =>
+				handleOpenMeldDiffCommand(target),
 		),
 		commands.registerCommand(
 			"meld-auto-merge.autoMerge",
-			(file?: GitFile) => handleAutoMerge(file, conflictedFilesProvider),
+			(target: GitFile | undefined) => {
+				if (target instanceof GitFile) {
+					return handleTreeAutoMerge(target, conflictedFilesProvider);
+				}
+				return handleActiveEditorAutoMerge(conflictedFilesProvider);
+			},
 		),
 		commands.registerCommand("meld-auto-merge.autoMergeAll", () =>
 			handleAutoMergeAll(conflictedFilesProvider),
 		),
 		commands.registerCommand(
 			"meld-auto-merge.checkoutConflicted",
-			(file?: GitFile) =>
-				handleCheckoutConflicted(file, conflictedFilesProvider),
+			(target: GitFile | undefined) => {
+				if (target instanceof GitFile) {
+					return handleTreeCheckoutConflicted(
+						target,
+						conflictedFilesProvider,
+					);
+				}
+				return handleActiveEditorCheckoutConflicted(
+					conflictedFilesProvider,
+				);
+			},
 		),
 		commands.registerCommand(
 			"meld-auto-merge.rerereForget",
-			(file?: GitFile) =>
-				handleRerereForget(file, conflictedFilesProvider),
+			(target: GitFile | UriCommandArg | undefined) =>
+				handleRerereForgetCommand(target, conflictedFilesProvider),
 		),
-		commands.registerCommand("meld-auto-merge.smartAdd", (file?: GitFile) =>
-			handleSmartAdd(file, conflictedFilesProvider),
+		commands.registerCommand(
+			"meld-auto-merge.smartAdd",
+			(target: GitFile | UriCommandArg | undefined) =>
+				handleSmartAddCommand(target, conflictedFilesProvider),
 		),
 	);
 }

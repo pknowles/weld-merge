@@ -12,7 +12,7 @@ import {
 	workspace,
 } from "vscode";
 import type { WeldExtensionApi } from "../../../src/extension.ts";
-import { getGitApi } from "../../../src/repoContext.ts";
+import { GitStatus, getGitApi } from "../../../src/repoContext.ts";
 import {
 	ConflictedFilesProvider,
 	ErrorTreeItem,
@@ -173,7 +173,9 @@ describe("autoMergeAll command error propagation (VS Code host)", () => {
 		const mockRepo = {
 			rootUri: workspaceUri,
 			state: {
-				mergeChanges: [{ uri: conflictUri }],
+				mergeChanges: [
+					{ uri: conflictUri, status: GitStatus.BOTH_MODIFIED },
+				],
 				onDidChange: changeEmitter.event,
 			},
 			show: (): Promise<string> => {

@@ -17,6 +17,7 @@ import {
 	readConflictState,
 } from "./gitUtils.ts";
 import {
+	type ConflictedItem,
 	type GitApiRepository,
 	getGitApi,
 	isSupportedScheme,
@@ -45,21 +46,22 @@ function getTreeErrorMessage(error: unknown): string {
 interface GitFileOptions {
 	label: string;
 	collapsibleState: TreeItemCollapsibleState;
-	uri: Uri;
-	repoPath: Uri;
+	conflictedItem: ConflictedItem;
 	commandId: string;
 }
 
 abstract class GitFile extends TreeItem {
+	readonly conflictedItem: ConflictedItem;
 	readonly uri: Uri;
 	readonly repoPath: Uri;
 
 	constructor(options: GitFileOptions) {
 		super(options.label, options.collapsibleState);
-		this.uri = options.uri;
-		this.repoPath = options.repoPath;
+		this.conflictedItem = options.conflictedItem;
+		this.uri = options.conflictedItem.uri;
+		this.repoPath = options.conflictedItem.rootUri;
 		// TODO: seeing "ExplorerItem not found" exception for some files in codespaces
-		this.resourceUri = options.uri;
+		this.resourceUri = options.conflictedItem.uri;
 		this.tooltip = `${options.label}`;
 		this.command = {
 			command: options.commandId,
@@ -181,7 +183,7 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 			const unmergedFiles = getConflictedFiles(repository);
 			const conflictedItems = this._createConflictedItems(
 				unmergedFiles,
-				repository.rootUri,
+				repository,
 			);
 			const resolvedFileUris = await this._getResolvedFileUris(
 				repository,
@@ -190,7 +192,7 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 			);
 			const resolvedItems = this._createResolvedItems(
 				resolvedFileUris,
-				repository.rootUri,
+				repository,
 			);
 			if (
 				conflictState &&
@@ -221,26 +223,38 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 		return Uri.joinPath(rootUri, ...pathSegments);
 	}
 
-	private _createConflictedItems(files: Uri[], repoUri: Uri): GitFile[] {
+	private _createConflictedItems(
+		files: Uri[],
+		repository: GitApiRepository,
+	): GitFile[] {
 		return files.map(
 			(file) =>
 				new ConflictedFile({
 					label: workspace.asRelativePath(file, false),
 					collapsibleState: TreeItemCollapsibleState.None,
-					uri: file,
-					repoPath: repoUri,
+					conflictedItem: {
+						repository,
+						rootUri: repository.rootUri,
+						uri: file,
+					},
 				}),
 		);
 	}
 
-	private _createResolvedItems(files: Uri[], rootUri: Uri): GitFile[] {
+	private _createResolvedItems(
+		files: Uri[],
+		repository: GitApiRepository,
+	): GitFile[] {
 		return files.map(
 			(file) =>
 				new ResolvedFile({
 					label: workspace.asRelativePath(file, false),
 					collapsibleState: TreeItemCollapsibleState.None,
-					uri: file,
-					repoPath: rootUri,
+					conflictedItem: {
+						repository,
+						rootUri: repository.rootUri,
+						uri: file,
+					},
 				}),
 		);
 	}

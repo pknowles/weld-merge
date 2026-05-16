@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, it } from "mocha";
 import { Uri } from "vscode";
-import { resolveRepoContext } from "../../../src/repoContext.ts";
+import { conflictedItemFromUri } from "../../../src/repoContext.ts";
 import {
 	makeRepo,
 	makeRepoFile,
@@ -12,11 +12,11 @@ import {
 	waitForRepoClose,
 } from "./helpers.ts";
 
-describe("repoContext.resolveRepoContext (VS Code host)", () => {
+describe("repoContext.conflictedItemFromUri (VS Code host)", () => {
 	it("returns null for unsupported URI schemes", async () => {
 		const uri = Uri.parse("untitled:weld");
-		const repoContext = await resolveRepoContext(uri);
-		assert.equal(repoContext, null);
+		const conflictedItem = await conflictedItemFromUri(uri);
+		assert.equal(conflictedItem, null);
 	});
 
 	it("resolves subdirectory files from repository root", async () => {
@@ -24,10 +24,10 @@ describe("repoContext.resolveRepoContext (VS Code host)", () => {
 		try {
 			await openRepoInGitExtension(repoPath);
 			const fileUri = await makeRepoFile(repoPath, "src/nested/file.txt");
-			const repoContext = await resolveRepoContext(fileUri);
-			assert.ok(repoContext);
-			assert.equal(repoContext.rootUri.fsPath, repoPath);
-			assert.equal(repoContext.uri.toString(), fileUri.toString());
+			const conflictedItem = await conflictedItemFromUri(fileUri);
+			assert.ok(conflictedItem);
+			assert.equal(conflictedItem.rootUri.fsPath, repoPath);
+			assert.equal(conflictedItem.uri.toString(), fileUri.toString());
 		} finally {
 			const closePromise = waitForRepoClose(repoPath);
 			await rm(repoPath, { recursive: true, force: true });
@@ -48,10 +48,10 @@ describe("repoContext.resolveRepoContext (VS Code host)", () => {
 				worktreePath,
 				"worktree-file.txt",
 			);
-			const repoContext = await resolveRepoContext(fileUri);
-			assert.ok(repoContext);
-			assert.equal(repoContext.rootUri.fsPath, worktreePath);
-			assert.equal(repoContext.uri.toString(), fileUri.toString());
+			const conflictedItem = await conflictedItemFromUri(fileUri);
+			assert.ok(conflictedItem);
+			assert.equal(conflictedItem.rootUri.fsPath, worktreePath);
+			assert.equal(conflictedItem.uri.toString(), fileUri.toString());
 		} finally {
 			const closePromise = waitForRepoClose(worktreePath);
 			await rm(repoPath, { recursive: true, force: true });
@@ -67,10 +67,10 @@ describe("repoContext.resolveRepoContext (VS Code host)", () => {
 			await openRepoInGitExtension(repoPathA);
 			await openRepoInGitExtension(repoPathB);
 			const fileUri = await makeRepoFile(repoPathB, "only-b.txt");
-			const repoContext = await resolveRepoContext(fileUri);
-			assert.ok(repoContext);
-			assert.equal(repoContext.rootUri.fsPath, repoPathB);
-			assert.equal(repoContext.uri.toString(), fileUri.toString());
+			const conflictedItem = await conflictedItemFromUri(fileUri);
+			assert.ok(conflictedItem);
+			assert.equal(conflictedItem.rootUri.fsPath, repoPathB);
+			assert.equal(conflictedItem.uri.toString(), fileUri.toString());
 		} finally {
 			const closeA = waitForRepoClose(repoPathA);
 			const closeB = waitForRepoClose(repoPathB);
@@ -86,8 +86,8 @@ describe("repoContext.resolveRepoContext (VS Code host)", () => {
 		try {
 			await openRepoInGitExtension(repoPath);
 			const outsideUri = Uri.file(outsidePath);
-			const repoContext = await resolveRepoContext(outsideUri);
-			assert.equal(repoContext, null);
+			const conflictedItem = await conflictedItemFromUri(outsideUri);
+			assert.equal(conflictedItem, null);
 		} finally {
 			const closePromise = waitForRepoClose(repoPath);
 			await rm(repoPath, { recursive: true, force: true });

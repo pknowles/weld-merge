@@ -6,15 +6,15 @@ import sinon from "sinon";
 import type { TextDocument, WebviewPanel } from "vscode";
 import { commands, EventEmitter, extensions, Uri, window } from "vscode";
 import type { WeldExtensionApi } from "../../../src/extension.ts";
-import { GIT_STATUS_BOTH_DELETED } from "../../../src/gitUtils.ts";
 import {
+	type ConflictedItem,
 	type GitApiRepository,
+	GitStatus,
 	getGitApi,
-	type RepoContext,
 } from "../../../src/repoContext.ts";
 import type { MeldCustomEditorProvider } from "../../../src/webview/meldWebviewPanel.ts";
 import {
-	getRepoContext,
+	getConflictedItem,
 	lsFilesStages,
 	makeBothAddedConflict,
 	makeConflict,
@@ -31,7 +31,7 @@ import {
 } from "./helpers.ts";
 
 interface CapturedInitArgs {
-	repoContext: RepoContext;
+	conflictedItem: ConflictedItem;
 }
 
 interface FakeWebview {
@@ -49,7 +49,7 @@ interface FakePanel {
 type InitializeWebviewFn = (
 	document: TextDocument,
 	webviewPanel: WebviewPanel,
-	repoContext: RepoContext,
+	conflictedItem: ConflictedItem,
 ) => void;
 
 // Resolved in the before() hook to the bundled class so that static fields
@@ -64,6 +64,9 @@ const REMOTE_DELETED_REGEX = /Remote deleted/;
 const LOCAL_MODIFIED_REGEX = /Local modified/;
 const CHECKOUT_FAILED_UNEXPECTEDLY_REGEX = /checkout -m failed unexpectedly/;
 const BASE_TO_LOCAL_TITLE_REGEX = /Base ↔ Local/;
+const GIT_STAGE_BASE = 1;
+const GIT_STAGE_LOCAL = 2;
+const GIT_STAGE_REMOTE = 3;
 
 before(async () => {
 	const ext = extensions.getExtension("pknowles.meld-auto-merge");
@@ -109,12 +112,12 @@ function stubInitializeWebview(
 	// without depending on unrelated webview HTML/setup details.
 	(
 		provider as unknown as { _initializeWebview: InitializeWebviewFn }
-	)._initializeWebview = (_document, _webviewPanel, repoContext) => {
-		sink.push({ repoContext });
+	)._initializeWebview = (_document, _webviewPanel, conflictedItem) => {
+		sink.push({ conflictedItem });
 	};
 }
 
-async function assertRepoContextResolution(
+async function assertConflictedItemResolution(
 	repoPath: string,
 	relativeFilePath: string,
 ): Promise<CapturedInitArgs[]> {
@@ -152,7 +155,7 @@ async function chooseDeleteModifyAction(
 	remainingStage: 2 | 3,
 	choice: "Keep File" | "Delete File" | undefined,
 ): Promise<void> {
-	const ctx = getRepoContext(repoPath, "tracked.txt");
+	const ctx = getConflictedItem(repoPath, "tracked.txt");
 	const stub = sinon
 		.stub(window, "showWarningMessage")
 		.resolves(choice as never);
@@ -167,6 +170,31 @@ function assertNoUnmergedStages(repoPath: string, fileName: string): void {
 	assert.deepEqual(lsFilesStages(repoPath, fileName), new Set());
 }
 
+async function assertGitApiConflictShape(
+	repoPath: string,
+	fileName: string,
+	expectedStatus: number,
+	expectedStages: Set<number>,
+): Promise<void> {
+	const repo = getGitApi().getRepository(Uri.file(repoPath));
+	assert.ok(repo);
+	const fileUri = Uri.file(join(repoPath, fileName));
+	const conflictChange = repo.state.mergeChanges.find(
+		(change) => change.uri.toString() === fileUri.toString(),
+	);
+	assert.ok(conflictChange);
+	assert.equal(conflictChange.status, expectedStatus);
+
+	await Promise.all(
+		[GIT_STAGE_BASE, GIT_STAGE_LOCAL, GIT_STAGE_REMOTE].map((stage) => {
+			const stageContent = repo.show(`:${stage}`, fileUri.fsPath);
+			return expectedStages.has(stage)
+				? assert.doesNotReject(stageContent)
+				: assert.rejects(stageContent);
+		}),
+	);
+}
+
 async function assertBothDeletedCustomEditorRouting(
 	repoPath: string,
 ): Promise<void> {
@@ -179,7 +207,7 @@ async function assertBothDeletedCustomEditorRouting(
 			mergeChanges: [
 				{
 					uri: fileUri,
-					status: GIT_STATUS_BOTH_DELETED,
+					status: GitStatus.BOTH_DELETED,
 				},
 			],
 			onDidChange: changeEmitter.event,
@@ -313,16 +341,16 @@ describe("MeldCustomEditorProvider.resolveCustomTextEditor", () => {
 	it("resolves repo and relative path for a subdirectory file", async () => {
 		const repoPath = await makeRepo("weld-vscode-editor-subdir-");
 		try {
-			const captured = await assertRepoContextResolution(
+			const captured = await assertConflictedItemResolution(
 				repoPath,
 				"src/deep/path/file.ts",
 			);
 			assert.equal(captured.length, 1);
 			const first = captured[0];
 			assert.ok(first);
-			assert.equal(first.repoContext.rootUri.fsPath, repoPath);
+			assert.equal(first.conflictedItem.rootUri.fsPath, repoPath);
 			assert.equal(
-				first.repoContext.uri.fsPath,
+				first.conflictedItem.uri.fsPath,
 				`${repoPath}/src/deep/path/file.ts`,
 			);
 		} finally {
@@ -340,16 +368,16 @@ describe("MeldCustomEditorProvider.resolveCustomTextEditor", () => {
 			repoPath,
 		);
 		try {
-			const captured = await assertRepoContextResolution(
+			const captured = await assertConflictedItemResolution(
 				worktreePath,
 				"worktree-file.ts",
 			);
 			assert.equal(captured.length, 1);
 			const first = captured[0];
 			assert.ok(first);
-			assert.equal(first.repoContext.rootUri.fsPath, worktreePath);
+			assert.equal(first.conflictedItem.rootUri.fsPath, worktreePath);
 			assert.equal(
-				first.repoContext.uri.fsPath,
+				first.conflictedItem.uri.fsPath,
 				`${worktreePath}/worktree-file.ts`,
 			);
 		} finally {
@@ -398,6 +426,12 @@ describe("MeldCustomEditorProvider.resolveCustomTextEditor — conflict type rou
 				repoPath,
 				"tracked.txt",
 			);
+			await assertGitApiConflictShape(
+				repoPath,
+				"tracked.txt",
+				GitStatus.DELETED_BY_US,
+				new Set([GIT_STAGE_BASE, GIT_STAGE_REMOTE]),
+			);
 			assert.equal(captured.length, 0);
 			assert.equal(
 				html,
@@ -418,6 +452,12 @@ describe("MeldCustomEditorProvider.resolveCustomTextEditor — conflict type rou
 				repoPath,
 				"tracked.txt",
 			);
+			await assertGitApiConflictShape(
+				repoPath,
+				"tracked.txt",
+				GitStatus.DELETED_BY_THEM,
+				new Set([GIT_STAGE_BASE, GIT_STAGE_LOCAL]),
+			);
 			assert.equal(captured.length, 0);
 			assert.equal(
 				html,
@@ -437,6 +477,12 @@ describe("MeldCustomEditorProvider.resolveCustomTextEditor — conflict type rou
 			const { captured } = await resolveAndCapture(
 				repoPath,
 				"conflict.txt",
+			);
+			await assertGitApiConflictShape(
+				repoPath,
+				"conflict.txt",
+				GitStatus.BOTH_ADDED,
+				new Set([GIT_STAGE_LOCAL, GIT_STAGE_REMOTE]),
 			);
 			assert.equal(captured.length, 1);
 		} finally {
@@ -465,6 +511,12 @@ describe("handleOpenMeldDiff — conflict type routing", () => {
 			"weld-cmd-deleted-by-us-",
 			makeDeletedByUsConflict,
 			async (repoPath, _repo) => {
+				await assertGitApiConflictShape(
+					repoPath,
+					"tracked.txt",
+					GitStatus.DELETED_BY_US,
+					new Set([GIT_STAGE_BASE, GIT_STAGE_REMOTE]),
+				);
 				const { openWithCalls, warningCalls } =
 					await executeOpenMeldDiffAndCapture(
 						repoPath,
@@ -492,6 +544,12 @@ describe("handleOpenMeldDiff — conflict type routing", () => {
 			"weld-cmd-deleted-by-them-",
 			makeDeletedByThemConflict,
 			async (repoPath, _repo) => {
+				await assertGitApiConflictShape(
+					repoPath,
+					"tracked.txt",
+					GitStatus.DELETED_BY_THEM,
+					new Set([GIT_STAGE_BASE, GIT_STAGE_LOCAL]),
+				);
 				const { openWithCalls, warningCalls } =
 					await executeOpenMeldDiffAndCapture(
 						repoPath,
@@ -522,6 +580,16 @@ describe("handleOpenMeldDiff — conflict type routing", () => {
 			"weld-cmd-normal-",
 			makeConflict,
 			async (repoPath, _repo) => {
+				await assertGitApiConflictShape(
+					repoPath,
+					"tracked.txt",
+					GitStatus.BOTH_MODIFIED,
+					new Set([
+						GIT_STAGE_BASE,
+						GIT_STAGE_LOCAL,
+						GIT_STAGE_REMOTE,
+					]),
+				);
 				const { openWithCalls, warningCalls } =
 					await executeOpenMeldDiffAndCapture(
 						repoPath,
@@ -544,7 +612,7 @@ describe("MeldCustomEditorProvider.handleDeleteModifyConflict — Compare", () =
 			"weld-dlg-compare-them-",
 			makeDeletedByThemConflict,
 			async (repoPath, _repo) => {
-				const ctx = getRepoContext(repoPath, "tracked.txt");
+				const ctx = getConflictedItem(repoPath, "tracked.txt");
 				const diffCalls: Array<readonly unknown[]> = [];
 				const warningStub = sinon
 					.stub(window, "showWarningMessage")
@@ -680,7 +748,7 @@ describe("restoreConflictedFile — stage detection", () => {
 		const repoPath = await makeRepo("weld-restore-missing-path-");
 		try {
 			await openRepoInGitExtension(repoPath);
-			const ctx = getRepoContext(repoPath, "missing.txt");
+			const ctx = getConflictedItem(repoPath, "missing.txt");
 			await assert.rejects(
 				() => restoreConflictedFileFn(ctx),
 				CHECKOUT_FAILED_UNEXPECTEDLY_REGEX,
@@ -697,7 +765,7 @@ describe("restoreConflictedFile — stage detection", () => {
 			"weld-restore-us-",
 			makeDeletedByUsConflict,
 			async (repoPath, _repo) => {
-				const ctx = getRepoContext(repoPath, "tracked.txt");
+				const ctx = getConflictedItem(repoPath, "tracked.txt");
 				const stagesBefore = lsFilesStages(repoPath, "tracked.txt");
 				assert.ok(!stagesBefore.has(2) && stagesBefore.has(3));
 				await restoreConflictedFileFn(ctx);
@@ -716,7 +784,7 @@ describe("restoreConflictedFile — stage detection", () => {
 			"weld-restore-them-",
 			makeDeletedByThemConflict,
 			async (repoPath, _repo) => {
-				const ctx = getRepoContext(repoPath, "tracked.txt");
+				const ctx = getConflictedItem(repoPath, "tracked.txt");
 				const stagesBefore = lsFilesStages(repoPath, "tracked.txt");
 				assert.ok(stagesBefore.has(2) && !stagesBefore.has(3));
 				await restoreConflictedFileFn(ctx);
@@ -735,7 +803,7 @@ describe("restoreConflictedFile — stage detection", () => {
 			"weld-restore-normal-",
 			makeConflict,
 			async (repoPath, _repo) => {
-				const ctx = getRepoContext(repoPath, "tracked.txt");
+				const ctx = getConflictedItem(repoPath, "tracked.txt");
 				await restoreConflictedFileFn(ctx);
 				const content = workingTreeContent(repoPath, "tracked.txt");
 				assert.ok(
@@ -757,7 +825,7 @@ describe("restoreConflictedFile — after dialog resolution", () => {
 			"weld-restore-keep-them-",
 			makeDeletedByThemConflict,
 			async (repoPath, _repo) => {
-				const ctx = getRepoContext(repoPath, "tracked.txt");
+				const ctx = getConflictedItem(repoPath, "tracked.txt");
 				const stub = sinon
 					.stub(window, "showWarningMessage")
 					.resolves("Keep File" as never);
@@ -782,7 +850,7 @@ describe("restoreConflictedFile — after dialog resolution", () => {
 			"weld-restore-delete-them-",
 			makeDeletedByThemConflict,
 			async (repoPath, _repo) => {
-				const ctx = getRepoContext(repoPath, "tracked.txt");
+				const ctx = getConflictedItem(repoPath, "tracked.txt");
 				const stub = sinon
 					.stub(window, "showWarningMessage")
 					.resolves("Delete File" as never);
@@ -808,7 +876,7 @@ describe("restoreConflictedFile — after dialog resolution", () => {
 			"weld-restore-keep-us-",
 			makeDeletedByUsConflict,
 			async (repoPath, _repo) => {
-				const ctx = getRepoContext(repoPath, "tracked.txt");
+				const ctx = getConflictedItem(repoPath, "tracked.txt");
 				const stub = sinon
 					.stub(window, "showWarningMessage")
 					.resolves("Keep File" as never);
@@ -833,7 +901,7 @@ describe("restoreConflictedFile — after dialog resolution", () => {
 			"weld-restore-delete-us-",
 			makeDeletedByUsConflict,
 			async (repoPath, _repo) => {
-				const ctx = getRepoContext(repoPath, "tracked.txt");
+				const ctx = getConflictedItem(repoPath, "tracked.txt");
 				const stub = sinon
 					.stub(window, "showWarningMessage")
 					.resolves("Delete File" as never);

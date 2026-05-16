@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Uri } from "vscode";
 import type {
+	ConflictedItem,
 	GitApiRepository,
-	RepoContext,
 } from "../../../src/repoContext.ts";
 import { getGitApi } from "../../../src/repoContext.ts";
 
@@ -228,8 +228,8 @@ async function withConflictRepo(
 	}
 }
 
-// Builds a RepoContext for a file in an already-open repository.
-function getRepoContext(repoPath: string, fileName: string): RepoContext {
+// Builds a ConflictedItem for a file in an already-open repository.
+function getConflictedItem(repoPath: string, fileName: string): ConflictedItem {
 	const repo = getGitApi().getRepository(Uri.file(repoPath));
 	if (!repo) {
 		throw new Error(`Expected git repository at ${repoPath}`);
@@ -267,7 +267,7 @@ function workingTreeContent(repoPath: string, fileName: string): string | null {
 }
 
 export {
-	getRepoContext,
+	getConflictedItem,
 	lsFilesStages,
 	makeBothAddedConflict,
 	makeConflict,

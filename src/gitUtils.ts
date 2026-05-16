@@ -3,7 +3,8 @@
 import { execFile, spawn } from "node:child_process";
 import { FileType, Uri, workspace } from "vscode";
 import { getGitExecutable } from "./gitPath.ts";
-import type { GitApiRepository } from "./repoContext.ts";
+import type { GitApiChange, GitApiRepository } from "./repoContext.ts";
+import { GitStatus } from "./repoContext.ts";
 
 const LINE_BREAK_REGEX = /\r?\n/;
 const WINDOWS_DRIVE_PREFIX_REGEX = /^[A-Za-z]:[\\/]/;
@@ -24,6 +25,11 @@ interface ConflictState {
 	operation: ConflictOperation;
 	otherRef: "MERGE_HEAD" | "CHERRY_PICK_HEAD" | "REVERT_HEAD" | "REBASE_HEAD";
 }
+
+type ConflictRouting =
+	| { kind: "normal" }
+	| { kind: "bothDeleted" }
+	| { kind: "deleteModify"; remainingStage: 2 | 3 };
 
 const CONFLICT_STATE_FILES: Array<{
 	operation: ConflictOperation;
@@ -194,6 +200,35 @@ function execGitWithInput(
 	});
 }
 
+function findMergeChange(
+	repository: GitApiRepository,
+	file: Uri,
+): GitApiChange | undefined {
+	const fileKey = file.toString();
+	return repository.state.mergeChanges.find(
+		(change) => change.uri.toString() === fileKey,
+	);
+}
+
+function getConflictRouting(
+	conflictChange: GitApiChange | undefined,
+): ConflictRouting {
+	if (!conflictChange) {
+		return { kind: "normal" };
+	}
+
+	if (conflictChange.status === GitStatus.DELETED_BY_US) {
+		return { kind: "deleteModify", remainingStage: 3 };
+	}
+	if (conflictChange.status === GitStatus.DELETED_BY_THEM) {
+		return { kind: "deleteModify", remainingStage: 2 };
+	}
+	if (conflictChange.status === GitStatus.BOTH_DELETED) {
+		return { kind: "bothDeleted" };
+	}
+	return { kind: "normal" };
+}
+
 /**
  * Gets the list of currently conflicted files in a repository.
  */
@@ -232,21 +267,13 @@ function getUnresolvedReasons(text: string): string[] {
 	return reasons;
 }
 
-// Numeric constants from the VS Code git extension API (vscode.git v1) Status enum.
-const GIT_STATUS_DELETED_BY_US = 14; // local deleted, remote modified — stage 2 absent
-const GIT_STATUS_DELETED_BY_THEM = 15; // remote deleted, local modified — stage 3 absent
-const GIT_STATUS_BOTH_ADDED = 16; // both sides added the file — stage 1 (base) absent
-const GIT_STATUS_BOTH_DELETED = 17; // both sides deleted — should be auto-resolved by git
-
 export type { ConflictState };
 export {
 	execGit,
 	execGitWithInput,
-	GIT_STATUS_BOTH_ADDED,
-	GIT_STATUS_BOTH_DELETED,
-	GIT_STATUS_DELETED_BY_THEM,
-	GIT_STATUS_DELETED_BY_US,
+	findMergeChange,
 	getConflictedFiles,
+	getConflictRouting,
 	getGitDirUri,
 	getUnresolvedReasons,
 	readConflictState,

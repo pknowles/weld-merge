@@ -20,18 +20,17 @@ import {
 	workspace,
 } from "vscode";
 import {
-	GIT_STATUS_BOTH_DELETED,
-	GIT_STATUS_DELETED_BY_THEM,
-	GIT_STATUS_DELETED_BY_US,
+	findMergeChange,
+	getConflictRouting,
 	getUnresolvedReasons,
 	readConflictState,
 } from "../gitUtils.ts";
 import {
+	type ConflictedItem,
+	conflictedItemFromUri,
 	type GitApiRepository,
 	getGitApi,
 	isSupportedScheme,
-	type RepoContext,
-	resolveRepoContext,
 } from "../repoContext.ts";
 import {
 	type ConflictLabels,
@@ -281,18 +280,20 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			return;
 		}
 
-		const repoContext = await resolveRepoContext(document.uri);
+		const repoContext = await conflictedItemFromUri(document.uri);
 		if (!repoContext) {
 			webviewPanel.webview.html =
 				"<p>Cannot open: file is not in a git repository.</p>";
 			return;
 		}
 
-		const conflictStatus = repoContext.repository.state.mergeChanges.find(
-			(c) => c.uri.fsPath === document.uri.fsPath,
-		)?.status;
+		const conflictChange = findMergeChange(
+			repoContext.repository,
+			document.uri,
+		);
+		const conflictRouting = getConflictRouting(conflictChange);
 
-		if (conflictStatus === GIT_STATUS_BOTH_DELETED) {
+		if (conflictRouting.kind === "bothDeleted") {
 			window.showErrorMessage(
 				`Unexpected conflict state for ${document.uri.fsPath}: both sides deleted this file. Git should have auto-resolved this.`,
 			);
@@ -301,17 +302,12 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			return;
 		}
 
-		if (
-			conflictStatus === GIT_STATUS_DELETED_BY_US ||
-			conflictStatus === GIT_STATUS_DELETED_BY_THEM
-		) {
-			const remainingStage =
-				conflictStatus === GIT_STATUS_DELETED_BY_US ? 3 : 2;
+		if (conflictRouting.kind === "deleteModify") {
 			webviewPanel.webview.html =
 				"<p>Delete/modify conflict. Use the prompt above to resolve.</p>";
 			MeldCustomEditorProvider.handleDeleteModifyConflict(
 				repoContext,
-				remainingStage,
+				conflictRouting.remainingStage,
 			).catch((error: unknown) => {
 				throw error;
 			});
@@ -329,7 +325,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 	}
 
 	static async handleDeleteModifyConflict(
-		repoContext: RepoContext,
+		repoContext: ConflictedItem,
 		remainingStage: 2 | 3,
 	): Promise<void> {
 		const { uri, repository } = repoContext;
@@ -371,7 +367,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 	private _initializeWebview(
 		document: TextDocument,
 		webviewPanel: WebviewPanel,
-		repoContext: RepoContext,
+		repoContext: ConflictedItem,
 	): void {
 		const config = this._getWebviewConfig();
 		const stagesPromise = fetchConflictStages(
@@ -478,7 +474,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		ctx: {
 			document: TextDocument;
 			webviewPanel: WebviewPanel;
-			repoContext: RepoContext;
+			repoContext: ConflictedItem;
 			editState: EditState;
 			disposables: Disposable[];
 			stagesPromise: ReturnType<typeof fetchConflictStages>;
@@ -544,7 +540,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 	private async _buildSnapshotFromCurrentDocument(
 		ctx: {
 			document: TextDocument;
-			repoContext: RepoContext;
+			repoContext: ConflictedItem;
 		},
 		config: ReturnType<MeldCustomEditorProvider["_getWebviewConfig"]>,
 		stages: Awaited<ReturnType<typeof fetchConflictStages>>,
@@ -566,7 +562,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 
 	private _tryBuildInitialConflictText(
 		ctx: {
-			repoContext: RepoContext;
+			repoContext: ConflictedItem;
 		},
 		stages: Awaited<ReturnType<typeof fetchConflictStages>>,
 		labels: ConflictLabels,
@@ -580,7 +576,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 
 	private async _buildAutoMergedContent(
 		ctx: {
-			repoContext: RepoContext;
+			repoContext: ConflictedItem;
 		},
 		stages: Awaited<ReturnType<typeof fetchConflictStages>>,
 	): Promise<string | undefined> {
@@ -611,7 +607,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 	private async _maybeApplyAutoMerge(
 		ctx: {
 			document: TextDocument;
-			repoContext: RepoContext;
+			repoContext: ConflictedItem;
 		},
 		stagesPromise: ReturnType<typeof fetchConflictStages>,
 	): Promise<void> {
@@ -719,7 +715,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		ctx: {
 			document: TextDocument;
 			webviewPanel: WebviewPanel;
-			repoContext: RepoContext;
+			repoContext: ConflictedItem;
 			editState: EditState;
 		},
 	): Promise<void> {
@@ -844,7 +840,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		ctx: {
 			document: TextDocument;
 			webviewPanel: WebviewPanel;
-			repoContext: RepoContext;
+			repoContext: ConflictedItem;
 			readyState: {
 				snapshot: WebviewPayload["data"] | null;
 				handled: boolean;
@@ -951,7 +947,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		ctx: {
 			document: TextDocument;
 			webviewPanel: WebviewPanel;
-			repoContext: RepoContext;
+			repoContext: ConflictedItem;
 			editState: EditState;
 			readyState: ReadyState;
 		},
@@ -1121,7 +1117,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 
 	private async _handleRequestBaseDiff(
 		ctx: {
-			repoContext: RepoContext;
+			repoContext: ConflictedItem;
 			webviewPanel: WebviewPanel;
 		},
 		msg: RequestBaseDiffMessage,

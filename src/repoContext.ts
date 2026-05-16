@@ -1,8 +1,40 @@
 import { type Event, extensions, type Uri, workspace } from "vscode";
 
+// Mirrors the public `Status` const enum order from VS Code's bundled Git API
+// (`extensions/git/src/api/git.d.ts`). The API exposes only numeric statuses at
+// runtime, so derive the values from the official ordered names in one place.
+const gitStatusNames = [
+	"INDEX_MODIFIED",
+	"INDEX_ADDED",
+	"INDEX_DELETED",
+	"INDEX_RENAMED",
+	"INDEX_COPIED",
+	"MODIFIED",
+	"DELETED",
+	"UNTRACKED",
+	"IGNORED",
+	"INTENT_TO_ADD",
+	"INTENT_TO_RENAME",
+	"TYPE_CHANGED",
+	"ADDED_BY_US",
+	"ADDED_BY_THEM",
+	"DELETED_BY_US",
+	"DELETED_BY_THEM",
+	"BOTH_ADDED",
+	"BOTH_DELETED",
+	"BOTH_MODIFIED",
+] as const;
+
+type GitStatusName = (typeof gitStatusNames)[number];
+type GitStatus = number;
+
+const GitStatus: Record<GitStatusName, GitStatus> = Object.fromEntries(
+	gitStatusNames.map((name, index) => [name, index]),
+) as Record<GitStatusName, GitStatus>;
+
 interface GitApiChange {
 	uri: Uri;
-	status: number;
+	status: GitStatus;
 }
 
 interface GitApiCommit {
@@ -43,10 +75,11 @@ interface GitApi {
 	toGitUri(uri: Uri, ref: string): Uri;
 }
 
-interface RepoContext {
-	repository: GitApiRepository;
-	rootUri: Uri;
-	uri: Uri;
+// Possibly-conflicted file or submodule
+interface ConflictedItem {
+	repository: GitApiRepository; // api, awkwardly grouped
+	rootUri: Uri; // TODO: remove. use repository.rootUri
+	uri: Uri; // file or submodule
 }
 
 const SUPPORTED_URI_SCHEMES = new Set(["file", "vscode-remote"]);
@@ -65,7 +98,7 @@ function getGitApi(): GitApi {
 	return gitExtension.exports.getAPI(1);
 }
 
-function resolveRepoContext(uri: Uri): RepoContext | null {
+function conflictedItemFromUri(uri: Uri): ConflictedItem | null {
 	if (!isSupportedScheme(uri)) {
 		return null;
 	}
@@ -97,5 +130,5 @@ function resolveRepoContext(uri: Uri): RepoContext | null {
 	};
 }
 
-export type { GitApiRepository, RepoContext };
-export { getGitApi, isSupportedScheme, resolveRepoContext };
+export type { ConflictedItem, GitApiChange, GitApiRepository };
+export { conflictedItemFromUri, GitStatus, getGitApi, isSupportedScheme };

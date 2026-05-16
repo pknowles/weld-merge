@@ -21,11 +21,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Uri } from "vscode";
 import { getGitExecutable } from "../gitPath.ts";
-import { GIT_STATUS_BOTH_ADDED, readConflictState } from "../gitUtils.ts";
+import { findMergeChange, readConflictState } from "../gitUtils.ts";
 import { Differ } from "../matchers/diffutil.ts";
 import { Merger } from "../matchers/merge.ts";
 import { MyersSequenceMatcher } from "../matchers/myers.ts";
-import type { GitApiRepository, RepoContext } from "../repoContext.ts";
+import type { ConflictedItem, GitApiRepository } from "../repoContext.ts";
+import { GitStatus } from "../repoContext.ts";
 import type { DiffChunk, PayloadFiles, WebviewPayload } from "./ui/types.ts";
 
 const GIT_STAGE_BASE = 1;
@@ -158,8 +159,7 @@ async function fetchConflictStages(
 	file: Uri,
 ): Promise<ConflictStages> {
 	const isBothAdded =
-		repository.state.mergeChanges.find((c) => c.uri.fsPath === file.fsPath)
-			?.status === GIT_STATUS_BOTH_ADDED;
+		findMergeChange(repository, file)?.status === GitStatus.BOTH_ADDED;
 	const [base, local, incoming] = await Promise.all([
 		isBothAdded ? "" : getGitState(repository, file, GIT_STAGE_BASE),
 		getGitState(repository, file, GIT_STAGE_LOCAL),
@@ -228,7 +228,7 @@ async function buildInitialConflictedState(
 }
 
 async function buildDiffPayload(
-	repoContext: RepoContext,
+	repoContext: ConflictedItem,
 	file: Uri,
 	options: BuildDiffPayloadOptions = {},
 ): Promise<WebviewPayload["data"]> {
@@ -277,7 +277,7 @@ async function buildDiffPayload(
 }
 
 async function buildBaseDiffPayload(
-	repoContext: RepoContext,
+	repoContext: ConflictedItem,
 	file: Uri,
 	side: "left" | "right",
 ) {
