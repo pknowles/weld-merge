@@ -5,7 +5,6 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { runTests } from "@vscode/test-electron";
-// @ts-expect-error xvfb has no type definitions
 import Xvfb from "xvfb";
 
 function createTestWorkspace(): string {

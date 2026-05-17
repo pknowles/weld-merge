@@ -593,12 +593,17 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 	/**
 	 * Decides whether to apply auto-merge and, if so, replaces the document content.
 	 *
-	 * Auto-merge detection: We only auto-merge if the file is unchanged since the
-	 * merge conflict was created. To verify this, we re-run git merge-file -p using
-	 * the same labels git originally used. We extract those labels from existing
-	 * conflict markers in the document. This serves a double purpose: if conflict
-	 * markers are missing, the user has most likely made changes already and we
-	 * treat their content as authoritative.
+	 * Auto-merge detection: We only auto-merge if the file matches what the user's
+	 * current Git config recreates from the conflict stages. An exact match means
+	 * the conflicted text is trivial to reproduce with Git, so it is safe to
+	 * replace with our auto-merged buffer. A mismatch means either the user edited
+	 * the file or their Git config changed; in both cases, preserve the file and
+	 * ask before replacing it.
+	 *
+	 * We still extract labels from the document's conflict markers because Git
+	 * does not persist the human-readable labels elsewhere, and those labels must
+	 * match for the byte-for-byte comparison to be meaningful. If conflict markers
+	 * are missing, the user has already resolved/edited the file manually.
 	 *
 	 * This runs concurrently with the "ready" handshake. The workspace.applyEdit
 	 * it performs (if any) is handled correctly regardless of timing — see the

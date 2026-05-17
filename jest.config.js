@@ -22,6 +22,7 @@ export default {
 		"/node_modules/",
 		"/test/benchmarking/",
 		"/test/vscode/", // vscode integration tests (not jest)
+		"/test/vscode-remote-ssh/", // manual Remote-SSH integration test (not jest)
 		"/test/e2e/", // playwrite end to end tests (not jest)
 	],
 	// Keep Jest's haste-map out of @vscode/test-electron's downloaded VS Code

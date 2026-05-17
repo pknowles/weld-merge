@@ -32,10 +32,16 @@ import {
 	isSupportedScheme,
 } from "./repoContext.ts";
 import { ConflictedFilesProvider, GitFile } from "./treeView.ts";
+import { extractConflictLabels } from "./webview/conflictLabels.ts";
+import {
+	buildInitialConflictedState,
+	fetchConflictStages,
+} from "./webview/diffPayload.ts";
 import { MeldCustomEditorProvider } from "./webview/meldWebviewPanel.ts";
 
 const lastConflictedFilesPerRepo: Map<string, Set<string>> = new Map();
 const ZERO_OBJECT_ID = "0000000000000000000000000000000000000000";
+const REMOTE_SMOKE_TEST_SETTING = "remoteSmokeTest";
 const LS_TREE_ENTRY_REGEX = /^(\d{6})\s+\S+\s+([0-9a-fA-F]+)\t/;
 const CHECKOUT_MISSING_STAGES_REGEX =
 	/path ['"].+['"] does not have all necessary versions/;
@@ -47,6 +53,20 @@ interface TreeEntry {
 
 interface UriCommandArg {
 	uri: Uri;
+}
+
+interface RemoteSmokeTestOpenResult {
+	uri: string;
+	command: string;
+	stages: {
+		base: string;
+		local: string;
+		remote: string;
+	};
+	initialState: {
+		workingContent: string;
+		reconstructedContent: string | null;
+	};
 }
 
 function getErrorMessage(error: unknown): string {
@@ -816,6 +836,64 @@ function handleSmartAddCommand(
 	return handleActiveEditorSmartAdd(conflictedFilesProvider);
 }
 
+async function openFirstConflictFromTreeForRemoteSmokeTest(
+	conflictedFilesProvider: ConflictedFilesProvider,
+): Promise<RemoteSmokeTestOpenResult> {
+	const children = await conflictedFilesProvider.getChildren();
+	const conflict = children.find(
+		(item) =>
+			item instanceof GitFile && item.contextValue === "conflictedFile",
+	);
+	if (!(conflict instanceof GitFile)) {
+		throw new Error(
+			"Remote smoke test could not find a conflicted tree item.",
+		);
+	}
+	if (!conflict.command) {
+		throw new Error(
+			"Remote smoke test conflicted tree item has no command.",
+		);
+	}
+	const args = conflict.command.arguments;
+	if (!args) {
+		throw new Error(
+			"Remote smoke test conflicted tree item command has no arguments.",
+		);
+	}
+	const [base, local, remote] = await Promise.all([
+		getGitFileContent(conflict.conflictedItem.repository, conflict.uri, 1),
+		getGitFileContent(conflict.conflictedItem.repository, conflict.uri, 2),
+		getGitFileContent(conflict.conflictedItem.repository, conflict.uri, 3),
+	]);
+	const document = await workspace.openTextDocument(conflict.uri);
+	const workingContent = document.getText();
+	const labels = extractConflictLabels(workingContent);
+	const reconstructedContent = labels
+		? await buildInitialConflictedState(
+				conflict.conflictedItem.rootUri,
+				await fetchConflictStages(
+					conflict.conflictedItem.repository,
+					conflict.uri,
+				),
+				labels,
+			)
+		: null;
+	await commands.executeCommand(conflict.command.command, ...args);
+	return {
+		uri: conflict.uri.toString(),
+		command: conflict.command.command,
+		stages: {
+			base,
+			local,
+			remote,
+		},
+		initialState: {
+			workingContent,
+			reconstructedContent,
+		},
+	};
+}
+
 function registerViews(
 	context: ExtensionContext,
 	conflictedFilesProvider: ConflictedFilesProvider,
@@ -886,6 +964,21 @@ function registerCommands(
 				handleSmartAddCommand(target, conflictedFilesProvider),
 		),
 	);
+	if (
+		workspace
+			.getConfiguration("weld")
+			.get<boolean>(REMOTE_SMOKE_TEST_SETTING) === true
+	) {
+		context.subscriptions.push(
+			commands.registerCommand(
+				"meld-auto-merge.test.openFirstConflictFromTree",
+				() =>
+					openFirstConflictFromTreeForRemoteSmokeTest(
+						conflictedFilesProvider,
+					),
+			),
+		);
+	}
 }
 
 function setupGitRepoWatchers(
@@ -943,6 +1036,7 @@ export interface WeldExtensionApi {
 	setInitialConflictContent: typeof MeldCustomEditorProvider.setInitialConflictContent;
 	meldCustomEditorProvider: typeof MeldCustomEditorProvider;
 	restoreConflictedFile: typeof restoreConflictedFile;
+	conflictedFilesProvider: ConflictedFilesProvider;
 }
 
 export function activate(context: ExtensionContext): WeldExtensionApi {
@@ -957,6 +1051,7 @@ export function activate(context: ExtensionContext): WeldExtensionApi {
 			MeldCustomEditorProvider.setInitialConflictContent,
 		meldCustomEditorProvider: MeldCustomEditorProvider,
 		restoreConflictedFile,
+		conflictedFilesProvider,
 	};
 }
 

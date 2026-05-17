@@ -27,6 +27,7 @@ import { Merger } from "../matchers/merge.ts";
 import { MyersSequenceMatcher } from "../matchers/myers.ts";
 import type { ConflictedItem, GitApiRepository } from "../repoContext.ts";
 import { GitStatus } from "../repoContext.ts";
+import type { ConflictLabels } from "./conflictLabels.ts";
 import type { DiffChunk, PayloadFiles, WebviewPayload } from "./ui/types.ts";
 
 const GIT_STAGE_BASE = 1;
@@ -46,12 +47,6 @@ interface ConflictStages {
 	base: string;
 	local: string;
 	incoming: string;
-}
-
-interface ConflictLabels {
-	localLabel: string;
-	baseLabel: string;
-	remoteLabel: string;
 }
 
 interface BuildDiffPayloadOptions {
@@ -173,8 +168,13 @@ async function buildInitialConflictedState(
 	stages: ConflictStages,
 	labels: ConflictLabels,
 ): Promise<string> {
-	// Re-run git merge-file with the same labels from the working file markers
-	// to reproduce git's original conflicted text for byte-for-byte comparison.
+	// Re-run git merge-file with the user's current Git config and the same
+	// labels from the working file markers. If this exactly matches the file on
+	// disk, then the conflicted text is trivially reproducible via Git (for
+	// example, `git checkout -m`) and the editor can safely replace it with the
+	// auto-merged buffer. If it differs, either the user edited the file or the
+	// relevant Git config changed; both cases mean we must preserve the file and
+	// ask before replacing it.
 	// git merge-file requires real files on disk, so this helper creates a
 	// temporary directory and always removes it in the finally block.
 	const tempDir = await mkdtemp(join(tmpdir(), "weld-"));
@@ -196,7 +196,7 @@ async function buildInitialConflictedState(
 					"-L",
 					labels.localLabel,
 					"-L",
-					labels.baseLabel,
+					labels.kind === "diff3" ? labels.baseLabel : "BASE",
 					"-L",
 					labels.remoteLabel,
 					localPath,

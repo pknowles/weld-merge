@@ -66,13 +66,14 @@ describe("conflictLabels.extractConflictLabels", () => {
 			].join("\n"),
 		);
 		expect(labels).toEqual({
+			kind: "diff3",
 			localLabel: "HEAD",
 			baseLabel: "base-commit",
 			remoteLabel: "feature-branch",
 		});
 	});
 
-	it("returns null when the base marker is missing (2-way conflict)", () => {
+	it("extracts local/remote labels from normal 2-way markers", () => {
 		const labels = extractConflictLabels(
 			[
 				"<<<<<<< HEAD",
@@ -82,7 +83,11 @@ describe("conflictLabels.extractConflictLabels", () => {
 				">>>>>>> feature-branch",
 			].join("\n"),
 		);
-		expect(labels).toBeNull();
+		expect(labels).toEqual({
+			kind: "normal",
+			localLabel: "HEAD",
+			remoteLabel: "feature-branch",
+		});
 	});
 
 	it("returns null when the text contains no markers", () => {

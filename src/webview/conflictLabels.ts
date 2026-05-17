@@ -9,11 +9,20 @@ const LOCAL_LABEL_REGEX = /^<<<<<<< (.*)$/m;
 const BASE_LABEL_REGEX = /^\|\|\|\|\|\|\| (.*)$/m;
 const REMOTE_LABEL_REGEX = /^>>>>>>> (.*)$/m;
 
-export interface ConflictLabels {
+interface NormalConflictLabels {
+	kind: "normal";
+	localLabel: string;
+	remoteLabel: string;
+}
+
+interface Diff3ConflictLabels {
+	kind: "diff3";
 	localLabel: string;
 	baseLabel: string;
 	remoteLabel: string;
 }
+
+export type ConflictLabels = NormalConflictLabels | Diff3ConflictLabels;
 
 export const extractConflictLabels = (
 	docText: string,
@@ -21,8 +30,11 @@ export const extractConflictLabels = (
 	const localLabel = docText.match(LOCAL_LABEL_REGEX)?.[1];
 	const baseLabel = docText.match(BASE_LABEL_REGEX)?.[1];
 	const remoteLabel = docText.match(REMOTE_LABEL_REGEX)?.[1];
-	if (!(localLabel && baseLabel && remoteLabel)) {
+	if (!(localLabel && remoteLabel)) {
 		return null;
 	}
-	return { localLabel, baseLabel, remoteLabel };
+	if (baseLabel) {
+		return { kind: "diff3", localLabel, baseLabel, remoteLabel };
+	}
+	return { kind: "normal", localLabel, remoteLabel };
 };

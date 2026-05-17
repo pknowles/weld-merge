@@ -37,6 +37,9 @@
 		"onStartupFinished",
 		"onExtensionActivated:vscode.git"
 	],
+	"extensionKind": [
+		"workspace"
+	],
 	"extensionDependencies": [
 		"vscode.git"
 	],
@@ -344,6 +347,7 @@
 		"test": "npx jest",
 		"test:coverage": "npx jest --coverage",
 		"test:vscode": "env -u ELECTRON_RUN_AS_NODE npx tsx test/vscode/runTest.ts",
+		"test:vscode:remote-ssh": "env -u ELECTRON_RUN_AS_NODE npx tsx test/vscode-remote-ssh/runTest.ts",
 		"test:mutate": "stryker run",
 		"test:fuzz": "JAZZER_FUZZ=1 npx jest -c jest.fuzz.config.js",
 		"test:fuzz:corpus": "npx tsx scripts/generate_fuzz_corpus.ts",

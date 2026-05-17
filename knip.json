@@ -8,6 +8,9 @@
 	"ignoreBinaries": ["jest.fuzz.config.js"],
 	"entry": [
 		"test/benchmarking/logic_bench.ts",
+		"test/vscode-remote-ssh/runTest.ts",
+		"test/vscode-remote-ssh/suite/index.cjs",
+		"test/vscode-remote-ssh/suite/**/*.test.ts",
 		"test/vscode/runTest.ts",
 		"test/vscode/suite/index.cjs",
 		"test/vscode/suite/**/*.test.ts"
