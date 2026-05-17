@@ -164,11 +164,13 @@ const resetMountedEditorsImpl = (): void => {
 };
 
 export type VscodeStub = ReturnType<typeof createVscodeStubImpl>;
-export { mountedEditorsStore as mountedEditors };
-export { createMonacoMockImpl as createMonacoMock };
-export { createMonacoReactMockComponentImpl as createMonacoReactMockComponent };
-export { installResizeObserverMockImpl as installResizeObserverMock };
-export { createVscodeStubImpl as createVscodeStub };
-export { installVscodeApiImpl as installVscodeApi };
-export { uninstallVscodeApiImpl as uninstallVscodeApi };
-export { resetMountedEditorsImpl as resetMountedEditors };
+export {
+	createMonacoMockImpl as createMonacoMock,
+	createMonacoReactMockComponentImpl as createMonacoReactMockComponent,
+	createVscodeStubImpl as createVscodeStub,
+	installResizeObserverMockImpl as installResizeObserverMock,
+	installVscodeApiImpl as installVscodeApi,
+	mountedEditorsStore as mountedEditors,
+	resetMountedEditorsImpl as resetMountedEditors,
+	uninstallVscodeApiImpl as uninstallVscodeApi,
+};
