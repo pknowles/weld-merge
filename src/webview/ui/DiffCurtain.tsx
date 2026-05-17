@@ -314,6 +314,7 @@ const useFilteredDiffs = (p: {
 }) =>
 	// biome-ignore lint/correctness/useExhaustiveDependencies: p.renderTrigger is required for scroll-reactive filtering
 	useMemo(() => {
+		const t0 = performance.now();
 		const { diffs, leftEditor, rightEditor } = p;
 		if (!diffs) {
 			return [];
@@ -325,26 +326,37 @@ const useFilteredDiffs = (p: {
 			const rEnd = p.reversed ? c.endA : c.endB;
 			return lEnd > p.lMax || rEnd > p.rMax;
 		};
+		let result: DiffChunk[];
 		if (p.curtainHeight === 0) {
-			return diffs
+			result = diffs
 				.filter((c) => c.tag !== "equal" && !isStale(c))
 				.slice(0, 100);
-		}
-		return diffs.filter((c) => {
-			if (c.tag === "equal" || isStale(c)) {
-				return false;
-			}
-			const b = getBounds({
-				startA: c.startA,
-				endA: c.endA,
-				startB: c.startB,
-				endB: c.endB,
-				lMax: p.lMax,
-				rMax: p.rMax,
-				reversed: p.reversed,
+		} else {
+			result = diffs.filter((c) => {
+				if (c.tag === "equal" || isStale(c)) {
+					return false;
+				}
+				const b = getBounds({
+					startA: c.startA,
+					endA: c.endA,
+					startB: c.startB,
+					endB: c.endB,
+					lMax: p.lMax,
+					rMax: p.rMax,
+					reversed: p.reversed,
+				});
+				return isChunkInView(b, leftEditor, rightEditor, p);
 			});
-			return isChunkInView(b, leftEditor, rightEditor, p);
-		});
+		}
+		const w = window as unknown as Record<string, unknown>;
+		// biome-ignore lint/complexity/useLiteralKeys: TypeScript noPropertyAccessFromIndexSignature requires bracket notation for Record<string,unknown>
+		const stats = w["__WELD_PERF_STATS__"] as
+			| { curtainFilterTimes: number[] }
+			| undefined;
+		if (stats) {
+			stats.curtainFilterTimes.push(performance.now() - t0);
+		}
+		return result;
 	}, [
 		p.diffs,
 		p.lMax,

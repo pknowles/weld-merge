@@ -552,11 +552,34 @@ const useCodePaneRenderTrigger = (
 	}, [ed, setRenderTrigger]);
 };
 
+function recordHighlightTelemetry(
+	highlightMs: number,
+	inputStartTimeRef: { current: number | null },
+): void {
+	const w = window as unknown as Record<string, unknown>;
+	// biome-ignore lint/complexity/useLiteralKeys: TypeScript noPropertyAccessFromIndexSignature requires bracket notation for Record<string,unknown>
+	const stats = w["__WELD_PERF_STATS__"] as
+		| { highlightJsTimes: number[]; fullRenderTimes: number[] }
+		| undefined;
+	if (!stats) {
+		return;
+	}
+	stats.highlightJsTimes.push(highlightMs);
+	const startTime = inputStartTimeRef.current;
+	if (startTime !== null) {
+		inputStartTimeRef.current = null;
+		requestAnimationFrame(() => {
+			stats.fullRenderTimes.push(performance.now() - startTime);
+		});
+	}
+}
+
 const useCodePaneLogic = (p: CodePaneProps) => {
 	const [ed, setEd] = useState<editor.IStandaloneCodeEditor | null>(null);
 	const isApplyingSync = useRef(false);
 	const [isFlashing, setIsFlashing] = useState(false);
 	const decRef = useRef<string[]>([]);
+	const inputStartTimeRef = useRef<number | null>(null);
 	const sendSaveRef = useRef(p.actions.sendSave);
 	const syncActionsRef = useRef({
 		handleMergedContentChanged: p.actions.handleMergedContentChanged,
@@ -577,7 +600,10 @@ const useCodePaneLogic = (p: CodePaneProps) => {
 					},
 					options: getHighlightOptions(h),
 				}));
+			const t0 = performance.now();
 			decRef.current = ed.deltaDecorations(decRef.current, nd);
+			const highlightMs = performance.now() - t0;
+			recordHighlightTelemetry(highlightMs, inputStartTimeRef);
 		}
 	}, [ed, p.highlights]);
 
@@ -633,6 +659,7 @@ const useCodePaneLogic = (p: CodePaneProps) => {
 
 		const disposable = m.onDidChangeContent((ev) => {
 			if (!isApplyingSync.current) {
+				inputStartTimeRef.current = performance.now();
 				syncActionsRef.current.handleMergedContentChanged(ev.changes);
 			}
 		});

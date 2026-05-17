@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, it, jest } from "@jest/globals";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import {
+	createMonacoMock,
+	createMonacoReactMockComponent,
 	createVscodeStub,
 	installResizeObserverMock,
 	installVscodeApi,
-	createMonacoMock,
-	createMonacoReactMockComponent,
 	mountedEditors,
 	resetMountedEditors,
 	uninstallVscodeApi,

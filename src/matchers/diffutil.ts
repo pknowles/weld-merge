@@ -352,6 +352,7 @@ class Differ {
 		sizechange: number,
 		texts: string[][],
 	) {
+		const t0 = performance.now();
 		if (sequence === PANE_0 || sequence === PANE_1) {
 			this._changeSequence({
 				which: 0,
@@ -383,6 +384,14 @@ class Differ {
 			sizechange,
 			texts,
 		);
+		const w = window as unknown as Record<string, unknown>;
+		// biome-ignore lint/complexity/useLiteralKeys: TypeScript noPropertyAccessFromIndexSignature requires bracket notation for Record<string,unknown>
+		const stats = w["__WELD_PERF_STATS__"] as
+			| { diffTimes: number[] }
+			| undefined;
+		if (stats) {
+			stats.diffTimes.push(performance.now() - t0);
+		}
 	}
 
 	_updateMergeCacheOnSequenceChange(
