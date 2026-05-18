@@ -1,15 +1,58 @@
 # Future Improvements & Known Issues
 
-## Top priority
+## Annoyances
 
-1. Merge conflicts for deleted files need special handling
-2. Auto-merge is still deleting end of file newlines
+Closing the right hand compare-with-base window resets the scroll position -
+probably a react re-render. This does not happen when closing the left
+compare-with-base panel.
+
+Hovering the mouse over the Local and Remote commits shows a giant commit card.
+This just gets in the way. We should make these dropdowns instead that the user
+has to click to open.
+
+Running "auto-merge all conflicted files" prevents the nice auto-merge feature
+of meld where conflict markers are replaced with "(??)" in the 3-view editor
+when the user finally opens it. Maybe when we check to see if the user has
+modified the file since the conflict was created, which auto-merge does, we can
+also check against the auto-merge result. If it matches, it is safe to do the
+(??) replacement. Or is it safe to do (??) replacement if we find existing
+conflicts? Probably not since they could be checked in from previous bad merges.
+
+To re-open the 3-view merge editor, a conflict must exist. If the user already
+resolved conflicts the only way to get this back is to checkout conflicted, but
+this resets the file contents. We should have an option to restore the
+conflicted state without actually changing the file so that the user can open
+the 3-view window. Possibly even a way to open the 3-view window without
+restoring the conflicted git state, but that might be confusing.
+
+There's too many happy path popups. On linux, there is generally no output when
+things work. Output is reserved for when things don't work. This is ideal. For
+example, when checking out conflicted files we get a toast popup, but this
+immediately covers exactly where the user wants to click to go to the next
+conflicted file.
+
+If the user is already looking at the conflicted files list we should not show a
+toast popup when conflicted files are detected. Too much clutter.
+
+When a dirty (modified) file is open in a regular vscode editor AND our 3-way
+editor, then the user tries to close the default editor, there's a popup asking
+to save changes. If the user clicks "no" to discard, the file state is reverted
+to what's on disk. This is unexpected because the file is still open in the
+3-way editor. I.e. I typically just want to clean up my tabs and not change the
+contents of the file.
+
+If there are no conflicts after auto-merge completes, I want to know. Maybe
+display the number of conflicts remaining.
+
+The Save & Complete Merge button takes up to much space. This could be a button
+at the top of the UI, inline with the next/prev chunks and conflicts buttons.
 
 ## Behaviour Differences to GNOME Meld
 
 The initial merge is correct, but after making changes the diffs/highlighting do
 not get the same result. I have seen this in the real Meld app, but the aim here
 was to match what Meld does exactly, so the current behaviour is incorrect.
+This may have been solved by 74436a8d7e610543e945234617fc608148e58c13.
 
 ## Repository discovery
 
