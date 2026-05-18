@@ -8,7 +8,10 @@ import { commands, EventEmitter, extensions, Uri, window } from "vscode";
 import type { WeldExtensionApi } from "../../../src/extension.ts";
 import {
 	type ConflictedItem,
+	GIT_STAGE_LOCAL,
+	GIT_STAGE_REMOTE,
 	type GitApiRepository,
+	type GitConflictStage,
 	GitStatus,
 	getGitApi,
 } from "../../../src/repoContext.ts";
@@ -65,8 +68,6 @@ const LOCAL_MODIFIED_REGEX = /Local modified/;
 const CHECKOUT_FAILED_UNEXPECTEDLY_REGEX = /checkout -m failed unexpectedly/;
 const BASE_TO_LOCAL_TITLE_REGEX = /Base ↔ Local/;
 const GIT_STAGE_BASE = 1;
-const GIT_STAGE_LOCAL = 2;
-const GIT_STAGE_REMOTE = 3;
 
 before(async () => {
 	const ext = extensions.getExtension("pknowles.meld-auto-merge");
@@ -152,7 +153,7 @@ function assertDeleteModifyConflictRestored(
 
 async function chooseDeleteModifyAction(
 	repoPath: string,
-	remainingStage: 2 | 3,
+	remainingStage: GitConflictStage,
 	choice: "Keep File" | "Delete File" | undefined,
 ): Promise<void> {
 	const ctx = getConflictedItem(repoPath, "tracked.txt");
@@ -195,7 +196,7 @@ async function assertGitApiConflictShape(
 	);
 }
 
-async function assertBothDeletedCustomEditorRouting(
+async function assertBothDeletedCustomEditorStatus(
 	repoPath: string,
 ): Promise<void> {
 	await openRepoInGitExtension(repoPath);
@@ -240,6 +241,52 @@ async function assertBothDeletedCustomEditorRouting(
 	);
 	assert.equal(errorStub.callCount, 1);
 	assert.match(String(errorStub.firstCall.args[0]), BOTH_SIDES_DELETED_REGEX);
+}
+
+async function assertMisreportedBothDeletedCustomEditorStatus(
+	repoPath: string,
+): Promise<void> {
+	await openRepoInGitExtension(repoPath);
+	const fileUri = Uri.file(join(repoPath, "tracked.txt"));
+	const changeEmitter = new EventEmitter<void>();
+	const repository: GitApiRepository = {
+		rootUri: Uri.file(repoPath),
+		state: {
+			mergeChanges: [
+				{
+					uri: fileUri,
+					status: GitStatus.BOTH_DELETED,
+				},
+			],
+			onDidChange: changeEmitter.event,
+		},
+		show: (ref: string) => Promise.resolve(`content for ${ref}`),
+		getCommit: () => Promise.reject(new Error("not used")),
+		getMergeBase: () => Promise.reject(new Error("not used")),
+		add: () => Promise.reject(new Error("not used")),
+	};
+	const provider = new MeldProviderClass(Uri.file("/tmp"));
+	const panel = makeFakePanel();
+	const captured: CapturedInitArgs[] = [];
+	stubInitializeWebview(provider, captured);
+	const errorStub = sinon.stub(window, "showErrorMessage");
+	try {
+		await withMockGitRepository(repository, () =>
+			provider.resolveCustomTextEditor(
+				makeDocument(fileUri),
+				panel as unknown as WebviewPanel,
+				{} as never,
+			),
+		);
+	} finally {
+		errorStub.restore();
+	}
+	assert.equal(captured.length, 1);
+	assert.equal(
+		captured[0]?.conflictedItem.uri.toString(),
+		fileUri.toString(),
+	);
+	assert.equal(errorStub.callCount, 0);
 }
 
 async function withMockGitRepository(
@@ -389,8 +436,8 @@ describe("MeldCustomEditorProvider.resolveCustomTextEditor", () => {
 	});
 });
 
-// Group A: resolveCustomTextEditor safety net — conflict type routing.
-describe("MeldCustomEditorProvider.resolveCustomTextEditor — conflict type routing", () => {
+// Group A: resolveCustomTextEditor safety net — conflict status handling.
+describe("MeldCustomEditorProvider.resolveCustomTextEditor — conflict status handling", () => {
 	async function resolveAndCapture(
 		repoPath: string,
 		fileName: string,
@@ -495,7 +542,7 @@ describe("MeldCustomEditorProvider.resolveCustomTextEditor — conflict type rou
 	it("shows error and skips 3-way init for both-deleted conflict", async () => {
 		const repoPath = await makeRepo("weld-both-deleted-stub-");
 		try {
-			await assertBothDeletedCustomEditorRouting(repoPath);
+			await assertBothDeletedCustomEditorStatus(repoPath);
 		} finally {
 			const closePromise = waitForRepoClose(repoPath);
 			await rm(repoPath, { recursive: true, force: true });
@@ -504,8 +551,21 @@ describe("MeldCustomEditorProvider.resolveCustomTextEditor — conflict type rou
 	});
 });
 
-// Group B: handleOpenMeldDiff — primary conflict-type routing via command.
-describe("handleOpenMeldDiff — conflict type routing", () => {
+describe("MeldCustomEditorProvider.resolveCustomTextEditor — status/stage mismatch", () => {
+	it("ignores bogus BOTH_DELETED status when all conflict stages are readable", async () => {
+		const repoPath = await makeRepo("weld-both-deleted-bogus-");
+		try {
+			await assertMisreportedBothDeletedCustomEditorStatus(repoPath);
+		} finally {
+			const closePromise = waitForRepoClose(repoPath);
+			await rm(repoPath, { recursive: true, force: true });
+			await closePromise;
+		}
+	});
+});
+
+// Group B: handleOpenMeldDiff — conflict status handling via command.
+describe("handleOpenMeldDiff — conflict status handling", () => {
 	it("calls handleDeleteModifyConflict and does not open editor for DELETED_BY_US", () =>
 		withConflictRepo(
 			"weld-cmd-deleted-by-us-",

@@ -217,6 +217,8 @@ Gemini's summary of jscpd (currently thresholded in `.jscpd.json`):
 
 ## Testing Improvements
 
+Add tests for opening deleted-by-us and deleted-by-them conflicts that have been resolved as deleting. Currently I think we still try to open these files even though they don't exist on disk.
+
 - **Upgrade save tests to @vscode/test-electron**: The queue-ordering tests in
   `test/edit_queue_ordering.test.ts` verify that saves are properly ordered with
   edits in the promise queue, but they don't test actual `document.save()`

@@ -8,7 +8,10 @@ import type {
 	ConflictedItem,
 	GitApiRepository,
 } from "../../../src/repoContext.ts";
-import { getGitApi } from "../../../src/repoContext.ts";
+import {
+	createConflictedItemFromUri,
+	getGitApi,
+} from "../../../src/repoContext.ts";
 
 const LS_FILES_STAGE_REGEX = /^\S+ \S+ (\d+)\t/;
 
@@ -234,11 +237,10 @@ function getConflictedItem(repoPath: string, fileName: string): ConflictedItem {
 	if (!repo) {
 		throw new Error(`Expected git repository at ${repoPath}`);
 	}
-	return {
-		uri: Uri.file(join(repoPath, fileName)),
-		rootUri: Uri.file(repoPath),
-		repository: repo,
-	};
+	return createConflictedItemFromUri(
+		repo,
+		Uri.file(join(repoPath, fileName)),
+	);
 }
 
 // Returns the set of index stage numbers present for a file (from git ls-files -u).

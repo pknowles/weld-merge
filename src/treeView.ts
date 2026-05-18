@@ -12,12 +12,14 @@ import {
 } from "vscode";
 import {
 	type ConflictState,
-	getConflictedFiles,
 	getGitDirUri,
 	readConflictState,
 } from "./gitUtils.ts";
 import {
 	type ConflictedItem,
+	createConflictedItem,
+	createConflictedItemFromUri,
+	type GitApiChange,
 	type GitApiRepository,
 	getGitApi,
 	isSupportedScheme,
@@ -180,15 +182,15 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 	): Promise<ConflictedTreeItem[]> {
 		try {
 			const conflictState = await readConflictState(repository);
-			const unmergedFiles = getConflictedFiles(repository);
+			const mergeChanges = repository.state.mergeChanges;
 			const conflictedItems = this._createConflictedItems(
-				unmergedFiles,
+				mergeChanges,
 				repository,
 			);
 			const resolvedFileUris = await this._getResolvedFileUris(
 				repository,
 				conflictState,
-				unmergedFiles,
+				mergeChanges.map((change) => change.uri),
 			);
 			const resolvedItems = this._createResolvedItems(
 				resolvedFileUris,
@@ -224,19 +226,15 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 	}
 
 	private _createConflictedItems(
-		files: Uri[],
+		changes: GitApiChange[],
 		repository: GitApiRepository,
 	): GitFile[] {
-		return files.map(
-			(file) =>
+		return changes.map(
+			(change) =>
 				new ConflictedFile({
-					label: workspace.asRelativePath(file, false),
+					label: workspace.asRelativePath(change.uri, false),
 					collapsibleState: TreeItemCollapsibleState.None,
-					conflictedItem: {
-						repository,
-						rootUri: repository.rootUri,
-						uri: file,
-					},
+					conflictedItem: createConflictedItem(repository, change),
 				}),
 		);
 	}
@@ -250,11 +248,10 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 				new ResolvedFile({
 					label: workspace.asRelativePath(file, false),
 					collapsibleState: TreeItemCollapsibleState.None,
-					conflictedItem: {
+					conflictedItem: createConflictedItemFromUri(
 						repository,
-						rootUri: repository.rootUri,
-						uri: file,
-					},
+						file,
+					),
 				}),
 		);
 	}

@@ -3,7 +3,7 @@
 ## Delete/Modify Conflict Restore
 
 - `src/extension.ts`
-  - `restoreConflictedFile()` first uses `git checkout -m` for normal conflicts.
+  - `restoreConflictedFile()` first uses `git checkout -m` for both-modified conflicts.
   - `restoreDeleteModifyConflict()` restores delete/modify conflicts by checking out the surviving side's content, then recreating unmerged index stages with `git update-index --index-info`.
   - `getRepoRelativePath()` converts an absolute VS Code file URI path into the repository-relative path required by Git index plumbing.
   - Command handlers take a concrete `ConflictedItem`; command dispatchers use the `ConflictedItem` carried by tree rows when present, and only resolve from a URI for active-editor/webview entrypoints.
@@ -14,12 +14,16 @@
 - `src/gitUtils.ts`
   - `execGit()` runs Git commands and returns stdout.
   - `execGitWithInput()` runs Git commands that need stdin, currently used for `git update-index --index-info`.
-  - `findMergeChange()` locates a file in VS Code Git API `mergeChanges` by canonical URI string rather than `fsPath`, preserving remote URI identity.
-  - `getConflictRouting()` routes normal, delete/modify, and unexpected both-deleted conflicts from VS Code Git API `mergeChanges.status` using named `GitStatus` constants. `repository.show()` is only used where callers need stage content, not as a conflict-shape probe.
+
+- `src/repoContext.ts`
+  - `createConflictedItem()` attaches repository context, the original VS Code Git API `mergeChanges` entry, and the `conflictStatus()` method to a conflicted URI.
+  - `createConflictedItemFromUri()` is only for active-editor/URI fallback paths and resolved-file rows where we start from a bare URI rather than a current `mergeChanges` entry.
+  - `ConflictedItem.conflictStatus()` computes both-modified, delete/modify, and unexpected both-deleted status from readable stage 2/3 content via `repository.show()`. This is slower than trusting `mergeChanges.status`, but more reliable in Cursor/remote hosts. `mergeChanges.status` is used only as advisory metadata for concise mismatch warnings.
 
 - `test/vscode/suite/custom_editor_resolution.test.ts`
-  - `MeldCustomEditorProvider.resolveCustomTextEditor - conflict type routing` verifies delete/modify routing, both-added editor initialization, and the stubbed both-deleted safety path.
-  - `handleOpenMeldDiff - conflict type routing` verifies the registered command opens the custom editor for normal conflicts and routes delete/modify conflicts to the prompt without opening `vscode.openWith`.
+  - `MeldCustomEditorProvider.resolveCustomTextEditor - conflict status handling` verifies delete/modify handling, both-added editor initialization, and the stubbed both-deleted safety path.
+  - `MeldCustomEditorProvider.resolveCustomTextEditor - status/stage mismatch` covers Cursor-style bogus `BOTH_DELETED` statuses where VS Code Git can still read all conflict stages.
+  - `handleOpenMeldDiff - conflict status handling` verifies the registered command opens the custom editor for both-modified conflicts and handles delete/modify conflicts through the prompt without opening `vscode.openWith`.
   - `MeldCustomEditorProvider.handleDeleteModifyConflict - Compare` verifies the delete/modify prompt opens `vscode.diff` once, does not re-prompt, and leaves the conflict unresolved.
   - `restoreConflictedFile - stage detection` verifies native delete/modify conflicts stay unresolved after restore.
   - `restoreConflictedFile - after dialog resolution` verifies restore recreates the unmerged index after a user has already staged Keep/Delete through the dialog.

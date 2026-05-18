@@ -20,15 +20,17 @@ import {
 	workspace,
 } from "vscode";
 import {
-	findMergeChange,
-	getConflictRouting,
+	describeConflictStatusEvidence,
 	getUnresolvedReasons,
 	readConflictState,
 } from "../gitUtils.ts";
+import { getWeldLogChannel } from "../log.ts";
 import {
 	type ConflictedItem,
 	conflictedItemFromUri,
+	GIT_STAGE_LOCAL,
 	type GitApiRepository,
+	type GitConflictStage,
 	getGitApi,
 	isSupportedScheme,
 } from "../repoContext.ts";
@@ -287,27 +289,29 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			return;
 		}
 
-		const conflictChange = findMergeChange(
-			repoContext.repository,
-			document.uri,
-		);
-		const conflictRouting = getConflictRouting(conflictChange);
-
-		if (conflictRouting.kind === "bothDeleted") {
-			window.showErrorMessage(
-				`Unexpected conflict state for ${document.uri.fsPath}: both sides deleted this file. Git should have auto-resolved this.`,
+		const conflictStatus = await repoContext.conflictStatus();
+		if (conflictStatus.kind === "bothDeleted") {
+			const diagnostic =
+				await describeConflictStatusEvidence(repoContext);
+			getWeldLogChannel().error(diagnostic);
+			const choice = await window.showErrorMessage(
+				`Unexpected conflict state for ${document.uri.fsPath}: both sides deleted this file. Git should have auto-resolved this. See the Weld output channel for status diagnostics.`,
+				"Show Weld Output",
 			);
+			if (choice === "Show Weld Output") {
+				getWeldLogChannel().show();
+			}
 			webviewPanel.webview.html =
 				"<p>Unexpected conflict state: both sides deleted this file.</p>";
 			return;
 		}
 
-		if (conflictRouting.kind === "deleteModify") {
+		if (conflictStatus.kind === "deleteModify") {
 			webviewPanel.webview.html =
 				"<p>Delete/modify conflict. Use the prompt above to resolve.</p>";
 			MeldCustomEditorProvider.handleDeleteModifyConflict(
 				repoContext,
-				conflictRouting.remainingStage,
+				conflictStatus.remainingStage,
 			).catch((error: unknown) => {
 				throw error;
 			});
@@ -326,11 +330,13 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 
 	static async handleDeleteModifyConflict(
 		repoContext: ConflictedItem,
-		remainingStage: 2 | 3,
+		remainingStage: GitConflictStage,
 	): Promise<void> {
 		const { uri, repository } = repoContext;
-		const remainingLabel = remainingStage === 2 ? "Local" : "Remote";
-		const deletedLabel = remainingStage === 2 ? "Remote" : "Local";
+		const remainingLabel =
+			remainingStage === GIT_STAGE_LOCAL ? "Local" : "Remote";
+		const deletedLabel =
+			remainingStage === GIT_STAGE_LOCAL ? "Remote" : "Local";
 		const gitApi = getGitApi();
 		const baseUri = gitApi.toGitUri(uri, ":1");
 		const remainingUri = gitApi.toGitUri(uri, `:${remainingStage}`);
@@ -370,10 +376,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		repoContext: ConflictedItem,
 	): void {
 		const config = this._getWebviewConfig();
-		const stagesPromise = fetchConflictStages(
-			repoContext.repository,
-			repoContext.uri,
-		).catch(
+		const stagesPromise = fetchConflictStages(repoContext).catch(
 			(): Awaited<ReturnType<typeof fetchConflictStages>> => ({
 				// When an 3-view editor tab is restored on next launch and there is
 				// no conflict, we don't have the original merge context to show. We
@@ -548,14 +551,10 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		const docText = ctx.document.getText();
 		// Build the 3-pane payload against the exact working text currently in
 		// the VS Code buffer; no document mutation is performed here.
-		const snapshot = await buildDiffPayload(
-			ctx.repoContext,
-			ctx.repoContext.uri,
-			{
-				stages,
-				workingContent: docText,
-			},
-		);
+		const snapshot = await buildDiffPayload(ctx.repoContext, {
+			stages,
+			workingContent: docText,
+		});
 		snapshot.config = config;
 		return snapshot;
 	}
@@ -580,13 +579,9 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		},
 		stages: Awaited<ReturnType<typeof fetchConflictStages>>,
 	): Promise<string | undefined> {
-		const snapshot = await buildDiffPayload(
-			ctx.repoContext,
-			ctx.repoContext.uri,
-			{
-				stages,
-			},
-		);
+		const snapshot = await buildDiffPayload(ctx.repoContext, {
+			stages,
+		});
 		return snapshot.files[1]?.content;
 	}
 
@@ -958,10 +953,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		},
 		config: ReturnType<MeldCustomEditorProvider["_getWebviewConfig"]>,
 	): Promise<void> {
-		const stages = await fetchConflictStages(
-			ctx.repoContext.repository,
-			ctx.repoContext.uri,
-		);
+		const stages = await fetchConflictStages(ctx.repoContext);
 		const snapshot = await this._buildSnapshotFromCurrentDocument(
 			{
 				document: ctx.document,

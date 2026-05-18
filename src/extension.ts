@@ -14,11 +14,9 @@ import {
 } from "vscode";
 import {
 	type ConflictState,
+	describeConflictStatusEvidence,
 	execGit,
 	execGitWithInput,
-	findMergeChange,
-	getConflictedFiles,
-	getConflictRouting,
 	getUnresolvedReasons,
 	readConflictState,
 } from "./gitUtils.ts";
@@ -27,7 +25,12 @@ import { GitTextMerger } from "./matchers/gitTextMerger.ts";
 import {
 	type ConflictedItem,
 	conflictedItemFromUri,
+	createConflictedItem,
+	GIT_STAGE_LOCAL,
+	GIT_STAGE_REMOTE,
+	type GitApiChange,
 	type GitApiRepository,
+	type GitConflictStage,
 	getGitApi,
 	isSupportedScheme,
 } from "./repoContext.ts";
@@ -121,8 +124,8 @@ function showExceptionMessage(context: string, exception: unknown): void {
 }
 
 function notifyIfNewConflicts(repoKey: string, repository: GitApiRepository) {
-	const currentConflicts = getConflictedFiles(repository).map((f) =>
-		f.toString(),
+	const currentConflicts = repository.state.mergeChanges.map((change) =>
+		change.uri.toString(),
 	);
 	const lastFiles = lastConflictedFilesPerRepo.get(repoKey) || new Set();
 	const newConflicts = currentConflicts.filter((f) => !lastFiles.has(f));
@@ -260,21 +263,23 @@ function handleOpenMergeEditor(conflictedItem: ConflictedItem) {
 }
 
 async function handleOpenMeldDiff(conflictedItem: ConflictedItem) {
-	const conflictChange = findMergeChange(
-		conflictedItem.repository,
-		conflictedItem.uri,
-	);
-	const conflictRouting = getConflictRouting(conflictChange);
-	if (conflictRouting.kind === "bothDeleted") {
-		window.showErrorMessage(
-			`Unexpected conflict state for ${conflictedItem.uri.fsPath}: both sides deleted this file. Git should have auto-resolved this.`,
+	const conflictStatus = await conflictedItem.conflictStatus();
+	if (conflictStatus.kind === "bothDeleted") {
+		const diagnostic = await describeConflictStatusEvidence(conflictedItem);
+		getWeldLogChannel().error(diagnostic);
+		const choice = await window.showErrorMessage(
+			`Unexpected conflict state for ${conflictedItem.uri.fsPath}: both sides deleted this file. Git should have auto-resolved this. See the Weld output channel for status diagnostics.`,
+			"Show Weld Output",
 		);
+		if (choice === "Show Weld Output") {
+			getWeldLogChannel().show();
+		}
 		return;
 	}
-	if (conflictRouting.kind === "deleteModify") {
+	if (conflictStatus.kind === "deleteModify") {
 		await MeldCustomEditorProvider.handleDeleteModifyConflict(
 			conflictedItem,
-			conflictRouting.remainingStage,
+			conflictStatus.remainingStage,
 		);
 		return;
 	}
@@ -340,7 +345,7 @@ function isCheckoutMissingStagesError(error: unknown): boolean {
 async function restoreDeleteModifyConflict(
 	repoContext: ConflictedItem,
 	survivingRef: "HEAD" | ConflictState["otherRef"],
-	survivingStage: 2 | 3,
+	survivingStage: GitConflictStage,
 	mergeBase: string,
 ): Promise<void> {
 	const { uri, rootUri } = repoContext;
@@ -416,8 +421,7 @@ async function handleAutoMerge(
 
 interface ConflictedFileEntry {
 	repository: GitApiRepository;
-	rootUri: Uri;
-	uri: Uri;
+	change: GitApiChange;
 }
 
 function collectConflictedFilesAcrossRepositories(): ConflictedFileEntry[] {
@@ -425,10 +429,9 @@ function collectConflictedFilesAcrossRepositories(): ConflictedFileEntry[] {
 		isSupportedScheme(r.rootUri),
 	);
 	return repos.flatMap((repo) =>
-		getConflictedFiles(repo).map<ConflictedFileEntry>((uri) => ({
+		repo.state.mergeChanges.map<ConflictedFileEntry>((change) => ({
 			repository: repo,
-			rootUri: repo.rootUri,
-			uri,
+			change,
 		})),
 	);
 }
@@ -451,22 +454,21 @@ async function handleAutoMergeAll(
 	const mergeEntryBuilder =
 		(progress: { report: (value: { message?: string }) => void }) =>
 		async (entry: ConflictedFileEntry): Promise<void> => {
-			progress.report({ message: `Merging ${entry.uri}...` });
-			const repoContext: ConflictedItem = {
-				repository: entry.repository,
-				rootUri: entry.rootUri,
-				uri: entry.uri,
-			};
+			progress.report({ message: `Merging ${entry.change.uri}...` });
+			const repoContext = createConflictedItem(
+				entry.repository,
+				entry.change,
+			);
 			try {
-				await performAutoMerge(repoContext, entry.uri);
+				await performAutoMerge(repoContext, entry.change.uri);
 			} catch (error: unknown) {
 				throw new Error(
-					`Weld Auto-Merge All stopped at ${entry.uri} after ${successCount} successful merge(s): ${getErrorMessage(error)}`,
+					`Weld Auto-Merge All stopped at ${entry.change.uri} after ${successCount} successful merge(s): ${getErrorMessage(error)}`,
 					{ cause: error },
 				);
 			}
 			successCount++;
-			log.info(`Weld Auto-Merge All: merged ${entry.uri}`);
+			log.info(`Weld Auto-Merge All: merged ${entry.change.uri}`);
 		};
 	try {
 		await window.withProgress(
@@ -559,7 +561,12 @@ async function restoreConflictedFile(
 		cwd,
 	);
 	if (localDiff.trimStart().startsWith("D")) {
-		await restoreDeleteModifyConflict(repoContext, otherRef, 3, mergeBase);
+		await restoreDeleteModifyConflict(
+			repoContext,
+			otherRef,
+			GIT_STAGE_REMOTE,
+			mergeBase,
+		);
 		return;
 	}
 	const remoteDiff = await execGit(
@@ -567,7 +574,12 @@ async function restoreConflictedFile(
 		cwd,
 	);
 	if (remoteDiff.trimStart().startsWith("D")) {
-		await restoreDeleteModifyConflict(repoContext, "HEAD", 2, mergeBase);
+		await restoreDeleteModifyConflict(
+			repoContext,
+			"HEAD",
+			GIT_STAGE_LOCAL,
+			mergeBase,
+		);
 		return;
 	}
 	throw new Error(
@@ -871,10 +883,7 @@ async function openFirstConflictFromTreeForRemoteSmokeTest(
 	const reconstructedContent = labels
 		? await buildInitialConflictedState(
 				conflict.conflictedItem.rootUri,
-				await fetchConflictStages(
-					conflict.conflictedItem.repository,
-					conflict.uri,
-				),
+				await fetchConflictStages(conflict.conflictedItem),
 				labels,
 			)
 		: null;

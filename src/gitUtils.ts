@@ -3,8 +3,8 @@
 import { execFile, spawn } from "node:child_process";
 import { FileType, Uri, workspace } from "vscode";
 import { getGitExecutable } from "./gitPath.ts";
-import type { GitApiChange, GitApiRepository } from "./repoContext.ts";
-import { GitStatus } from "./repoContext.ts";
+import type { ConflictedItem, GitApiRepository } from "./repoContext.ts";
+import { getGitStatusName } from "./repoContext.ts";
 
 const LINE_BREAK_REGEX = /\r?\n/;
 const WINDOWS_DRIVE_PREFIX_REGEX = /^[A-Za-z]:[\\/]/;
@@ -26,10 +26,9 @@ interface ConflictState {
 	otherRef: "MERGE_HEAD" | "CHERRY_PICK_HEAD" | "REVERT_HEAD" | "REBASE_HEAD";
 }
 
-type ConflictRouting =
-	| { kind: "normal" }
-	| { kind: "bothDeleted" }
-	| { kind: "deleteModify"; remainingStage: 2 | 3 };
+const GIT_STAGE_BASE = 1;
+const GIT_STAGE_LOCAL = 2;
+const GIT_STAGE_REMOTE = 3;
 
 const CONFLICT_STATE_FILES: Array<{
 	operation: ConflictOperation;
@@ -200,44 +199,43 @@ function execGitWithInput(
 	});
 }
 
-function findMergeChange(
+function getErrorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+async function getStageDebugLine(
 	repository: GitApiRepository,
 	file: Uri,
-): GitApiChange | undefined {
-	const fileKey = file.toString();
-	return repository.state.mergeChanges.find(
-		(change) => change.uri.toString() === fileKey,
+	stage: number,
+): Promise<string> {
+	try {
+		const content = await repository.show(`:${stage}`, file.fsPath);
+		return `stage ${stage}: present (${content.length} bytes)`;
+	} catch (error: unknown) {
+		return `stage ${stage}: missing (${getErrorMessage(error)})`;
+	}
+}
+
+async function describeConflictStatusEvidence(
+	conflictedItem: ConflictedItem,
+): Promise<string> {
+	const { repository, uri, mergeChange } = conflictedItem;
+	const statusLine = mergeChange
+		? `status=${mergeChange.status} (${getGitStatusName(mergeChange.status)})`
+		: "status=<missing mergeChanges entry>";
+	const stageLines = await Promise.all(
+		[GIT_STAGE_BASE, GIT_STAGE_LOCAL, GIT_STAGE_REMOTE].map((stage) =>
+			getStageDebugLine(repository, uri, stage),
+		),
 	);
-}
-
-function getConflictRouting(
-	conflictChange: GitApiChange | undefined,
-): ConflictRouting {
-	if (!conflictChange) {
-		return { kind: "normal" };
-	}
-
-	if (conflictChange.status === GitStatus.DELETED_BY_US) {
-		return { kind: "deleteModify", remainingStage: 3 };
-	}
-	if (conflictChange.status === GitStatus.DELETED_BY_THEM) {
-		return { kind: "deleteModify", remainingStage: 2 };
-	}
-	if (conflictChange.status === GitStatus.BOTH_DELETED) {
-		return { kind: "bothDeleted" };
-	}
-	return { kind: "normal" };
-}
-
-/**
- * Gets the list of currently conflicted files in a repository.
- */
-function getConflictedFiles(repository: GitApiRepository): Uri[] {
-	const result: Uri[] = [];
-	for (const change of repository.state.mergeChanges) {
-		result.push(change.uri);
-	}
-	return result;
+	return [
+		"Weld conflict status diagnostic",
+		`file=${uri.toString()}`,
+		`root=${repository.rootUri.toString()}`,
+		`mergeChangeUri=${mergeChange?.uri.toString() ?? "<none>"}`,
+		statusLine,
+		...stageLines,
+	].join("\n");
 }
 
 /**
@@ -269,11 +267,9 @@ function getUnresolvedReasons(text: string): string[] {
 
 export type { ConflictState };
 export {
+	describeConflictStatusEvidence,
 	execGit,
 	execGitWithInput,
-	findMergeChange,
-	getConflictedFiles,
-	getConflictRouting,
 	getGitDirUri,
 	getUnresolvedReasons,
 	readConflictState,
