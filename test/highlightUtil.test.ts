@@ -6,7 +6,11 @@ import { Differ } from "../src/matchers/diffutil.ts";
 import { getPaneHighlights } from "../src/webview/ui/highlightUtil.ts";
 import type { DiffChunk, FileState } from "../src/webview/ui/types.ts";
 
-const f = (content: string): FileState => ({ label: "", content });
+const f = (content: string): FileState => ({
+	label: "",
+	content,
+	lines: content.split("\n"),
+});
 
 const chunk = (
 	tag: DiffChunk["tag"],
@@ -246,6 +250,7 @@ describe("getPaneHighlights: validity across all test_cases.txt Meld inputs", ()
 			const files = [local, base, remote].map((lines, i) => ({
 				label: ["local", "base", "remote"][i] ?? "",
 				content: lines.join("\n"),
+				lines,
 			}));
 			for (let p = 0; p < 3; p++) {
 				for (const hl of getPaneHighlights(
@@ -270,6 +275,7 @@ describe("getPaneHighlights: modify+restore on Meld test cases restores initial 
 		[local, base, remote].map((lines, i) => ({
 			label: ["local", "base", "remote"][i] ?? "",
 			content: lines.join("\n"),
+			lines,
 		}));
 
 	it("replace first base line then restore: highlights match initial", () => {

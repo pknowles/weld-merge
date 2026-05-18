@@ -7,7 +7,7 @@ import { Merger } from "../src/matchers/merge.ts";
 import { getPaneHighlights } from "../src/webview/ui/highlightUtil.ts";
 import {
 	applyMeldStyleContentChanges,
-	contentChangeForFullReplacement,
+	contentChangeForFullReplacementFromLines,
 } from "../src/webview/ui/mergedPaneEdits.ts";
 import type { DiffChunk, FileState } from "../src/webview/ui/types.ts";
 
@@ -39,6 +39,7 @@ const toFiles = (texts: string[][]): FileState[] =>
 	texts.slice(0, 3).map((lines, i) => ({
 		label: ["local", "base", "remote"][i] ?? "",
 		content: lines.join("\n"),
+		lines,
 	}));
 
 const toWebviewFiles = (
@@ -47,9 +48,9 @@ const toWebviewFiles = (
 	remote: string[],
 ): [null, FileState, FileState, FileState, null] => [
 	null,
-	{ label: "Local", content: local.join("\n") },
-	{ label: "Merged", content: merged.join("\n") },
-	{ label: "Remote", content: remote.join("\n") },
+	{ label: "Local", content: local.join("\n"), lines: local },
+	{ label: "Merged", content: merged.join("\n"), lines: merged },
+	{ label: "Remote", content: remote.join("\n"), lines: remote },
 	null,
 ];
 
@@ -79,11 +80,8 @@ const applyWebviewWholeBufferUpdate = (
 	remote: string[],
 	newMerged: string[],
 ) => {
-	applyMeldStyleContentChanges(differ, local, merged.join("\n"), remote, [
-		contentChangeForFullReplacement(
-			merged.join("\n"),
-			newMerged.join("\n"),
-		),
+	applyMeldStyleContentChanges(differ, local, merged, remote, [
+		contentChangeForFullReplacementFromLines(merged, newMerged.join("\n")),
 	]);
 };
 

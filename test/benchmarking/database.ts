@@ -10,6 +10,16 @@ export interface BenchmarkResult {
 	uiTime: number; // Duration of stress simulation (ms)
 	uiHits: number;
 	uiFunctions: { name: string; hitCount: number }[];
+	// Per-keystroke pipeline metrics from the massive 50k-line typing test.
+	// Absent in results recorded before these fields were added.
+	diffAvgMs?: number;
+	diffMaxMs?: number;
+	fullRenderAvgMs?: number;
+	fullRenderMaxMs?: number;
+	execCommandAvgMs?: number;
+	profileDiffMs?: number;
+	profileHighlightMs?: number;
+	profileCurtainMs?: number;
 }
 
 export function saveResult(
@@ -21,6 +31,14 @@ export function saveResult(
 		uiTime: number;
 		uiHits: number;
 		uiFunctions: { name: string; hitCount: number }[];
+		diffAvgMs: number;
+		diffMaxMs: number;
+		fullRenderAvgMs: number;
+		fullRenderMaxMs: number;
+		execCommandAvgMs: number;
+		profileDiffMs: number;
+		profileHighlightMs: number;
+		profileCurtainMs: number;
 	},
 ) {
 	const hash = execSync("git rev-parse HEAD").toString().trim();

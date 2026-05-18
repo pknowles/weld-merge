@@ -333,6 +333,7 @@
 	"scripts": {
 		"vscode:prepublish": "npm run build",
 		"build:webview": "esbuild ./src/webview/ui/index.tsx --bundle --outfile=./out/webview/index.js --format=iife --platform=browser --loader:.ttf=file --minify --define:process.env.NODE_ENV='\"production\"'",
+		"build:webview:dev": "esbuild ./src/webview/ui/index.tsx --bundle --outfile=./out/webview/index.js --format=iife --platform=browser --loader:.ttf=file --define:process.env.NODE_ENV='\"development\"'",
 		"build:extension": "esbuild ./src/extension.ts --bundle --outfile=./out/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
 		"build": "tsc --noEmit && npm run format && npm run lint && npm run knip && npm run build:webview && npm run build:extension",
 		"watch:webview": "esbuild ./src/webview/ui/index.tsx --bundle --outfile=./out/webview/index.js --format=iife --platform=browser --loader:.ttf=file --watch --define:process.env.NODE_ENV='\"development\"'",

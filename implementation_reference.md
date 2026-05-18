@@ -40,6 +40,15 @@ Located in `src/webview/ui/`.
 
 Test coverage with jest, mutations with stryker, fuzz testing with jazzer should be kept up to date.
 
+## Benchmarking Telemetry
+
+Granular performance telemetry is **opt-in only** and has zero production impact. It activates only when the Playwright test injects `window["__WELD_PERF_STATS__"]` before the benchmark run.
+
+- **`src/matchers/diffutil.ts`** — `Differ.changeSequence()`: records total diff engine wall time per call to `diffTimes[]`.
+- **`src/webview/ui/CodePane.tsx`** — `useCodePaneLogic`: the `isMiddle`-gated `onDidChangeModelContent` listener stamps `inputStartTimeRef.current` on each user edit. The decoration `useEffect` times `ed.deltaDecorations(...)` into `highlightJsTimes[]`, then schedules a single rAF to record end-to-end latency (from model change to after Monaco's next repaint opportunity) into `fullRenderTimes[]`.
+- **`src/webview/ui/DiffCurtain.tsx`** — `useFilteredDiffs` `useMemo`: records visible-chunk computation time into `curtainRenderTimes[]`.
+- **`test/benchmarking/ui_stress.test.ts`**: The "massive 50k document" test injects the stats gate, types 150 keystrokes with a double-rAF yield between each, then extracts avg/max for all four metrics. Also post-processes the `.cpuprofile` via exact function-name matching (`changeSequence`, `useFilteredDiffs`, `deltaDecorations`). **Verify these names against a real `.cpuprofile` run** — if they change (minification/rename), the profile metrics silently report `0`.
+
 ## Delete/Modify Conflict Restore
 
 - `src/extension.ts`

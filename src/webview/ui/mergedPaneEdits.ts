@@ -8,7 +8,15 @@ interface TextPoint {
 
 const splitLines = (content: string): string[] => content.split("\n");
 
-const countLineBreaks = (text: string): number => text.split("\n").length - 1;
+const countLineBreaks = (text: string): number => {
+	let count = 0;
+	for (const char of text) {
+		if (char === "\n") {
+			count++;
+		}
+	}
+	return count;
+};
 
 const compareChangesDescending = (
 	left: MonacoContentChange,
@@ -20,16 +28,7 @@ const compareChangesDescending = (
 	return right.range.startColumn - left.range.startColumn;
 };
 
-const offsetAt = (content: string, point: TextPoint): number => {
-	let offset = 0;
-	const lines = splitLines(content);
-	for (let i = 0; i < point.lineIndex; i++) {
-		const line = lines[i];
-		if (line === undefined) {
-			throw new Error(`line ${i} missing while applying content change`);
-		}
-		offset += line.length + 1;
-	}
+const validatePoint = (lines: string[], point: TextPoint) => {
 	const line = lines[point.lineIndex];
 	if (line === undefined) {
 		throw new Error(
@@ -41,21 +40,49 @@ const offsetAt = (content: string, point: TextPoint): number => {
 			`column ${point.columnIndex} exceeds line ${point.lineIndex} length ${line.length}`,
 		);
 	}
-	return offset + point.columnIndex;
 };
 
 const applyRangeReplacement = (
-	content: string,
+	lines: string[],
 	start: TextPoint,
 	end: TextPoint,
 	text: string,
-): string => {
-	const startOffset = offsetAt(content, start);
-	const endOffset = offsetAt(content, end);
-	if (endOffset < startOffset) {
+): void => {
+	validatePoint(lines, start);
+	validatePoint(lines, end);
+	if (
+		end.lineIndex < start.lineIndex ||
+		(end.lineIndex === start.lineIndex &&
+			end.columnIndex < start.columnIndex)
+	) {
 		throw new Error("content change range end precedes start");
 	}
-	return `${content.slice(0, startOffset)}${text}${content.slice(endOffset)}`;
+	const startLine = lines[start.lineIndex];
+	const endLine = lines[end.lineIndex];
+	if (startLine === undefined || endLine === undefined) {
+		throw new Error("validated edit range disappeared");
+	}
+	const insertedLines = splitLines(text);
+	const firstInserted = insertedLines[0];
+	const lastInserted = insertedLines.at(-1);
+	if (firstInserted === undefined || lastInserted === undefined) {
+		throw new Error("split edit text unexpectedly produced no lines");
+	}
+	const replacement =
+		insertedLines.length === 1
+			? [
+					`${startLine.slice(0, start.columnIndex)}${firstInserted}${endLine.slice(end.columnIndex)}`,
+				]
+			: [
+					`${startLine.slice(0, start.columnIndex)}${firstInserted}`,
+					...insertedLines.slice(1, -1),
+					`${lastInserted}${endLine.slice(end.columnIndex)}`,
+				];
+	lines.splice(
+		start.lineIndex,
+		end.lineIndex - start.lineIndex + 1,
+		...replacement,
+	);
 };
 
 const isNonEmptyRange = (change: MonacoContentChange): boolean =>
@@ -65,11 +92,10 @@ const isNonEmptyRange = (change: MonacoContentChange): boolean =>
 function applyMeldStyleContentChanges(
 	differ: Differ,
 	localLines: string[],
-	mergedContent: string,
+	mergedLines: string[],
 	remoteLines: string[],
 	changes: MonacoContentChange[],
-): string {
-	let content = mergedContent;
+): void {
 	const sortedChanges = changes.slice().sort(compareChangesDescending);
 
 	for (const change of sortedChanges) {
@@ -86,35 +112,32 @@ function applyMeldStyleContentChanges(
 		const insertedLines = countLineBreaks(change.text);
 
 		if (isNonEmptyRange(change)) {
-			content = applyRangeReplacement(content, start, end, "");
+			applyRangeReplacement(mergedLines, start, end, "");
 			differ.changeSequence(1, start.lineIndex, -deletedLines, [
 				localLines,
-				splitLines(content),
+				mergedLines,
 				remoteLines,
 			]);
 		}
 
 		if (change.text !== "") {
-			content = applyRangeReplacement(content, start, start, change.text);
+			applyRangeReplacement(mergedLines, start, start, change.text);
 			differ.changeSequence(1, start.lineIndex, insertedLines, [
 				localLines,
-				splitLines(content),
+				mergedLines,
 				remoteLines,
 			]);
 		}
 	}
-
-	return content;
 }
 
-function contentChangeForFullReplacement(
-	oldContent: string,
+function contentChangeForFullReplacementFromLines(
+	oldLines: string[],
 	newContent: string,
 ): MonacoContentChange {
-	const oldLines = splitLines(oldContent);
 	const lastLine = oldLines.at(-1);
 	if (lastLine === undefined) {
-		throw new Error("split content unexpectedly produced no lines");
+		throw new Error("line content unexpectedly has no lines");
 	}
 	return {
 		range: {
@@ -127,4 +150,8 @@ function contentChangeForFullReplacement(
 	};
 }
 
-export { applyMeldStyleContentChanges, contentChangeForFullReplacement };
+export {
+	applyMeldStyleContentChanges,
+	contentChangeForFullReplacementFromLines,
+	splitLines,
+};
