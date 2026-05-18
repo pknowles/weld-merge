@@ -5,6 +5,43 @@
 1. Merge conflicts for deleted files need special handling
 2. Auto-merge is still deleting end of file newlines
 
+## Annoyances
+
+Closing the right hand compare-with-base window resets the scroll position -
+probably a react re-render. This does not happen when closing the left
+compare-with-base panel.
+
+Hovering the mouse over the Local and Remote commits shows a giant commit card.
+This just gets in the way. We should make these dropdowns instead that the user
+has to click to open.
+
+Running "auto-merge all conflicted files" prevents the nice auto-merge feature
+of meld where conflict markers are replaced with "(??)" in the 3-view editor
+when the user finally opens it.
+
+To re-open the 3-view merge editor, a conflict must exist. If the user already
+resolved conflicts the only way to get this back is to checkout conflicted, but
+this resets the file contents. We should have an option to restore the
+conflicted state without actually changing the file so that the user can open
+the 3-view window. Possibly even a way to open the 3-view window without
+restoring the conflicted git state, but that might be confusing.
+
+There's too many happy path popups. On linux, there is generally no output when
+things work. Output is reserved for when things don't work. This is ideal. For
+example, when checking out conflicted files we get a toast popup, but this
+immediately covers exactly where the user wants to click to go to the next
+conflicted file.
+
+If the user is already looking at the conflicted files list we should not show a
+toast popup when conflicted files are detected. Too much clutter.
+
+When a dirty (modified) file is open in a regular vscode editor AND our 3-way
+editor, then the user tries to close the default editor, there's a popup asking
+to save changes. If the user clicks "no" to discard, the file state is reverted
+to what's on disk. This is unexpected because the file is still open in the
+3-way editor. I.e. I typically just want to clean up my tabs and not change the
+contents of the file.
+
 ## Behaviour Differences to GNOME Meld
 
 The initial merge is correct, but after making changes the diffs/highlighting do
