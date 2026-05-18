@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.0.11] - 2026-05-17
+
+### Added
+- **Conflict Types**: Handle delete/modify, both-added, and both-deleted merge conflicts, in addition to the standard both-modified case.
+- **Repository Tracking**: Switch from workspace-folder iteration to the Git extension's own `gitApi.repositories` and open/close events, so repos that don't align with workspace roots are handled correctly.
+- **Startup Activation**: Added `onStartupFinished` activation event so the conflict notification toast appears on startup without needing to open the Source Control panel first.
+- **Remote-SSH Tests**: Added a smoke test suite for conflict detection over VS Code Remote-SSH.
+
+### Fixed
+- **Bogus BOTH_DELETED**: Conflict status is now validated against readable stage content; when a Git client (e.g. Cursor) incorrectly reports `BOTH_DELETED` for a file with readable stages, Weld falls back to normal 3-way conflict handling instead of showing a misleading error.
+- **Diff Load Error**: The editor now shows an explicit error message when the initial diff fails to load, rather than a blank panel.
+- **Restore Behavior**: Editors for non-conflicted files are now displayed after restoring a session, letting users close them manually rather than losing track of previously opened files.
+- **Highlighting**: Fixed incremental diff updates not applying correctly; added assertions guaranteeing incremental edits produce identical diff sequences to a full re-diff.
+- **Conflict Toast**: Fixed the conflict notification not appearing until the Source Control panel was opened.
+- **Trailing Newlines**: Removed the function that was stripping trailing-newlines from auto-merge results.
+
+### Changed
+- **Conflict Routing**: The effective conflict type is now derived from stage 2/3 content via the VS Code Git API rather than the advisory enum status; mismatches are logged as warnings to the Weld output channel.
+- **Minimum VS Code Version**: Lowered the minimum required VS Code version for broader compatibility.
+
 ## [0.0.10] - 2026-05-02
 
 ### Added

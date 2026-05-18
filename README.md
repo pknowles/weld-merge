@@ -1,12 +1,12 @@
 # Weld Merge — A Meld-Style 3-Way Git Merge Tool for VS Code
 
 [![Install](https://img.shields.io/badge/VS%20Code-Install%20Extension-blue?logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=pknowles.meld-auto-merge)
-![OpenVSX Installs](https://img.shields.io/open-vsx/dt/pknowles/meld-auto-merge?label=Open%20VSX%20Installs)
-![VSMarketplace Installs](https://vsmarketplacebadges.dev/installs/pknowles.meld-auto-merge.png?label=VS%20Marketplace%20Installs)
-![Rating](https://vsmarketplacebadges.dev/rating/pknowles.meld-auto-merge.png)
-![Build](https://github.com/pknowles/weld-merge/actions/workflows/ci.yml/badge.png)
-![Verified](https://img.shields.io/badge/publisher-verified-brightgreen)
-![License](https://img.shields.io/github/license/pknowles/meld)
+[![OpenVSX Installs](https://img.shields.io/open-vsx/dt/pknowles/meld-auto-merge?label=Open%20VSX%20Installs)](https://open-vsx.org/extension/pknowles/meld-auto-merge)
+[![VSMarketplace Installs](https://vsmarketplacebadges.dev/installs/pknowles.meld-auto-merge.png?label=VS%20Marketplace%20Installs)](https://marketplace.visualstudio.com/items?itemName=pknowles.meld-auto-merge)
+[![Rating](https://vsmarketplacebadges.dev/rating/pknowles.meld-auto-merge.png)](https://marketplace.visualstudio.com/items?itemName=pknowles.meld-auto-merge&ssr=false#review-details)
+[![CI Status](https://raster.shields.io/github/actions/workflow/status/pknowles/weld-merge/ci.yml?logo=github)](https://github.com/pknowles/weld-merge/actions/workflows/ci.yml)
+[![Verified](https://img.shields.io/badge/publisher-verified-brightgreen)](https://marketplace.visualstudio.com/publishers/pknowles)
+![License](https://img.shields.io/github/license/pknowles/weld-merge)
 
 Weld Merge is a VS Code extension that replicates the fantastic 3-way merge
 algorithm and interface from the classic [Meld](https://meldmerge.org/)
@@ -29,6 +29,16 @@ developer experience.
 ✔ Dev Containers<br/>
 ✔ Codespaces<br/>
 
+## ⚠️ Alpha Release Notice
+
+This extension is currently in **alpha**.
+
+It works. I use this daily myself. While the core Meld algorithms have been carefully ported and tested, the VS Code Git and UI integration is still under active development. Features may be incomplete. Use at your own discretion. Check back for updates as I will announce a 1.0.0 release when I'm confident it's ready.
+
+Feedback welcome:
+- [![Bluesky](https://img.shields.io/badge/Bluesky-0285FF?logo=bluesky&logoColor=white)](https://bsky.app/profile/weldmerge.bsky.social)
+- [![Issues](https://img.shields.io/github/issues/pknowles/weld-merge?logo=github)](https://github.com/pknowles/weld-merge/issues)
+
 ## Table of Contents
 - [Alpha Release Notice](#️-alpha-release-notice)
 - [Installation](#installation)
@@ -42,16 +52,6 @@ developer experience.
 - [Credits](#credits)
 - [License](#license)
 - [Feedback & Support](#feedback--support)
-
-## ⚠️ Alpha Release Notice
-
-This extension is currently in **alpha**.
-
-While the core Meld algorithms have been carefully ported and tested, the VS Code UI integration is under active development. Features may be incomplete, behavior may change without notice, and **bugs are expected**.
-
-Please review your merges carefully and report any bugs you find!
-
-Use at your own discretion.
 
 ## Installation
 
