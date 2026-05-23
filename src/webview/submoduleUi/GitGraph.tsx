@@ -225,10 +225,6 @@ function laneColor(colorIdx: number): string {
 	return color;
 }
 
-function selectedLaneColor(colorIdx: number): string {
-	return `color-mix(in srgb, ${laneColor(colorIdx)} 65%, white)`;
-}
-
 function curvePath(x1: number, y1: number, x2: number, y2: number): string {
 	const midY = (y1 + y2) / 2;
 	return `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
@@ -485,12 +481,10 @@ const GraphRowView: FC<{
 					cx={laneX(row.lane)}
 					cy={HALF_ROW_H}
 					r={nodeRadius}
-					fill={
-						selected
-							? selectedLaneColor(row.colorIdx)
-							: laneColor(row.colorIdx)
+					fill={laneColor(row.colorIdx)}
+					stroke={
+						selected ? "var(--vscode-focusBorder)" : "transparent"
 					}
-					stroke={selected ? laneColor(row.colorIdx) : "transparent"}
 					strokeWidth={selected ? 2 : 0}
 				/>
 			</svg>

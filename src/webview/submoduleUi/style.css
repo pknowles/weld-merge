@@ -122,6 +122,12 @@ input {
 	color: var(--vscode-errorForeground);
 }
 
+.conflict-staged {
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--vscode-panel-border);
+	color: var(--vscode-descriptionForeground);
+}
+
 .submodule-body {
 	display: grid;
 	min-height: 0;

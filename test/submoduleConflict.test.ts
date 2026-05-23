@@ -2,17 +2,31 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Uri } from "vscode";
+import {
+	type CancellationToken,
+	type CustomDocumentOpenContext,
+	commands,
+	extensions,
+	Uri,
+	type WebviewPanel,
+	window,
+} from "vscode";
+import { initializeWeldLogChannel } from "../src/log.ts";
 import type { GitApiRepository } from "../src/repoContext.ts";
 import { GitStatus } from "../src/repoContext.ts";
 import {
 	isActiveSubmoduleGitlinkConflict,
 	isKnownSubmoduleConflictPath,
+	parentRefForCommit,
 	parseSubmoduleConflictUri,
 	readCommitFiles,
+	readSubmoduleCommit,
 	SubmoduleConflict,
+	searchSubmoduleCommits,
 	submoduleConflictUri,
 } from "../src/submoduleConflict.ts";
+import type { ConflictedFilesProvider } from "../src/treeView.ts";
+import { SubmoduleConflictEditorProvider } from "../src/webview/submoduleConflictEditor.ts";
 
 interface SubmoduleRepoFixture {
 	parentPath: string;
@@ -28,6 +42,40 @@ interface TextConflictRepoFixture {
 	parentPath: string;
 	fileUri: Uri;
 	cleanup(): void;
+}
+
+interface RemovedSubmoduleRepoFixture {
+	parentPath: string;
+	submoduleUri: Uri;
+	cleanup(): void;
+}
+
+interface CapturedWebview {
+	html: string;
+	options: unknown;
+	onDidReceiveMessage(listener: (message: unknown) => Promise<void> | void): {
+		dispose(): void;
+	};
+	postMessage(message: unknown): Promise<boolean>;
+	asWebviewUri(uri: Uri): Uri;
+}
+
+interface CapturedPanel {
+	title: string;
+	webview: CapturedWebview;
+	onDidDispose(listener: () => void): { dispose(): void };
+}
+
+interface MutableCommands {
+	executeCommand(command: string, ...args: unknown[]): Promise<unknown>;
+}
+
+interface MutableExtensions {
+	getExtension(extensionId: string): unknown;
+}
+
+interface MutableWindow {
+	showInformationMessage(message: string): Promise<unknown>;
 }
 
 function runGit(args: string[], cwd: string): string {
@@ -60,6 +108,71 @@ function makeRepository(rootPath: string, submoduleUri: Uri): GitApiRepository {
 		getMergeBase: (ref1: string, ref2: string) =>
 			Promise.resolve(runGit(["merge-base", ref1, ref2], rootPath)),
 		add: () => Promise.resolve(),
+	};
+}
+
+function makeWebviewPanel(): {
+	panel: WebviewPanel;
+	messages: unknown[];
+	receive(message: unknown): Promise<void>;
+} {
+	let listener: ((message: unknown) => Promise<void> | void) | null = null;
+	const messages: unknown[] = [];
+	const panel: CapturedPanel = {
+		title: "",
+		webview: {
+			html: "",
+			options: {},
+			onDidReceiveMessage: (nextListener) => {
+				listener = nextListener;
+				return { dispose: () => undefined };
+			},
+			postMessage: (message) => {
+				messages.push(message);
+				return Promise.resolve(true);
+			},
+			asWebviewUri: (uri) => uri,
+		},
+		onDidDispose: () => ({ dispose: () => undefined }),
+	};
+	return {
+		panel: panel as unknown as WebviewPanel,
+		messages,
+		receive: async (message: unknown) => {
+			if (!listener) {
+				throw new Error("Webview message listener was not registered.");
+			}
+			await listener(message);
+		},
+	};
+}
+
+function installGitApi(repository: GitApiRepository): () => void {
+	const mutableExtensions = extensions as unknown as MutableExtensions;
+	const originalGetExtension = mutableExtensions.getExtension;
+	mutableExtensions.getExtension = () => ({
+		exports: {
+			getAPI: () => ({
+				git: { path: "git" },
+				repositories: [repository],
+				onDidOpenRepository: () => ({ dispose: () => undefined }),
+				onDidCloseRepository: () => ({ dispose: () => undefined }),
+				getRepository: (uri: Uri) =>
+					uri.toString() === repository.rootUri.toString()
+						? repository
+						: null,
+				openRepository: () => Promise.resolve(repository),
+				toGitUri: (uri: Uri, ref: string) =>
+					Uri.from({
+						scheme: "git",
+						path: uri.path,
+						query: new URLSearchParams({ ref }).toString(),
+					}),
+			}),
+		},
+	});
+	return () => {
+		mutableExtensions.getExtension = originalGetExtension;
 	};
 }
 
@@ -159,6 +272,60 @@ function makeTextConflictRepo(): TextConflictRepoFixture {
 		parentPath,
 		fileUri: Uri.file(join(parentPath, "file.txt")),
 		cleanup: () => rmSync(parentPath, { recursive: true, force: true }),
+	};
+}
+
+function makeRemovedSubmoduleDuringTextConflictRepo(): RemovedSubmoduleRepoFixture {
+	const root = mkdtempSync(join(tmpdir(), "weld-removed-submodule-"));
+	const subSource = join(root, "subsrc");
+	const parentPath = join(root, "parent");
+	runGit(["init", "-q", "-b", "main", subSource], root);
+	runGit(["config", "user.name", "Weld Test"], subSource);
+	runGit(["config", "user.email", "weld-test@example.com"], subSource);
+	writeFileSync(join(subSource, "file.txt"), "base\n");
+	runGit(["add", "file.txt"], subSource);
+	runGit(["commit", "-q", "-m", "base"], subSource);
+
+	runGit(["init", "-q", "-b", "main", parentPath], root);
+	runGit(["config", "user.name", "Weld Test"], parentPath);
+	runGit(["config", "user.email", "weld-test@example.com"], parentPath);
+	runGit(
+		[
+			"-c",
+			"protocol.file.allow=always",
+			"submodule",
+			"add",
+			"-q",
+			subSource,
+			"sub",
+		],
+		parentPath,
+	);
+	writeFileSync(join(parentPath, "tracked.txt"), "base\n");
+	runGit(["add", ".gitmodules", "sub", "tracked.txt"], parentPath);
+	runGit(["commit", "-q", "-m", "base"], parentPath);
+
+	runGit(["checkout", "-q", "-b", "other"], parentPath);
+	runGit(["rm", "-q", "sub", ".gitmodules"], parentPath);
+	writeFileSync(join(parentPath, "tracked.txt"), "remote\n");
+	runGit(["add", "tracked.txt"], parentPath);
+	runGit(["commit", "-q", "-m", "remote removes sub"], parentPath);
+
+	runGit(["checkout", "-q", "main"], parentPath);
+	runGit(["rm", "-q", "sub", ".gitmodules"], parentPath);
+	writeFileSync(join(parentPath, "tracked.txt"), "local\n");
+	runGit(["add", "tracked.txt"], parentPath);
+	runGit(["commit", "-q", "-m", "local removes sub"], parentPath);
+	try {
+		runGit(["merge", "other"], parentPath);
+	} catch {
+		// Git exits non-zero for the expected text conflict.
+	}
+	expectUnmergedPaths(parentPath, ["tracked.txt"]);
+	return {
+		parentPath,
+		submoduleUri: Uri.file(join(parentPath, "sub")),
+		cleanup: () => rmSync(root, { recursive: true, force: true }),
 	};
 }
 
@@ -276,6 +443,21 @@ describe("SubmoduleConflict staging and restore", () => {
 			fixture.cleanup();
 		}
 	});
+
+	it("rejects restoring a path that neither side contains as a submodule", async () => {
+		const fixture = makeRemovedSubmoduleDuringTextConflictRepo();
+		try {
+			const repository = makeRepository(
+				fixture.parentPath,
+				fixture.submoduleUri,
+			);
+			await expect(
+				SubmoduleConflict.restore(repository, fixture.submoduleUri),
+			).rejects.toThrow("neither side has a submodule entry");
+		} finally {
+			fixture.cleanup();
+		}
+	});
 });
 
 describe("SubmoduleConflict history", () => {
@@ -331,7 +513,9 @@ describe("SubmoduleConflict history", () => {
 			fixture.cleanup();
 		}
 	});
+});
 
+describe("SubmoduleConflict history details", () => {
 	it("keeps the initial snapshot in Git's topo-order", async () => {
 		const fixture = makeSubmoduleConflictRepo();
 		try {
@@ -382,6 +566,37 @@ describe("SubmoduleConflict history", () => {
 			fixture.cleanup();
 		}
 	});
+
+	it("searches commits by SHA prefix and reads parent refs for diffs", async () => {
+		const fixture = makeSubmoduleConflictRepo();
+		try {
+			const repository = makeRepository(
+				fixture.parentPath,
+				fixture.submoduleUri,
+			);
+			const conflict = await SubmoduleConflict.load(
+				repository,
+				fixture.submoduleUri,
+			);
+			const results = await searchSubmoduleCommits(
+				conflict,
+				fixture.remote.slice(0, 8),
+			);
+			expect(results.map((commit) => commit.hash)).toContain(
+				fixture.remote,
+			);
+			const remoteCommit = await readSubmoduleCommit(
+				conflict,
+				fixture.remote,
+			);
+			expect(parentRefForCommit(remoteCommit)).toBe(fixture.base);
+			await expect(
+				readCommitFiles(conflict, fixture.remote),
+			).resolves.toEqual([{ status: "M", path: "file.txt" }]);
+		} finally {
+			fixture.cleanup();
+		}
+	});
 });
 
 describe("SubmoduleConflict classification", () => {
@@ -395,6 +610,21 @@ describe("SubmoduleConflict classification", () => {
 			await expect(
 				isActiveSubmoduleGitlinkConflict(repository, fixture.fileUri),
 			).resolves.toBe(false);
+		} finally {
+			fixture.cleanup();
+		}
+	});
+
+	it("rejects loading active text conflicts as submodule conflicts", async () => {
+		const fixture = makeTextConflictRepo();
+		try {
+			const repository = makeRepository(
+				fixture.parentPath,
+				fixture.fileUri,
+			);
+			await expect(
+				SubmoduleConflict.load(repository, fixture.fileUri),
+			).rejects.toThrow("not a submodule conflict");
 		} finally {
 			fixture.cleanup();
 		}
@@ -417,6 +647,162 @@ describe("SubmoduleConflict classification", () => {
 				isKnownSubmoduleConflictPath(repository, fixture.submoduleUri),
 			).resolves.toBe(true);
 		} finally {
+			fixture.cleanup();
+		}
+	});
+});
+
+beforeAll(() => {
+	initializeWeldLogChannel();
+});
+
+describe("SubmoduleConflictEditorProvider", () => {
+	it("routes webview messages through live submodule conflict state", async () => {
+		const fixture = makeSubmoduleConflictRepo();
+		const repository = makeRepository(
+			fixture.parentPath,
+			fixture.submoduleUri,
+		);
+		const restoreGitApi = installGitApi(repository);
+		const originalExecuteCommand = (commands as unknown as MutableCommands)
+			.executeCommand;
+		const originalShowInformationMessage = (
+			window as unknown as MutableWindow
+		).showInformationMessage;
+		const executedCommands: unknown[][] = [];
+		const infoMessages: string[] = [];
+		(commands as unknown as MutableCommands).executeCommand = (
+			command,
+			...args
+		) => {
+			executedCommands.push([command, ...args]);
+			return Promise.resolve(undefined);
+		};
+		(window as unknown as MutableWindow).showInformationMessage = (
+			message,
+		) => {
+			infoMessages.push(message);
+			return Promise.resolve(undefined);
+		};
+		try {
+			const refresh = jest.fn();
+			const provider = new SubmoduleConflictEditorProvider(
+				Uri.file("/extension"),
+				{ refresh } as unknown as ConflictedFilesProvider,
+			);
+			const document = provider.openCustomDocument(
+				SubmoduleConflictEditorProvider.uriFor(
+					repository,
+					fixture.submoduleUri,
+				),
+				{} as CustomDocumentOpenContext,
+				{} as CancellationToken,
+			);
+			const { panel, messages, receive } = makeWebviewPanel();
+			provider.resolveCustomEditor(
+				document,
+				panel,
+				{} as CancellationToken,
+			);
+
+			await receive({ command: "ready" });
+			expect(messages).toContainEqual(
+				expect.objectContaining({ command: "snapshot" }),
+			);
+			expect(panel.title).toBe("Resolve: sub");
+
+			await receive({ command: "searchCommits", query: "remote" });
+			expect(messages).toContainEqual(
+				expect.objectContaining({ command: "searchResults" }),
+			);
+
+			await receive({
+				command: "loadCommitFiles",
+				sha: fixture.remote,
+			});
+			expect(messages).toContainEqual({
+				command: "commitFiles",
+				sha: fixture.remote,
+				files: [{ status: "M", path: "file.txt" }],
+			});
+
+			await receive({
+				command: "showFileDiff",
+				sha: fixture.remote,
+				filePath: "file.txt",
+			});
+			expect(executedCommands).toContainEqual([
+				"vscode.diff",
+				expect.objectContaining({ scheme: "git" }),
+				expect.objectContaining({ scheme: "git" }),
+				`file.txt (${fixture.remote.slice(0, 7)})`,
+			]);
+
+			await receive({ command: "stageCommit", sha: fixture.remote });
+			expect(refresh).toHaveBeenCalledTimes(1);
+			expect(infoMessages).toEqual([
+				`Staged submodule sub at ${fixture.remote.slice(0, 7)}`,
+			]);
+			expect(messages).toContainEqual({ command: "staged" });
+		} finally {
+			(commands as unknown as MutableCommands).executeCommand =
+				originalExecuteCommand;
+			(window as unknown as MutableWindow).showInformationMessage =
+				originalShowInformationMessage;
+			restoreGitApi();
+			fixture.cleanup();
+		}
+	});
+});
+
+describe("SubmoduleConflictEditorProvider states", () => {
+	it("reports conflict-lost snapshots without replacing operational errors", async () => {
+		const fixture = makeSubmoduleConflictRepo();
+		const repository = makeRepository(
+			fixture.parentPath,
+			fixture.submoduleUri,
+		);
+		const restoreGitApi = installGitApi(repository);
+		try {
+			const provider = new SubmoduleConflictEditorProvider(
+				Uri.file("/extension"),
+				{
+					refresh: () => undefined,
+				} as unknown as ConflictedFilesProvider,
+			);
+			const document = provider.openCustomDocument(
+				SubmoduleConflictEditorProvider.uriFor(
+					repository,
+					fixture.submoduleUri,
+				),
+				{} as CustomDocumentOpenContext,
+				{} as CancellationToken,
+			);
+			const { panel, messages, receive } = makeWebviewPanel();
+			provider.resolveCustomEditor(
+				document,
+				panel,
+				{} as CancellationToken,
+			);
+
+			repository.state.mergeChanges = [];
+			await receive({ command: "ready" });
+			expect(messages).toContainEqual({
+				command: "conflictLost",
+				message: "Submodule conflict is no longer active for sub.",
+			});
+
+			(repository.state as { mergeChanges: unknown }).mergeChanges =
+				undefined;
+			await receive({ command: "ready" });
+			expect(messages).toContainEqual(
+				expect.objectContaining({
+					command: "error",
+					message: expect.stringContaining("reading 'find'"),
+				}),
+			);
+		} finally {
+			restoreGitApi();
 			fixture.cleanup();
 		}
 	});

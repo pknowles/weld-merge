@@ -2,6 +2,7 @@
 
 import { createRoot } from "react-dom/client";
 import { SubmoduleApp } from "./SubmoduleApp.tsx";
+import type {} from "./style.css.d.ts";
 import "./style.css";
 
 const rootElement = document.getElementById("root");

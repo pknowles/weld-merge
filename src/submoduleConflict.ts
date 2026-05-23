@@ -13,7 +13,7 @@ const STAGE_REMOTE = 3;
 const SHA_REGEX = /^[0-9a-fA-F]{40}$/;
 const SHA_PREFIX_REGEX = /^[0-9a-fA-F]{4,40}$/;
 const RAW_DIFF_REGEX = /^:(\d{6}) (\d{6}) [0-9a-fA-F]+ [0-9a-fA-F]+ [A-Z]/;
-const LS_TREE_ENTRY_REGEX = /^(\d{6})\s+\S+\s+[0-9a-fA-F]+\t/;
+const LS_TREE_ENTRY_REGEX = /^(\d{6})\s+\S+\s+([0-9a-fA-F]{40})\t/;
 const EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const LOG_RECORD_SEPARATOR = "\x00";
 const LOG_FIELD_SEPARATOR = "\x01";
@@ -442,37 +442,31 @@ async function readSubmoduleShaAtRef(
 ): Promise<string | null> {
 	try {
 		const output = await execGit(
-			["rev-parse", "--verify", `${ref}:${repoRelativePath}`],
+			["ls-tree", ref, "--", repoRelativePath],
 			repository.rootUri.fsPath,
 		);
-		const sha = output.trim();
-		if (!SHA_REGEX.test(sha)) {
+		const match = LS_TREE_ENTRY_REGEX.exec(output);
+		if (!match) {
+			return null;
+		}
+		const [mode, sha] = [match[1], match[2]];
+		if (mode !== GITLINK_MODE) {
+			throw new Error(
+				`${ref}:${repoRelativePath} is not a submodule gitlink.`,
+			);
+		}
+		if (!(sha && SHA_REGEX.test(sha))) {
 			throw new Error(
 				`${ref}:${repoRelativePath} is not a commit SHA: ${sha}`,
 			);
 		}
 		return sha;
 	} catch (error: unknown) {
-		if (isMissingPathAtRefError(error, repoRelativePath)) {
-			return null;
-		}
 		throw new Error(
 			`Cannot read submodule gitlink at ${ref}:${repoRelativePath}.`,
 			{ cause: error },
 		);
 	}
-}
-
-function isMissingPathAtRefError(
-	error: unknown,
-	repoRelativePath: string,
-): boolean {
-	const message = errorMessage(error);
-	return (
-		message.includes(`path '${repoRelativePath}'`) &&
-		(message.includes("exists on disk, but not in") ||
-			message.includes("does not exist in"))
-	);
 }
 
 async function readTreeMode(

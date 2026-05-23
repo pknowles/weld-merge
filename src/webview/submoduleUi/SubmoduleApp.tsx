@@ -27,6 +27,7 @@ interface AppState {
 	loading: boolean;
 	error: string | null;
 	conflictLost: string | null;
+	staged: boolean;
 }
 
 function hasCommand(value: unknown): value is { command: string } {
@@ -75,6 +76,7 @@ function applyHostMessage(
 				loading: false,
 				error: null,
 				conflictLost: null,
+				staged: false,
 			});
 			break;
 		case "conflictLost":
@@ -111,10 +113,7 @@ function applyHostMessage(
 			}));
 			break;
 		case "staged":
-			setState((current) => ({
-				...current,
-				conflictLost: "Submodule conflict was staged.",
-			}));
+			setState((current) => ({ ...current, staged: true }));
 			break;
 		case "error":
 			setState((current) => ({
@@ -134,8 +133,19 @@ function useHostMessages(
 ): void {
 	useEffect(() => {
 		const handleMessage = (event: MessageEvent<unknown>) => {
-			if (isHostMessage(event.data)) {
+			if (!isHostMessage(event.data)) {
+				return;
+			}
+			try {
 				applyHostMessage(event.data, setState);
+			} catch (error: unknown) {
+				const message =
+					error instanceof Error ? error.message : String(error);
+				setState((current) => ({
+					...current,
+					loading: false,
+					error: message,
+				}));
 			}
 		};
 		window.addEventListener("message", handleMessage);
@@ -160,6 +170,7 @@ function useSubmoduleState(vscode: VsCodeApi): {
 		loading: true,
 		error: null,
 		conflictLost: null,
+		staged: false,
 	});
 
 	useHostMessages(vscode, setState);
@@ -374,18 +385,30 @@ const AppContent: FC<{
 	actions: ReturnType<typeof useSubmoduleState>;
 }> = ({ state, actions }) => {
 	const [sidebarWidth, setSidebarWidth] = useState(500);
-	const startResize = useCallback(() => {
+	const [resizing, setResizing] = useState(false);
+	const startResize = useCallback((event: React.MouseEvent) => {
+		event.preventDefault();
+		setResizing(true);
+	}, []);
+	useEffect(() => {
+		if (!resizing) {
+			return;
+		}
+		const previousUserSelect = document.body.style.userSelect;
+		document.body.style.userSelect = "none";
 		const resize = (event: MouseEvent) => {
 			const maxWidth = Math.max(320, window.innerWidth - 320);
 			setSidebarWidth(Math.min(Math.max(event.clientX, 300), maxWidth));
 		};
-		const stopResize = () => {
+		const stopResize = () => setResizing(false);
+		document.addEventListener("mousemove", resize);
+		document.addEventListener("mouseup", stopResize);
+		return () => {
+			document.body.style.userSelect = previousUserSelect;
 			document.removeEventListener("mousemove", resize);
 			document.removeEventListener("mouseup", stopResize);
 		};
-		document.addEventListener("mousemove", resize);
-		document.addEventListener("mouseup", stopResize);
-	}, []);
+	}, [resizing]);
 	if (state.loading) {
 		return <main className="status-page">Loading...</main>;
 	}
@@ -408,6 +431,11 @@ const AppContent: FC<{
 			{state.conflictLost ? (
 				<div className="conflict-lost">{state.conflictLost}</div>
 			) : null}
+			{state.staged ? (
+				<div className="conflict-staged">
+					Submodule conflict staged.
+				</div>
+			) : null}
 			<div
 				className="submodule-body"
 				style={{
@@ -419,7 +447,8 @@ const AppContent: FC<{
 						snapshot={state.snapshot}
 						selected={selected}
 						canStage={
-							!state.conflictLost && Boolean(state.selectedSha)
+							!(state.conflictLost || state.staged) &&
+							Boolean(state.selectedSha)
 						}
 						onSearch={actions.search}
 						onSelect={actions.selectSha}
