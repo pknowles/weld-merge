@@ -43,6 +43,15 @@ interface HistoryLane extends LaneState {
 	lane: number;
 }
 
+interface SideLaneRenderContext {
+	row: GraphRow;
+	lane: number;
+	top: LaneState | null;
+	bot: LaneState | null;
+	nextRow: GraphRow | null;
+	newerRow: GraphRow | null;
+}
+
 type ParsedRef =
 	| { kind: "headBranch"; name: string }
 	| { kind: "head" }
@@ -51,10 +60,14 @@ type ParsedRef =
 	| { kind: "branch"; name: string };
 
 const ROW_H = 28;
-const LANE_W = 18;
+const LANE_W = 24;
+const GRAPH_PAD_X = 12;
 const DOT_R = 6;
-const DOT_R_SELECTED = 8;
-const LINE_W = 2.5;
+const DOT_R_SELECTED = 7;
+const LINE_W = 4;
+const CURVE_BEND_RATIO = 0.7;
+const CURVE_MIN_BEND = DOT_R_SELECTED + LINE_W + 1;
+const CURVE_MAX_BEND = ROW_H;
 const HALF_ROW_H = ROW_H / 2;
 const HALF_LANE_W = LANE_W / 2;
 const COLORS = [
@@ -214,7 +227,7 @@ function assignGraphRows(commits: CommitInfo[]): GraphLayout {
 }
 
 function laneX(lane: number): number {
-	return lane * LANE_W + HALF_LANE_W;
+	return GRAPH_PAD_X + lane * LANE_W + HALF_LANE_W;
 }
 
 function laneColor(colorIdx: number): string {
@@ -225,13 +238,28 @@ function laneColor(colorIdx: number): string {
 	return color;
 }
 
+function selectedLaneColor(colorIdx: number): string {
+	return `color-mix(in srgb, ${laneColor(colorIdx)} 58%, white)`;
+}
+
 function curvePath(x1: number, y1: number, x2: number, y2: number): string {
-	const midY = (y1 + y2) / 2;
-	return `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
+	const distance = Math.abs(y2 - y1);
+	const bend = Math.min(
+		Math.max(distance * CURVE_BEND_RATIO, CURVE_MIN_BEND),
+		CURVE_MAX_BEND,
+	);
+	const direction = y2 >= y1 ? 1 : -1;
+	const c1Y = y1 + bend * direction;
+	const c2Y = y2 - bend * direction;
+	return `M ${pathNumber(x1)} ${pathNumber(y1)} C ${pathNumber(x1)} ${pathNumber(c1Y)}, ${pathNumber(x2)} ${pathNumber(c2Y)}, ${pathNumber(x2)} ${pathNumber(y2)}`;
 }
 
 function linePath(x1: number, y1: number, x2: number, y2: number): string {
-	return `M ${x1} ${y1} L ${x2} ${y2}`;
+	return `M ${pathNumber(x1)} ${pathNumber(y1)} L ${pathNumber(x2)} ${pathNumber(y2)}`;
+}
+
+function pathNumber(value: number): string {
+	return Number(value.toFixed(2)).toString();
 }
 
 function pathElement(key: string, d: string, colorIdx: number): ReactElement {
@@ -243,6 +271,7 @@ function renderCommitLanePaths(
 	top: LaneState | null,
 	bot: LaneState | null,
 	nodeRadius: number,
+	nextRow: GraphRow | null,
 ): ReactElement[] {
 	const paths: ReactElement[] = [];
 	const x = laneX(row.lane);
@@ -257,6 +286,24 @@ function renderCommitLanePaths(
 		);
 	}
 	if (bot) {
+		if (
+			nextRow?.commit.hash === bot.sha &&
+			nextRow.convergingLanes.includes(row.lane)
+		) {
+			paths.push(
+				pathElement(
+					`${row.lane}:direct-parent`,
+					curvePath(
+						x,
+						HALF_ROW_H,
+						laneX(nextRow.lane),
+						ROW_H + HALF_ROW_H,
+					),
+					bot.colorIdx,
+				),
+			);
+			return paths;
+		}
 		const startY = top ? HALF_ROW_H : HALF_ROW_H + nodeRadius;
 		paths.push(
 			pathElement(
@@ -270,13 +317,14 @@ function renderCommitLanePaths(
 }
 
 function renderSideLanePath(
-	row: GraphRow,
-	lane: number,
-	top: LaneState | null,
-	bot: LaneState | null,
+	context: SideLaneRenderContext,
 ): ReactElement | null {
+	const { row, lane, top, bot, nextRow, newerRow } = context;
 	const x = laneX(lane);
 	const commitX = laneX(row.lane);
+	if (newerRow && laneHasDirectOlderConnector(newerRow, row, lane)) {
+		return null;
+	}
 	if (row.convergingLanes.includes(lane) && top) {
 		return pathElement(
 			`${lane}:converge`,
@@ -285,6 +333,18 @@ function renderSideLanePath(
 		);
 	}
 	if (!top && bot) {
+		if (nextRow?.commit.hash === bot.sha) {
+			return pathElement(
+				`${lane}:direct-parent`,
+				curvePath(
+					commitX,
+					HALF_ROW_H,
+					laneX(nextRow.lane),
+					ROW_H + HALF_ROW_H,
+				),
+				bot.colorIdx,
+			);
+		}
 		return pathElement(
 			`${lane}:start`,
 			curvePath(commitX, HALF_ROW_H, x, ROW_H),
@@ -308,7 +368,25 @@ function renderSideLanePath(
 	return null;
 }
 
-function renderLanePaths(row: GraphRow, nodeRadius: number): ReactElement[] {
+function laneHasDirectOlderConnector(
+	newerRow: GraphRow,
+	row: GraphRow,
+	lane: number,
+): boolean {
+	const newerBot = newerRow.botLanes[lane] ?? null;
+	return (
+		newerBot !== null &&
+		newerBot.sha === row.commit.hash &&
+		row.convergingLanes.includes(lane)
+	);
+}
+
+function renderLanePaths(
+	row: GraphRow,
+	nodeRadius: number,
+	nextRow: GraphRow | null,
+	newerRow: GraphRow | null,
+): ReactElement[] {
 	const maxLane = Math.max(
 		row.topLanes.length,
 		row.botLanes.length,
@@ -319,9 +397,18 @@ function renderLanePaths(row: GraphRow, nodeRadius: number): ReactElement[] {
 		const top = row.topLanes[lane] ?? null;
 		const bot = row.botLanes[lane] ?? null;
 		if (lane === row.lane) {
-			paths.push(...renderCommitLanePaths(row, top, bot, nodeRadius));
+			paths.push(
+				...renderCommitLanePaths(row, top, bot, nodeRadius, nextRow),
+			);
 		} else {
-			const sidePath = renderSideLanePath(row, lane, top, bot);
+			const sidePath = renderSideLanePath({
+				row,
+				lane,
+				top,
+				bot,
+				nextRow,
+				newerRow,
+			});
 			if (sidePath) {
 				paths.push(sidePath);
 			}
@@ -448,9 +535,11 @@ function roleBadges(commit: CommitInfo, props: GitGraphProps): ReactElement[] {
 
 const GraphRowView: FC<{
 	row: GraphRow;
+	nextRow: GraphRow | null;
+	newerRow: GraphRow | null;
 	props: GitGraphProps;
 	svgWidth: number;
-}> = ({ row, props, svgWidth }): ReactElement => {
+}> = ({ row, nextRow, newerRow, props, svgWidth }): ReactElement => {
 	const selected = row.commit.hash === props.selectedSha;
 	const nodeRadius = selected ? DOT_R_SELECTED : DOT_R;
 	return (
@@ -474,17 +563,19 @@ const GraphRowView: FC<{
 					strokeLinejoin="round"
 					strokeWidth={LINE_W}
 				>
-					{renderLanePaths(row, nodeRadius)}
+					{renderLanePaths(row, nodeRadius, nextRow, newerRow)}
 					{renderHiddenMergeParentPaths(row)}
 				</g>
 				<circle
 					cx={laneX(row.lane)}
 					cy={HALF_ROW_H}
 					r={nodeRadius}
-					fill={laneColor(row.colorIdx)}
-					stroke={
-						selected ? "var(--vscode-focusBorder)" : "transparent"
+					fill={
+						selected
+							? selectedLaneColor(row.colorIdx)
+							: laneColor(row.colorIdx)
 					}
+					stroke={selected ? laneColor(row.colorIdx) : "transparent"}
 					strokeWidth={selected ? 2 : 0}
 				/>
 			</svg>
@@ -551,7 +642,7 @@ export const GitGraph: FC<GitGraphProps> = (props): ReactElement => {
 		() => assignGraphRows(props.commits),
 		[props.commits],
 	);
-	const svgWidth = layout.maxLanes * LANE_W + HALF_LANE_W;
+	const svgWidth = layout.maxLanes * LANE_W + GRAPH_PAD_X * 2;
 	useLayoutEffect(() => {
 		const selectedRow = containerRef.current?.querySelector(
 			`[data-sha="${props.selectedSha}"]`,
@@ -564,10 +655,12 @@ export const GitGraph: FC<GitGraphProps> = (props): ReactElement => {
 	return (
 		<div className="submodule-graph" ref={containerRef}>
 			<div className="commit-list">
-				{layout.rows.map((row) => (
+				{layout.rows.map((row, index) => (
 					<GraphRowView
 						key={row.commit.hash}
 						row={row}
+						nextRow={layout.rows[index + 1] ?? null}
+						newerRow={layout.rows[index - 1] ?? null}
 						props={props}
 						svgWidth={svgWidth}
 					/>

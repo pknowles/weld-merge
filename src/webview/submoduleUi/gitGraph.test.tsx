@@ -73,8 +73,11 @@ describe("GitGraph", () => {
 		const remotePaths = Array.from(remoteRow.querySelectorAll("path")).map(
 			(path) => path.getAttribute("d") ?? "",
 		);
-		expect(remotePaths).not.toContain("M 27 0 L 27 14");
-		expect(remotePaths).toContain("M 27 22 L 27 28");
+		expect(remotePaths).not.toContain("M 48 0 L 48 14");
+		expect(remotePaths).toContain("M 48 14 C 48 33.6, 24 22.4, 24 42");
+		expect(
+			remoteRow.querySelector("circle")?.getAttribute("fill"),
+		).toContain("var(--vscode-charts-purple)");
 
 		fireEvent.click(remoteRow);
 		expect(onSelect).toHaveBeenCalledWith(remote);
