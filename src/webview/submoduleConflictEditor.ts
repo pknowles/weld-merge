@@ -152,10 +152,35 @@ class SubmoduleConflictEditorProvider
 			localResourceRoots: [Uri.joinPath(this.extensionUri, "out")],
 		};
 		const disposables: Disposable[] = [];
+		// VS Code restores tabs before the git extension populates state, so both
+		// must be true before the first snapshot. repoReady is only set via
+		// onRepositoryStateChanged (never from getRepository() at resolve time)
+		// because that event fires after repo.state.onDidChange, guaranteeing
+		// mergeChanges is populated when SubmoduleConflict.load() reads it.
+		let webviewReady = false;
+		let repoReady = false;
 		disposables.push(
 			webviewPanel.webview.onDidReceiveMessage(
-				(message: SubmoduleWebviewMessage) =>
-					this.handleMessage(document, webviewPanel, message),
+				async (message: SubmoduleWebviewMessage) => {
+					if (message.command === "ready") {
+						webviewReady = true;
+						if (repoReady) {
+							await this.postCurrentSnapshot(
+								document,
+								webviewPanel,
+								this.nextSnapshotVersion(webviewPanel),
+							).catch((error: unknown) =>
+								this.postError(webviewPanel, error),
+							);
+						}
+					} else {
+						await this.handleMessage(
+							document,
+							webviewPanel,
+							message,
+						);
+					}
+				},
 			),
 			SubmoduleConflictEditorProvider.onRepositoryStateChanged.event(
 				(rootUri) => {
@@ -163,13 +188,16 @@ class SubmoduleConflictEditorProvider
 						rootUri.toString() ===
 						document.identity.repositoryRoot.toString()
 					) {
-						this.postCurrentSnapshot(
-							document,
-							webviewPanel,
-							this.nextSnapshotVersion(webviewPanel),
-						).catch((error: unknown) =>
-							this.postError(webviewPanel, error),
-						);
+						repoReady = true;
+						if (webviewReady) {
+							this.postCurrentSnapshot(
+								document,
+								webviewPanel,
+								this.nextSnapshotVersion(webviewPanel),
+							).catch((error: unknown) =>
+								this.postError(webviewPanel, error),
+							);
+						}
 					}
 				},
 			),
@@ -189,13 +217,6 @@ class SubmoduleConflictEditorProvider
 	): Promise<void> {
 		try {
 			switch (message.command) {
-				case "ready":
-					await this.postCurrentSnapshot(
-						document,
-						webviewPanel,
-						this.nextSnapshotVersion(webviewPanel),
-					);
-					break;
 				case "searchCommits":
 					await this.handleSearch(document, webviewPanel, message);
 					break;

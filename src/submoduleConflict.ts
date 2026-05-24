@@ -134,6 +134,9 @@ class SubmoduleConflict {
 				`Submodule conflict is no longer active for ${repoRelativePath}.`,
 			);
 		}
+		// mergeChanges.status is BOTH_MODIFIED for both submodule and text
+		// conflicts so we can't distinguish between them. Raw git is required
+		// instead and we verify the index mode is 160000 for a submodule.
 		await assertGitlinkConflict(repository, repoRelativePath);
 		const shas = await readStagedSubmoduleShas(
 			repository,

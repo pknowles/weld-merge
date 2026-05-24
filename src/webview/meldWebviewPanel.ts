@@ -59,6 +59,7 @@ import {
 	assertReadyMessageIsFirst,
 	type ReadyState,
 } from "./readyStateGuard.ts";
+import { SubmoduleConflictEditorProvider } from "./submoduleConflictEditor.ts";
 import type {
 	BaseDiffPayload,
 	MonacoContentChange,
@@ -280,6 +281,77 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			return;
 		}
 
+		webviewPanel.webview.options = {
+			enableScripts: true,
+			localResourceRoots: [Uri.joinPath(this.extensionUri, "out")],
+		};
+
+		const repoAvailable = (): boolean => {
+			const gitApi = getGitApi();
+			if (gitApi.getRepository(document.uri) !== null) {
+				return true;
+			}
+			const workspaceFolder = workspace.getWorkspaceFolder(document.uri);
+			return (
+				workspaceFolder !== undefined &&
+				gitApi.getRepository(workspaceFolder.uri) !== null
+			);
+		};
+
+		if (repoAvailable()) {
+			return await this._resolveConflict(document, webviewPanel);
+		}
+
+		// Startup race: repo not yet registered. Show loading shell and wait
+		// for both the webview and the repo to be ready before resolving.
+		let webviewReady = false;
+		let acted = false;
+		const tempDisposables: Disposable[] = [];
+
+		const act = (): void => {
+			if (acted || !webviewReady || !repoAvailable()) {
+				return;
+			}
+			acted = true;
+			for (const d of tempDisposables) {
+				d.dispose();
+			}
+			this._resolveConflict(document, webviewPanel).catch(
+				(error: unknown) => {
+					webviewPanel.webview.html = `<p>Cannot open: ${error instanceof Error ? error.message : String(error)}</p>`;
+				},
+			);
+		};
+
+		tempDisposables.push(
+			webviewPanel.webview.onDidReceiveMessage((msg: WebviewMessage) => {
+				if (msg.command === "ready") {
+					webviewReady = true;
+					act();
+				}
+			}),
+			SubmoduleConflictEditorProvider.onRepositoryStateChanged.event(
+				() => {
+					act();
+				},
+			),
+			webviewPanel.onDidDispose(() => {
+				for (const d of tempDisposables) {
+					d.dispose();
+				}
+			}),
+		);
+
+		// Html set after listeners so "ready" is never missed.
+		webviewPanel.webview.html = this._getHtmlForWebview(
+			webviewPanel.webview,
+		);
+	}
+
+	private async _resolveConflict(
+		document: TextDocument,
+		webviewPanel: WebviewPanel,
+	): Promise<void> {
 		const repoContext = await conflictedItemFromUri(document.uri);
 		if (!repoContext) {
 			webviewPanel.webview.html =
@@ -316,13 +388,6 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			return;
 		}
 
-		webviewPanel.webview.options = {
-			enableScripts: true,
-			localResourceRoots: [Uri.joinPath(this.extensionUri, "out")],
-		};
-
-		// Listener attached BEFORE setting html so "ready" is never missed
-		// regardless of how fast the webview boots (especially over SSH).
 		this._initializeWebview(document, webviewPanel, repoContext);
 	}
 
