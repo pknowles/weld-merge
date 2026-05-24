@@ -126,6 +126,7 @@ const runTestCase = async (config: {
 describe("Webview E2E - Chunk Actions", () => {
 	beforeEach(() => {
 		jest.useFakeTimers();
+		installVscodeApi(vscode);
 		vscode.messagesSent.length = 0;
 		resetMountedEditors();
 	});
@@ -174,6 +175,12 @@ describe("Webview E2E - Chunk Actions", () => {
 		expect(screen.getByRole("alert")).toHaveTextContent(
 			"Cannot load tracked.txt",
 		);
+	});
+
+	it("shows loading before the extension host sends the initial diff", () => {
+		render(<App />);
+
+		expect(screen.getByText("Loading Diff...")).toBeInTheDocument();
 	});
 });
 

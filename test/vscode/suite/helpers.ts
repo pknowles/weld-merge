@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { Uri } from "vscode";
 import type {
 	ConflictedItem,
@@ -14,6 +14,11 @@ import {
 } from "../../../src/repoContext.ts";
 
 const LS_FILES_STAGE_REGEX = /^\S+ \S+ (\d+)\t/;
+
+interface TempRepoFixture {
+	repoPath: string;
+	cleanupPath: string;
+}
 
 function runGit(args: string[], cwd: string): string {
 	return execFileSync("git", args, {
@@ -37,7 +42,7 @@ function assertUnmergedPaths(repoPath: string, expectedPaths: string[]): void {
 	}
 }
 
-async function makeRepo(prefix: string): Promise<string> {
+async function makeRepoFixture(prefix: string): Promise<TempRepoFixture> {
 	const repoPath = await mkdtemp(join(tmpdir(), prefix));
 	runGit(["init"], repoPath);
 	runGit(["config", "user.name", "Weld Test"], repoPath);
@@ -45,7 +50,37 @@ async function makeRepo(prefix: string): Promise<string> {
 	await writeFile(join(repoPath, "tracked.txt"), "base\n");
 	runGit(["add", "--", "tracked.txt"], repoPath);
 	runGit(["commit", "-m", "init"], repoPath);
-	return repoPath;
+	return { repoPath, cleanupPath: repoPath };
+}
+
+async function makeRepo(prefix: string): Promise<string> {
+	const fixture = await makeRepoFixture(prefix);
+	return fixture.repoPath;
+}
+
+function assertSafeTempFixtureCleanupPath(cleanupPath: string): void {
+	if (dirname(cleanupPath) !== tmpdir()) {
+		throw new Error(
+			`Refusing to remove test fixture outside temp root: ${cleanupPath}`,
+		);
+	}
+	if (!basename(cleanupPath).startsWith("weld-")) {
+		throw new Error(
+			`Refusing to remove test fixture without weld-* prefix: ${cleanupPath}`,
+		);
+	}
+}
+
+async function cleanupTempFixture(fixture: TempRepoFixture): Promise<void> {
+	assertSafeTempFixtureCleanupPath(fixture.cleanupPath);
+	await rm(fixture.cleanupPath, { recursive: true, force: true });
+}
+
+async function makeSubmoduleConflictFixture(
+	prefix: string,
+): Promise<TempRepoFixture> {
+	const repoPath = await makeSubmoduleConflictRepo(prefix);
+	return { repoPath, cleanupPath: dirname(repoPath) };
 }
 
 async function makeSubmoduleConflictRepo(prefix: string): Promise<string> {
@@ -406,7 +441,9 @@ function workingTreeContent(repoPath: string, fileName: string): string | null {
 	}
 }
 
+export type { TempRepoFixture };
 export {
+	cleanupTempFixture,
 	getConflictedItem,
 	lsFilesStages,
 	makeBothAddedConflict,
@@ -415,8 +452,10 @@ export {
 	makeDeletedByUsConflict,
 	makeRepo,
 	makeRepoFile,
+	makeRepoFixture,
 	makeSecondConflict,
 	makeSubmoduleAndTextConflictRepo,
+	makeSubmoduleConflictFixture,
 	makeSubmoduleConflictRepo,
 	openRepoInGitExtension,
 	runGit,

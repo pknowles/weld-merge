@@ -77,6 +77,18 @@ function renderSnapshot() {
 	return { currentSnapshot, messages, ...rendered };
 }
 
+describe("SubmoduleApp loading", () => {
+	it("shows loading before the extension host sends the initial snapshot", () => {
+		const messages: unknown[] = [];
+		installVsCodeApi(messages);
+
+		render(<SubmoduleApp />);
+
+		expect(screen.getByText("Loading...")).toBeInTheDocument();
+		expect(messages).toContainEqual({ command: "ready" });
+	});
+});
+
 describe("SubmoduleApp", () => {
 	beforeAll(() => {
 		Element.prototype.scrollIntoView = jest.fn();
