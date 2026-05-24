@@ -28,11 +28,14 @@ import { getWeldLogChannel } from "../log.ts";
 import {
 	type ConflictedItem,
 	conflictedItemFromUri,
+	createConflictedItemFromUri,
+	fileIsInRepo,
 	GIT_STAGE_LOCAL,
 	type GitApiRepository,
 	type GitConflictStage,
 	getGitApi,
 	isSupportedScheme,
+	onRepositoryStateChanged,
 } from "../repoContext.ts";
 import {
 	type ConflictLabels,
@@ -59,7 +62,6 @@ import {
 	assertReadyMessageIsFirst,
 	type ReadyState,
 } from "./readyStateGuard.ts";
-import { SubmoduleConflictEditorProvider } from "./submoduleConflictEditor.ts";
 import type {
 	BaseDiffPayload,
 	MonacoContentChange,
@@ -286,79 +288,76 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			localResourceRoots: [Uri.joinPath(this.extensionUri, "out")],
 		};
 
-		const repoAvailable = (): boolean => {
-			const gitApi = getGitApi();
-			if (gitApi.getRepository(document.uri) !== null) {
-				return true;
-			}
-			const workspaceFolder = workspace.getWorkspaceFolder(document.uri);
-			return (
-				workspaceFolder !== undefined &&
-				gitApi.getRepository(workspaceFolder.uri) !== null
-			);
-		};
-
-		if (repoAvailable()) {
-			return await this._resolveConflict(document, webviewPanel);
-		}
-
-		// Startup race: repo not yet registered. Show loading shell and wait
-		// for both the webview and the repo to be ready before resolving.
-		let webviewReady = false;
-		let acted = false;
-		const tempDisposables: Disposable[] = [];
-
-		const act = (): void => {
-			if (acted || !webviewReady || !repoAvailable()) {
-				return;
-			}
-			acted = true;
-			for (const d of tempDisposables) {
-				d.dispose();
-			}
-			this._resolveConflict(document, webviewPanel).catch(
-				(error: unknown) => {
-					webviewPanel.webview.html = `<p>Cannot open: ${error instanceof Error ? error.message : String(error)}</p>`;
-				},
-			);
-		};
-
-		tempDisposables.push(
-			webviewPanel.webview.onDidReceiveMessage((msg: WebviewMessage) => {
-				if (msg.command === "ready") {
-					webviewReady = true;
-					act();
-				}
-			}),
-			SubmoduleConflictEditorProvider.onRepositoryStateChanged.event(
-				() => {
-					act();
-				},
-			),
-			webviewPanel.onDidDispose(() => {
-				for (const d of tempDisposables) {
-					d.dispose();
-				}
-			}),
-		);
-
-		// Html set after listeners so "ready" is never missed.
-		webviewPanel.webview.html = this._getHtmlForWebview(
-			webviewPanel.webview,
-		);
-	}
-
-	private async _resolveConflict(
-		document: TextDocument,
-		webviewPanel: WebviewPanel,
-	): Promise<void> {
-		const repoContext = await conflictedItemFromUri(document.uri);
-		if (!repoContext) {
+		// Files with no workspace folder and no direct git repo will never have
+		// a repo registered — show the error immediately rather than waiting forever.
+		const hasRepo =
+			workspace.getWorkspaceFolder(document.uri) ||
+			getGitApi().getRepository(document.uri);
+		if (!hasRepo) {
 			webviewPanel.webview.html =
 				"<p>Cannot open: file is not in a git repository.</p>";
 			return;
 		}
 
+		// _waitForRepository resolves immediately if git is already initialized,
+		// or suspends until onRepositoryStateChanged fires for this file's repo
+		// (VS Code startup race: tabs restored before the git extension is ready).
+		// The webview HTML is only set inside _initializeWebview, which runs after
+		// this await — so "ready" from the webview cannot arrive before we are
+		// prepared to handle it.
+		const item = await this._waitForRepository(document.uri, webviewPanel);
+		if (!item) {
+			return; // panel disposed while waiting
+		}
+
+		await this._resolveWithItem(document, webviewPanel, item);
+	}
+
+	// Returns a ConflictedItem once the git repo covering uri is registered,
+	// or null if the panel is disposed before the repo becomes available.
+	//
+	// Fast path: if the repo is already registered, wraps the item in
+	// Promise.resolve so the caller's await completes without suspending.
+	//
+	// Deferred path: suspends until onRepositoryStateChanged fires for a repo
+	// that contains uri. A dispose sentinel ensures the Promise doesn't leak
+	// if the panel is closed while we're waiting.
+	private _waitForRepository(
+		uri: Uri,
+		panel: WebviewPanel,
+	): Promise<ConflictedItem | null> {
+		const immediate = conflictedItemFromUri(uri);
+		if (immediate) {
+			return Promise.resolve(immediate);
+		}
+
+		return new Promise((resolve) => {
+			const disposables: Disposable[] = [];
+			const finish = (result: ConflictedItem | null): void => {
+				for (const d of disposables) {
+					d.dispose();
+				}
+				resolve(result);
+			};
+			disposables.push(
+				onRepositoryStateChanged((repo) => {
+					if (!fileIsInRepo(uri, repo)) {
+						return;
+					}
+					finish(createConflictedItemFromUri(repo, uri));
+				}),
+				panel.onDidDispose(() => {
+					finish(null);
+				}),
+			);
+		});
+	}
+
+	private async _resolveWithItem(
+		document: TextDocument,
+		webviewPanel: WebviewPanel,
+		repoContext: ConflictedItem,
+	): Promise<void> {
 		const conflictStatus = await repoContext.conflictStatus();
 		if (conflictStatus.kind === "bothDeleted") {
 			const diagnostic =
@@ -529,7 +528,6 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			}
 		});
 
-		// Html is set after the listener is registered.
 		webviewPanel.webview.html = this._getHtmlForWebview(
 			webviewPanel.webview,
 		);

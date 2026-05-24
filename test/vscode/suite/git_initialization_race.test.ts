@@ -6,7 +6,11 @@ import type { Disposable, TextDocument, WebviewPanel } from "vscode";
 import { extensions, Uri, workspace } from "vscode";
 import type { WeldExtensionApi } from "../../../src/extension.ts";
 import { initializeWeldLogChannel } from "../../../src/log.ts";
-import { type GitApiRepository, getGitApi } from "../../../src/repoContext.ts";
+import {
+	type GitApiRepository,
+	getGitApi,
+	notifyRepositoryReady,
+} from "../../../src/repoContext.ts";
 import {
 	type SubmoduleConflictIdentity,
 	submoduleConflictUri,
@@ -54,6 +58,7 @@ interface FakePanel {
 	dispose(): void;
 	fireWebviewMessage(message: unknown): Promise<void>;
 	nextMessage(command: string): Promise<CapturedMessage>;
+	nextHtmlChange(): Promise<string>;
 	allMessages: CapturedMessage[];
 }
 
@@ -90,10 +95,20 @@ function makeFakePanel(): FakePanel {
 		command: string;
 		resolve: (message: CapturedMessage) => void;
 	}> = [];
+	let html = "";
+	const htmlChangeWaiters: Array<(html: string) => void> = [];
 
 	const panel: FakePanel = {
 		webview: {
-			html: "",
+			get html(): string {
+				return html;
+			},
+			set html(value: string) {
+				html = value;
+				for (const waiter of htmlChangeWaiters.splice(0)) {
+					waiter(value);
+				}
+			},
 			options: {},
 			postMessage(message: unknown): Thenable<boolean> {
 				const captured = message as CapturedMessage;
@@ -160,6 +175,11 @@ function makeFakePanel(): FakePanel {
 			}
 			return new Promise((resolve) => {
 				messageWaiters.push({ command, resolve });
+			});
+		},
+		nextHtmlChange(): Promise<string> {
+			return new Promise((resolve) => {
+				htmlChangeWaiters.push(resolve);
 			});
 		},
 		get allMessages(): CapturedMessage[] {
@@ -422,10 +442,8 @@ describe("custom editor Git initialization race — submodule tabs", () => {
 				assertNoTerminalSubmoduleMessage(panel);
 				assertNormalWebviewShell(panel, "submodule.js");
 
-				await release();
-				SubmoduleConflictEditorProvider.onRepositoryStateChanged.fire(
-					Uri.file(repoPath),
-				);
+				const repo = await release();
+				notifyRepositoryReady(repo);
 				assertSnapshotMessage(await snapshotPromise);
 			});
 		} finally {
@@ -433,7 +451,7 @@ describe("custom editor Git initialization race — submodule tabs", () => {
 		}
 	});
 
-	it("keeps a restored submodule tab loading until merge metadata initializes", async () => {
+	it("sends a snapshot when merge metadata initializes after a ready webview", async () => {
 		const fixture = await makeSubmoduleConflictFixture(
 			"weld-initialization-submodule-state-",
 		);
@@ -445,13 +463,10 @@ describe("custom editor Git initialization race — submodule tabs", () => {
 
 				await panel.fireWebviewMessage({ command: "ready" });
 
-				assertNoTerminalSubmoduleMessage(panel);
 				assertNormalWebviewShell(panel, "submodule.js");
 
-				await release();
-				SubmoduleConflictEditorProvider.onRepositoryStateChanged.fire(
-					Uri.file(repoPath),
-				);
+				const repo = await release();
+				notifyRepositoryReady(repo);
 				assertSnapshotMessage(await snapshotPromise);
 			});
 		} finally {
@@ -491,14 +506,24 @@ describe("custom editor Git initialization race — text conflict tabs", () => {
 				const document = await workspace.openTextDocument(fileUri);
 				const panel = makeFakePanel();
 				const provider = new MeldProviderClass(Uri.file("/tmp"));
-				const loadDiffPromise = panel.nextMessage("loadDiff");
 
-				await provider.resolveCustomTextEditor(
+				// resolveCustomTextEditor suspends inside _waitForRepository
+				// until the git repo becomes available — do not await yet.
+				const htmlChangePromise = panel.nextHtmlChange();
+				const resolvePromise = provider.resolveCustomTextEditor(
 					document,
 					panel as unknown as WebviewPanel,
 					{} as never,
 				);
-				await panel.fireWebviewMessage({ command: "ready" });
+
+				assert.equal(
+					panel.webview.html,
+					"",
+					"no html while git unavailable",
+				);
+
+				await release();
+				await htmlChangePromise;
 
 				assert.doesNotMatch(
 					panel.webview.html,
@@ -506,7 +531,9 @@ describe("custom editor Git initialization race — text conflict tabs", () => {
 				);
 				assertNormalWebviewShell(panel, "index.js");
 
-				await release();
+				const loadDiffPromise = panel.nextMessage("loadDiff");
+				await panel.fireWebviewMessage({ command: "ready" });
+
 				const loadDiff = asLoadDiff(await loadDiffPromise);
 				assert.equal(
 					loadDiff.files[0]?.content,
@@ -518,6 +545,8 @@ describe("custom editor Git initialization race — text conflict tabs", () => {
 					"remote\n",
 					"remote pane",
 				);
+
+				await resolvePromise;
 			});
 		} finally {
 			await cleanupRepoFixture(fixture);

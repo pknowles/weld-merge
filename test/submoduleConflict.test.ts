@@ -13,7 +13,7 @@ import {
 } from "vscode";
 import { initializeWeldLogChannel } from "../src/log.ts";
 import type { GitApiRepository } from "../src/repoContext.ts";
-import { GitStatus } from "../src/repoContext.ts";
+import { GitStatus, notifyRepositoryReady } from "../src/repoContext.ts";
 import {
 	isActiveSubmoduleGitlinkConflict,
 	isKnownSubmoduleConflictPath,
@@ -705,9 +705,7 @@ describe("SubmoduleConflictEditorProvider", () => {
 				{} as CancellationToken,
 			);
 
-			SubmoduleConflictEditorProvider.onRepositoryStateChanged.fire(
-				repository.rootUri,
-			);
+			notifyRepositoryReady(repository);
 			await receive({ command: "ready" });
 			expect(messages).toContainEqual(
 				expect.objectContaining({ command: "snapshot" }),
@@ -789,9 +787,7 @@ describe("SubmoduleConflictEditorProvider states", () => {
 			);
 
 			repository.state.mergeChanges = [];
-			SubmoduleConflictEditorProvider.onRepositoryStateChanged.fire(
-				repository.rootUri,
-			);
+			notifyRepositoryReady(repository);
 			await receive({ command: "ready" });
 			expect(messages).toContainEqual({
 				command: "conflictLost",

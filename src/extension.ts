@@ -33,6 +33,7 @@ import {
 	type GitConflictStage,
 	getGitApi,
 	isSupportedScheme,
+	notifyRepositoryReady,
 } from "./repoContext.ts";
 import { SubmoduleConflict } from "./submoduleConflict.ts";
 import { ConflictedFilesProvider, GitFile } from "./treeView.ts";
@@ -157,7 +158,7 @@ async function refreshRepo(
 		repoUri: repo.rootUri,
 		stateKey,
 	});
-	SubmoduleConflictEditorProvider.onRepositoryStateChanged.fire(repo.rootUri);
+	notifyRepositoryReady(repo);
 }
 
 function watchRepo(
@@ -565,9 +566,7 @@ async function handleCheckoutSubmoduleConflict(
 			`Restored conflicted submodule ${file.uri}`,
 		);
 		conflictedFilesProvider.refresh();
-		SubmoduleConflictEditorProvider.onRepositoryStateChanged.fire(
-			file.conflictedItem.repository.rootUri,
-		);
+		notifyRepositoryReady(file.conflictedItem.repository);
 	} catch (error: unknown) {
 		const message = `Submodule restore failed: ${getErrorMessage(error)}`;
 		window.showErrorMessage(message);

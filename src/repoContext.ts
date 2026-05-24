@@ -1,4 +1,10 @@
-import { type Event, extensions, type Uri, workspace } from "vscode";
+import {
+	type Event,
+	EventEmitter,
+	extensions,
+	type Uri,
+	workspace,
+} from "vscode";
 import { getWeldLogChannel } from "./log.ts";
 
 // Mirrors the public `Status` const enum order from VS Code's bundled Git API
@@ -62,6 +68,43 @@ interface GitApiRepository {
 	getCommit(ref: string): Promise<GitApiCommit>;
 	getMergeBase(ref1: string, ref2: string): Promise<string>;
 	add(paths: string[]): Promise<void>;
+}
+
+// VS Code restores editor tabs before the git extension finishes initializing.
+// _readyRepos records every repo that has fired at least one state-change event
+// (the signal that mergeChanges and other state are populated). Editors check
+// isRepositoryReady() at resolve time for the fast path, and subscribe to
+// onRepositoryStateChanged to defer work when the repo isn't ready yet.
+// Stores the repo object rather than just the URI so subscribers receive it
+// directly from the event and skip a redundant getRepository() lookup.
+const _readyRepos = new Map<string, GitApiRepository>();
+const _onRepositoryStateChangedEmitter = new EventEmitter<GitApiRepository>();
+
+// Broadcast by notifyRepositoryReady() after each repo state refresh. Carries
+// the repo object directly so subscribers never need to re-call getRepository().
+const onRepositoryStateChanged: Event<GitApiRepository> =
+	_onRepositoryStateChangedEmitter.event;
+
+// Called by watchRepo (extension.ts) inside every repo.state.onDidChange
+// handler. Records the repo as ready and broadcasts it so any editor that was
+// suspended waiting for this repo can proceed.
+function notifyRepositoryReady(repo: GitApiRepository): void {
+	_readyRepos.set(repo.rootUri.toString(), repo);
+	_onRepositoryStateChangedEmitter.fire(repo);
+}
+
+// Returns true if notifyRepositoryReady has fired for this root URI at least
+// once. Editors use this at resolve time to skip deferred setup when git is
+// already initialized (the common case for manually opened tabs).
+function isRepositoryReady(uri: Uri): boolean {
+	return _readyRepos.has(uri.toString());
+}
+
+// True when uri lives inside repo's working tree.
+function fileIsInRepo(uri: Uri, repo: GitApiRepository): boolean {
+	const root = repo.rootUri.fsPath;
+	const file = uri.fsPath;
+	return file === root || file.startsWith(`${root}/`);
 }
 
 const SUPPORTED_URI_SCHEMES = new Set(["file", "vscode-remote"]);
@@ -261,10 +304,14 @@ export {
 	conflictedItemFromUri,
 	createConflictedItem,
 	createConflictedItemFromUri,
+	fileIsInRepo,
 	GIT_STAGE_LOCAL,
 	GIT_STAGE_REMOTE,
 	GitStatus,
 	getGitApi,
 	getGitStatusName,
+	isRepositoryReady,
 	isSupportedScheme,
+	notifyRepositoryReady,
+	onRepositoryStateChanged,
 };

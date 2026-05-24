@@ -8,7 +8,6 @@ import {
 	type CustomReadonlyEditorProvider,
 	commands,
 	type Disposable,
-	EventEmitter,
 	type ExtensionContext,
 	Uri,
 	type Webview,
@@ -16,7 +15,12 @@ import {
 	window,
 } from "vscode";
 import { getWeldLogChannel } from "../log.ts";
-import { type GitApiRepository, getGitApi } from "../repoContext.ts";
+import {
+	type GitApiRepository,
+	getGitApi,
+	isRepositoryReady,
+	onRepositoryStateChanged,
+} from "../repoContext.ts";
 import {
 	changedFileUri,
 	parentRefForCommit,
@@ -80,7 +84,6 @@ class SubmoduleConflictEditorProvider
 	implements CustomReadonlyEditorProvider<SubmoduleConflictDocument>
 {
 	static readonly viewType = "weld.submoduleConflict";
-	static readonly onRepositoryStateChanged = new EventEmitter<Uri>();
 
 	private readonly extensionUri: Uri;
 	private readonly conflictedFilesProvider: ConflictedFilesProvider;
@@ -152,13 +155,22 @@ class SubmoduleConflictEditorProvider
 			localResourceRoots: [Uri.joinPath(this.extensionUri, "out")],
 		};
 		const disposables: Disposable[] = [];
-		// VS Code restores tabs before the git extension populates state, so both
-		// must be true before the first snapshot. repoReady is only set via
-		// onRepositoryStateChanged (never from getRepository() at resolve time)
-		// because that event fires after repo.state.onDidChange, guaranteeing
-		// mergeChanges is populated when SubmoduleConflict.load() reads it.
+		// Two independent events must both occur before the first snapshot can be
+		// sent: the webview must be loaded ("ready" message) and the git repo must
+		// have populated state (notifyRepositoryReady called at least once for this
+		// repo). Either can arrive first; whichever arrives second triggers the send.
+		//
+		// repoReady: true immediately if the repo was already initialized before
+		// this tab resolved (the common case for manually opened tabs). Otherwise
+		// set to true by the onRepositoryStateChanged listener below, which fires
+		// inside a repo.state.onDidChange handler — guaranteeing mergeChanges are
+		// populated by the time we act on it.
+		//
+		// webviewReady: always starts false; set to true by the "ready" handler.
+		// The webview shell HTML is set unconditionally at the end of this method,
+		// so "ready" will always eventually arrive regardless of repo state.
 		let webviewReady = false;
-		let repoReady = false;
+		let repoReady = isRepositoryReady(document.identity.repositoryRoot);
 		disposables.push(
 			webviewPanel.webview.onDidReceiveMessage(
 				async (message: SubmoduleWebviewMessage) => {
@@ -182,25 +194,23 @@ class SubmoduleConflictEditorProvider
 					}
 				},
 			),
-			SubmoduleConflictEditorProvider.onRepositoryStateChanged.event(
-				(rootUri) => {
-					if (
-						rootUri.toString() ===
-						document.identity.repositoryRoot.toString()
-					) {
-						repoReady = true;
-						if (webviewReady) {
-							this.postCurrentSnapshot(
-								document,
-								webviewPanel,
-								this.nextSnapshotVersion(webviewPanel),
-							).catch((error: unknown) =>
-								this.postError(webviewPanel, error),
-							);
-						}
+			onRepositoryStateChanged((repo) => {
+				if (
+					repo.rootUri.toString() ===
+					document.identity.repositoryRoot.toString()
+				) {
+					repoReady = true;
+					if (webviewReady) {
+						this.postCurrentSnapshot(
+							document,
+							webviewPanel,
+							this.nextSnapshotVersion(webviewPanel),
+						).catch((error: unknown) =>
+							this.postError(webviewPanel, error),
+						);
 					}
-				},
-			),
+				}
+			}),
 		);
 		webviewPanel.onDidDispose(() => {
 			for (const disposable of disposables) {
