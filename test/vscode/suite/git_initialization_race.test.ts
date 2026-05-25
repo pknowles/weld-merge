@@ -9,7 +9,7 @@ import { initializeWeldLogChannel } from "../../../src/log.ts";
 import {
 	type GitApiRepository,
 	getGitApi,
-	notifyRepositoryReady,
+	notifyRepositoryStateChanged,
 } from "../../../src/repoContext.ts";
 import {
 	type SubmoduleConflictIdentity,
@@ -70,6 +70,7 @@ interface GitExtensionExports {
 const SHA_REGEX = /^[0-9a-f]{40}$/u;
 const WEBVIEW_ROOT_REGEX = /<div id="root"><\/div>/u;
 const CANNOT_OPEN_REGEX = /Cannot open:/u;
+const LOADING_REGEX = /Loading\.\.\./u;
 const NO_SUBMODULE_SNAPSHOT_REGEX = /No submodule snapshot/u;
 const GIT_REPOSITORY_UNAVAILABLE_REGEX = /Git repository is not available/u;
 const NOT_IN_REPOSITORY_TEXT = "Cannot open: file is not in a git repository.";
@@ -276,15 +277,66 @@ async function withRepositoryUnavailable(
 			return realApi;
 		});
 	try {
-		await runTest(() => {
+		await runTest(async () => {
 			released = true;
-			getAPIStub.restore();
-			return openRepoWithMergeChanges(repoPath, expectedCount);
+			const repository = await openRepoWithMergeChanges(
+				repoPath,
+				expectedCount,
+			);
+			return repository;
 		});
 	} finally {
-		if (!released) {
-			getAPIStub.restore();
-		}
+		getAPIStub.restore();
+	}
+}
+
+async function withGitApiUninitialized(
+	runTest: (release: () => void) => Promise<void>,
+): Promise<void> {
+	const gitExports = gitExtensionExports();
+	const originalGetAPI = gitExports.getAPI.bind(gitExports);
+	let released = false;
+	const stateListeners: Array<(state: "initialized") => void> = [];
+
+	const getAPIStub = sinon
+		.stub(gitExports, "getAPI")
+		.callsFake((version: number): GitApi => {
+			const realApi = originalGetAPI(version);
+			return new Proxy(realApi, {
+				get(target, property, receiver) {
+					if (property === "state") {
+						return released ? "initialized" : "uninitialized";
+					}
+					if (property === "onDidChangeState") {
+						return (listener: (state: "initialized") => void) => {
+							stateListeners.push(listener);
+							return {
+								dispose: () => {
+									const index =
+										stateListeners.indexOf(listener);
+									if (index !== -1) {
+										stateListeners.splice(index, 1);
+									}
+								},
+							};
+						};
+					}
+					const value = Reflect.get(target, property, receiver);
+					return typeof value === "function"
+						? value.bind(target)
+						: value;
+				},
+			});
+		});
+	try {
+		await runTest(() => {
+			released = true;
+			for (const listener of stateListeners.splice(0)) {
+				listener("initialized");
+			}
+		});
+	} finally {
+		getAPIStub.restore();
 	}
 }
 
@@ -312,6 +364,7 @@ async function withEmptyMergeChanges(
 			const wrapperRepository: GitApiRepository = {
 				rootUri: realRepository.rootUri,
 				state: wrapperState as GitApiRepository["state"],
+				status: realRepository.status.bind(realRepository),
 				show: realRepository.show.bind(realRepository),
 				getCommit: realRepository.getCommit.bind(realRepository),
 				getMergeBase: realRepository.getMergeBase.bind(realRepository),
@@ -443,7 +496,7 @@ describe("custom editor Git initialization race — submodule tabs", () => {
 				assertNormalWebviewShell(panel, "submodule.js");
 
 				const repo = await release();
-				notifyRepositoryReady(repo);
+				notifyRepositoryStateChanged(repo);
 				assertSnapshotMessage(await snapshotPromise);
 			});
 		} finally {
@@ -466,7 +519,7 @@ describe("custom editor Git initialization race — submodule tabs", () => {
 				assertNormalWebviewShell(panel, "submodule.js");
 
 				const repo = await release();
-				notifyRepositoryReady(repo);
+				notifyRepositoryStateChanged(repo);
 				assertSnapshotMessage(await snapshotPromise);
 			});
 		} finally {
@@ -496,33 +549,38 @@ describe("custom editor Git initialization race — submodule tabs", () => {
 });
 
 describe("custom editor Git initialization race — text conflict tabs", () => {
-	it("keeps a restored text-conflict tab loading until an unavailable repository initializes", async () => {
+	it("keeps a restored text-conflict tab loading until the Git API initializes", async () => {
 		const fixture = await makeRepoFixture("weld-initialization-file-repo-");
 		const { repoPath } = fixture;
 		try {
 			makeConflict(repoPath);
-			await withRepositoryUnavailable(repoPath, 1, async (release) => {
+			await openRepoWithMergeChanges(repoPath, 1);
+			await withGitApiUninitialized(async (release) => {
 				const fileUri = Uri.file(join(repoPath, "tracked.txt"));
 				const document = await workspace.openTextDocument(fileUri);
 				const panel = makeFakePanel();
 				const provider = new MeldProviderClass(Uri.file("/tmp"));
 
-				// resolveCustomTextEditor suspends inside _waitForRepository
+				// resolveCustomTextEditor suspends inside repository acquisition
 				// until the git repo becomes available — do not await yet.
-				const htmlChangePromise = panel.nextHtmlChange();
 				const resolvePromise = provider.resolveCustomTextEditor(
 					document,
 					panel as unknown as WebviewPanel,
 					{} as never,
 				);
 
-				assert.equal(
+				assert.match(
 					panel.webview.html,
-					"",
-					"no html while git unavailable",
+					LOADING_REGEX,
+					"loading shell while git is initializing",
+				);
+				assert.doesNotMatch(
+					panel.webview.html,
+					NOT_IN_REPOSITORY_REGEX,
 				);
 
-				await release();
+				const htmlChangePromise = panel.nextHtmlChange();
+				release();
 				await htmlChangePromise;
 
 				assert.doesNotMatch(

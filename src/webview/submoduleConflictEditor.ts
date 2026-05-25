@@ -16,10 +16,11 @@ import {
 } from "vscode";
 import { getWeldLogChannel } from "../log.ts";
 import {
+	EditorDisposedError,
 	type GitApiRepository,
 	getGitApi,
-	isRepositoryReady,
 	onRepositoryStateChanged,
+	readyRepositoryForRoot,
 } from "../repoContext.ts";
 import {
 	changedFileUri,
@@ -155,36 +156,23 @@ class SubmoduleConflictEditorProvider
 			localResourceRoots: [Uri.joinPath(this.extensionUri, "out")],
 		};
 		const disposables: Disposable[] = [];
-		// Two independent events must both occur before the first snapshot can be
-		// sent: the webview must be loaded ("ready" message) and the git repo must
-		// have populated state (notifyRepositoryReady called at least once for this
-		// repo). Either can arrive first; whichever arrives second triggers the send.
-		//
-		// repoReady: true immediately if the repo was already initialized before
-		// this tab resolved (the common case for manually opened tabs). Otherwise
-		// set to true by the onRepositoryStateChanged listener below, which fires
-		// inside a repo.state.onDidChange handler — guaranteeing mergeChanges are
-		// populated by the time we act on it.
-		//
-		// webviewReady: always starts false; set to true by the "ready" handler.
-		// The webview shell HTML is set unconditionally at the end of this method,
-		// so "ready" will always eventually arrive regardless of repo state.
+		// The webview asks for state as soon as its script is ready. Repository
+		// acquisition below either yields a ReadyRepository with populated Git
+		// state or rejects with a typed terminal error; the editor never handles a
+		// half-ready repository or a nullable "maybe later" value.
 		let webviewReady = false;
-		let repoReady = isRepositoryReady(document.identity.repositoryRoot);
 		disposables.push(
 			webviewPanel.webview.onDidReceiveMessage(
 				async (message: SubmoduleWebviewMessage) => {
 					if (message.command === "ready") {
 						webviewReady = true;
-						if (repoReady) {
-							await this.postCurrentSnapshot(
-								document,
-								webviewPanel,
-								this.nextSnapshotVersion(webviewPanel),
-							).catch((error: unknown) =>
-								this.postError(webviewPanel, error),
-							);
-						}
+						await this.postCurrentSnapshot(
+							document,
+							webviewPanel,
+							this.nextSnapshotVersion(webviewPanel),
+						).catch((error: unknown) =>
+							this.postError(webviewPanel, error),
+						);
 					} else {
 						await this.handleMessage(
 							document,
@@ -197,18 +185,16 @@ class SubmoduleConflictEditorProvider
 			onRepositoryStateChanged((repo) => {
 				if (
 					repo.rootUri.toString() ===
-					document.identity.repositoryRoot.toString()
+						document.identity.repositoryRoot.toString() &&
+					webviewReady
 				) {
-					repoReady = true;
-					if (webviewReady) {
-						this.postCurrentSnapshot(
-							document,
-							webviewPanel,
-							this.nextSnapshotVersion(webviewPanel),
-						).catch((error: unknown) =>
-							this.postError(webviewPanel, error),
-						);
-					}
+					this.postCurrentSnapshot(
+						document,
+						webviewPanel,
+						this.nextSnapshotVersion(webviewPanel),
+					).catch((error: unknown) =>
+						this.postError(webviewPanel, error),
+					);
 				}
 			}),
 		);
@@ -241,20 +227,32 @@ class SubmoduleConflictEditorProvider
 					await this.handleStage(document, webviewPanel, message);
 					break;
 				case "showFileDiff":
-					await this.handleShowFileDiff(document, message);
+					await this.handleShowFileDiff(
+						document,
+						webviewPanel,
+						message,
+					);
 					break;
 				default:
 					break;
 			}
 		} catch (error: unknown) {
+			if (error instanceof EditorDisposedError) {
+				return;
+			}
 			this.postError(webviewPanel, error);
 		}
 	}
 
-	private loadConflict(
+	private async loadConflict(
 		document: SubmoduleConflictDocument,
+		webviewPanel: WebviewPanel,
 	): Promise<SubmoduleConflict> {
-		const repository = repositoryForIdentity(document.identity);
+		const readyRepository = await readyRepositoryForRoot(
+			document.identity.repositoryRoot,
+			webviewPanel,
+		);
+		const repository = readyRepository.repository;
 		const submoduleUri = submoduleUriFromIdentity(document.identity);
 		return SubmoduleConflict.load(repository, submoduleUri);
 	}
@@ -268,7 +266,7 @@ class SubmoduleConflictEditorProvider
 		// Each snapshot is a fresh live read from disk, so stale reads must not
 		// post after a newer read has already started.
 		try {
-			const conflict = await this.loadConflict(document);
+			const conflict = await this.loadConflict(document, webviewPanel);
 			const snapshot = await conflict.buildSnapshot();
 			if (!this.isCurrentSnapshotVersion(webviewPanel, version)) {
 				return;
@@ -279,6 +277,9 @@ class SubmoduleConflictEditorProvider
 			});
 		} catch (error: unknown) {
 			if (!this.isCurrentSnapshotVersion(webviewPanel, version)) {
+				return;
+			}
+			if (error instanceof EditorDisposedError) {
 				return;
 			}
 			if (!(error instanceof SubmoduleConflictUnavailableError)) {
@@ -309,7 +310,7 @@ class SubmoduleConflictEditorProvider
 		webviewPanel: WebviewPanel,
 		message: SearchCommitsMessage,
 	): Promise<void> {
-		const conflict = await this.loadConflict(document);
+		const conflict = await this.loadConflict(document, webviewPanel);
 		await webviewPanel.webview.postMessage({
 			command: "searchResults",
 			commits: await searchSubmoduleCommits(conflict, message.query),
@@ -321,7 +322,7 @@ class SubmoduleConflictEditorProvider
 		webviewPanel: WebviewPanel,
 		message: LoadCommitFilesMessage,
 	): Promise<void> {
-		const conflict = await this.loadConflict(document);
+		const conflict = await this.loadConflict(document, webviewPanel);
 		await webviewPanel.webview.postMessage({
 			command: "commitFiles",
 			sha: message.sha,
@@ -334,7 +335,7 @@ class SubmoduleConflictEditorProvider
 		webviewPanel: WebviewPanel,
 		message: StageCommitMessage,
 	): Promise<void> {
-		const conflict = await this.loadConflict(document);
+		const conflict = await this.loadConflict(document, webviewPanel);
 		await conflict.stage(message.sha);
 		this.conflictedFilesProvider.refresh();
 		window.showInformationMessage(
@@ -345,9 +346,10 @@ class SubmoduleConflictEditorProvider
 
 	private async handleShowFileDiff(
 		document: SubmoduleConflictDocument,
+		webviewPanel: WebviewPanel,
 		message: ShowFileDiffMessage,
 	): Promise<void> {
-		const conflict = await this.loadConflict(document);
+		const conflict = await this.loadConflict(document, webviewPanel);
 		const gitApi = getGitApi();
 		const fileUri = changedFileUri(conflict, message.filePath);
 		const rightUri = gitApi.toGitUri(fileUri, message.sha);
@@ -410,18 +412,6 @@ function repositoryRelativePath(
 		);
 	}
 	return full.slice(root.length + 1);
-}
-
-function repositoryForIdentity(
-	identity: SubmoduleConflictIdentity,
-): GitApiRepository {
-	const repository = getGitApi().getRepository(identity.repositoryRoot);
-	if (!repository) {
-		throw new Error(
-			`Git repository is not available for ${identity.repositoryRoot.toString()}.`,
-		);
-	}
-	return repository;
 }
 
 function errorMessage(error: unknown): string {

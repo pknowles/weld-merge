@@ -1,4 +1,5 @@
 import {
+	type Disposable,
 	type Event,
 	EventEmitter,
 	extensions,
@@ -64,53 +65,31 @@ interface GitApiRepositoryState {
 interface GitApiRepository {
 	rootUri: Uri;
 	state: GitApiRepositoryState;
+	status(): Promise<void>;
 	show(ref: string, path: string): Promise<string>;
 	getCommit(ref: string): Promise<GitApiCommit>;
 	getMergeBase(ref1: string, ref2: string): Promise<string>;
 	add(paths: string[]): Promise<void>;
 }
 
-// VS Code restores editor tabs before the git extension finishes initializing.
-// _readyRepos records every repo that has fired at least one state-change event
-// (the signal that mergeChanges and other state are populated). Editors check
-// isRepositoryReady() at resolve time for the fast path, and subscribe to
-// onRepositoryStateChanged to defer work when the repo isn't ready yet.
-// Stores the repo object rather than just the URI so subscribers receive it
-// directly from the event and skip a redundant getRepository() lookup.
-const _readyRepos = new Map<string, GitApiRepository>();
 const _onRepositoryStateChangedEmitter = new EventEmitter<GitApiRepository>();
+let gitApiWhenInitializedPromise: Promise<GitApi> | undefined;
 
-// Broadcast by notifyRepositoryReady() after each repo state refresh. Carries
-// the repo object directly so subscribers never need to re-call getRepository().
+// Broadcast after a repository status refresh has produced new state. This is
+// only a live-refresh signal for already-open editors; startup readiness is
+// proven by ReadyRepository construction instead of by observing this event.
 const onRepositoryStateChanged: Event<GitApiRepository> =
 	_onRepositoryStateChangedEmitter.event;
 
-// Called by watchRepo (extension.ts) inside every repo.state.onDidChange
-// handler. Records the repo as ready and broadcasts it so any editor that was
-// suspended waiting for this repo can proceed.
-function notifyRepositoryReady(repo: GitApiRepository): void {
-	_readyRepos.set(repo.rootUri.toString(), repo);
+function notifyRepositoryStateChanged(repo: GitApiRepository): void {
 	_onRepositoryStateChangedEmitter.fire(repo);
-}
-
-// Returns true if notifyRepositoryReady has fired for this root URI at least
-// once. Editors use this at resolve time to skip deferred setup when git is
-// already initialized (the common case for manually opened tabs).
-function isRepositoryReady(uri: Uri): boolean {
-	return _readyRepos.has(uri.toString());
-}
-
-// True when uri lives inside repo's working tree.
-function fileIsInRepo(uri: Uri, repo: GitApiRepository): boolean {
-	const root = repo.rootUri.fsPath;
-	const file = uri.fsPath;
-	return file === root || file.startsWith(`${root}/`);
 }
 
 const SUPPORTED_URI_SCHEMES = new Set(["file", "vscode-remote"]);
 const GIT_STAGE_LOCAL = 2;
 const GIT_STAGE_REMOTE = 3;
 type GitConflictStage = typeof GIT_STAGE_LOCAL | typeof GIT_STAGE_REMOTE;
+type GitApiState = "uninitialized" | "initialized";
 
 type ConflictStatus =
 	| { kind: "bothModified" }
@@ -118,6 +97,8 @@ type ConflictStatus =
 	| { kind: "deleteModify"; remainingStage: GitConflictStage };
 
 interface GitExtension {
+	enabled: boolean;
+	onDidChangeEnablement: Event<boolean>;
 	getAPI(version: number): GitApi;
 }
 
@@ -125,10 +106,13 @@ interface GitApi {
 	git: {
 		path: string;
 	};
+	state: GitApiState;
 	repositories: GitApiRepository[];
+	onDidChangeState: Event<GitApiState>;
 	onDidOpenRepository: Event<GitApiRepository>;
 	onDidCloseRepository: Event<GitApiRepository>;
 	getRepository(uri: Uri): GitApiRepository | null;
+	getRepositoryRoot(uri: Uri): Promise<Uri | null>;
 	openRepository(uri: Uri): Promise<GitApiRepository | null>;
 	toGitUri(uri: Uri, ref: string): Uri;
 }
@@ -140,6 +124,57 @@ interface ConflictedItem {
 	uri: Uri; // file or submodule
 	mergeChange: GitApiChange | null;
 	conflictStatus(): Promise<ConflictStatus>;
+}
+
+class GitApiUnavailableError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "GitApiUnavailableError";
+	}
+}
+
+class NotInRepositoryError extends Error {
+	constructor(uri: Uri) {
+		super(`${uri.toString()} is not in a Git repository.`);
+		this.name = "NotInRepositoryError";
+	}
+}
+
+class RepositoryUnavailableError extends Error {
+	constructor(uri: Uri) {
+		super(`Git repository is not available for ${uri.toString()}.`);
+		this.name = "RepositoryUnavailableError";
+	}
+}
+
+class EditorDisposedError extends Error {
+	constructor() {
+		super(
+			"Editor was disposed before Git repository state became available.",
+		);
+		this.name = "EditorDisposedError";
+	}
+}
+
+// A ReadyRepository is the only repository object custom editors should use for
+// initial state. Its constructor is private so callers cannot accidentally use a
+// Repository observed at the Git API boundary before mergeChanges are populated.
+class ReadyRepository {
+	readonly repository: GitApiRepository;
+
+	private constructor(repository: GitApiRepository) {
+		this.repository = repository;
+	}
+
+	static async fromRepository(
+		repository: GitApiRepository,
+	): Promise<ReadyRepository> {
+		// VS Code opens repositories before their first status run. Awaiting the
+		// concrete status operation is the Git API-supported readiness proof that
+		// mergeChanges and related state have been populated.
+		await repository.status();
+		return new ReadyRepository(repository);
+	}
 }
 
 function isSupportedScheme(uri: Uri): boolean {
@@ -154,6 +189,193 @@ function getGitApi(): GitApi {
 		throw new Error("Git extension is not available.");
 	}
 	return gitExtension.exports.getAPI(1);
+}
+
+function getGitApiWhenInitialized(): Promise<GitApi> {
+	gitApiWhenInitializedPromise ??= initializeGitApi().finally(() => {
+		// Share one in-flight initialization without pinning the Git API forever;
+		// tests and extension reloads must be able to observe the current VS Code
+		// extension export rather than a stale object from an earlier call.
+		gitApiWhenInitializedPromise = undefined;
+	});
+	return gitApiWhenInitializedPromise;
+}
+
+async function initializeGitApi(): Promise<GitApi> {
+	const extension = extensions.getExtension<GitExtension>("vscode.git");
+	if (!extension) {
+		throw new GitApiUnavailableError(
+			"The built-in Git extension is not available.",
+		);
+	}
+	const gitExtension = extension.isActive
+		? extension.exports
+		: await extension.activate();
+	if (!gitExtension.enabled) {
+		throw new GitApiUnavailableError(
+			"The built-in Git extension is disabled.",
+		);
+	}
+	const api = gitExtension.getAPI(1);
+	if (api.state === "initialized") {
+		return api;
+	}
+	await waitForGitApiInitialized(api);
+	return api;
+}
+
+function waitForGitApiInitialized(api: GitApi): Promise<void> {
+	return new Promise((resolve) => {
+		const disposable = api.onDidChangeState((state) => {
+			if (state === "initialized") {
+				disposable.dispose();
+				resolve();
+			}
+		});
+	});
+}
+
+function withPanelDisposal<T>(
+	panel: { onDidDispose(listener: () => void): Disposable },
+	promise: Promise<T>,
+): Promise<T> {
+	return new Promise((resolve, reject) => {
+		let settled = false;
+		const disposable = panel.onDidDispose(() => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			disposable.dispose();
+			reject(new EditorDisposedError());
+		});
+		promise.then(
+			(value) => {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				disposable.dispose();
+				resolve(value);
+			},
+			(error: unknown) => {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				disposable.dispose();
+				reject(error);
+			},
+		);
+	});
+}
+
+async function repositoryRootForDocument(api: GitApi, uri: Uri): Promise<Uri> {
+	const existing = api.getRepository(uri);
+	if (existing) {
+		return existing.rootUri;
+	}
+	const root = await api.getRepositoryRoot(uri);
+	if (!root) {
+		throw new NotInRepositoryError(uri);
+	}
+	return root;
+}
+
+function repositoryMatchesRoot(
+	repository: GitApiRepository,
+	rootUri: Uri,
+): boolean {
+	return repository.rootUri.toString() === rootUri.toString();
+}
+
+function openRepositoryAtRoot(
+	api: GitApi,
+	rootUri: Uri,
+	panel: { onDidDispose(listener: () => void): Disposable },
+): Promise<GitApiRepository> {
+	const existing = api.getRepository(rootUri);
+	if (existing) {
+		return Promise.resolve(existing);
+	}
+
+	return new Promise((resolve, reject) => {
+		let settled = false;
+		const disposables: Disposable[] = [];
+		const finish = (result: GitApiRepository | Error): void => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			for (const disposable of disposables) {
+				disposable.dispose();
+			}
+			if (result instanceof Error) {
+				reject(result);
+				return;
+			}
+			resolve(result);
+		};
+
+		disposables.push(
+			api.onDidOpenRepository((repository) => {
+				if (repositoryMatchesRoot(repository, rootUri)) {
+					finish(repository);
+				}
+			}),
+			panel.onDidDispose(() => finish(new EditorDisposedError())),
+		);
+
+		api.openRepository(rootUri).then(
+			(repository) => {
+				if (repository) {
+					finish(repository);
+					return;
+				}
+				const opened = api.getRepository(rootUri);
+				if (opened) {
+					finish(opened);
+					return;
+				}
+				finish(new RepositoryUnavailableError(rootUri));
+			},
+			(error: unknown) => {
+				if (error instanceof Error) {
+					finish(error);
+					return;
+				}
+				finish(new Error(String(error)));
+			},
+		);
+	});
+}
+
+async function readyRepositoryForRoot(
+	rootUri: Uri,
+	panel: { onDidDispose(listener: () => void): Disposable },
+): Promise<ReadyRepository> {
+	const api = await withPanelDisposal(panel, getGitApiWhenInitialized());
+	const repository = await openRepositoryAtRoot(api, rootUri, panel);
+	return await withPanelDisposal(
+		panel,
+		ReadyRepository.fromRepository(repository),
+	);
+}
+
+async function conflictedItemForDocument(
+	uri: Uri,
+	panel: { onDidDispose(listener: () => void): Disposable },
+): Promise<ConflictedItem> {
+	if (!isSupportedScheme(uri)) {
+		throw new Error(`Unsupported URI scheme "${uri.scheme}".`);
+	}
+	const api = await withPanelDisposal(panel, getGitApiWhenInitialized());
+	const rootUri = await withPanelDisposal(
+		panel,
+		repositoryRootForDocument(api, uri),
+	);
+	const readyRepository = await readyRepositoryForRoot(rootUri, panel);
+	return createConflictedItemFromUri(readyRepository.repository, uri);
 }
 
 async function readConflictStage(
@@ -301,17 +523,21 @@ export type {
 	GitConflictStage,
 };
 export {
+	conflictedItemForDocument,
 	conflictedItemFromUri,
 	createConflictedItem,
 	createConflictedItemFromUri,
-	fileIsInRepo,
+	EditorDisposedError,
 	GIT_STAGE_LOCAL,
 	GIT_STAGE_REMOTE,
+	GitApiUnavailableError,
 	GitStatus,
 	getGitApi,
 	getGitStatusName,
-	isRepositoryReady,
 	isSupportedScheme,
-	notifyRepositoryReady,
+	NotInRepositoryError,
+	notifyRepositoryStateChanged,
 	onRepositoryStateChanged,
+	RepositoryUnavailableError,
+	readyRepositoryForRoot,
 };

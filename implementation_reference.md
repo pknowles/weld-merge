@@ -10,7 +10,7 @@ Found in `src/matchers/`. High-performance, side-effect-free TypeScript logic.
 ## Extension Host (VS Code Plumbing)
 Entry point and Git integration.
 - **`extension.ts`**: Extension lifecycle, command registrations, and workspace event handling.
-- **`repoContext.ts`**: Resolves per-file Git repository context via `vscode.git` (`repository`, `rootUri`, `rootFsPath`, and repo-relative path).
+- **`repoContext.ts`**: Resolves per-file Git repository context via `vscode.git`. Custom-editor startup uses typed acquisition helpers that activate/wait for the Git API, open the requested repository, await `repository.status()`, and then return fully usable objects (`ReadyRepository`/`ConflictedItem`) or throw typed errors; editor startup code does not consume nullable Git API results directly.
 - **`gitUtils.ts`**: Shared git helpers for subprocess-backed commands plus URI-safe `.git` resolution and conflict-state detection via `workspace.fs`.
 - **`submoduleConflict.ts`**: Submodule conflict domain boundary. Uses VS Code Git API merge changes for discovery, then path-scoped raw Git for gitlink stage/object/index plumbing that the Git API cannot expose. It also contains read-only submodule history queries for the resolver graph/search/file list. This intentionally avoids `git ls-files`.
 - **`log.ts`**: Shared `LogOutputChannel` initialization/access for extension-host diagnostics.
@@ -68,6 +68,15 @@ Granular performance telemetry is **opt-in only** and has zero production impact
   - `execGitWithInput()` runs Git commands that need stdin, currently used for `git update-index --index-info`.
 
 - `src/repoContext.ts`
+  - `readyRepositoryForRoot()` is the custom-editor startup boundary for
+    repository state. It waits for the Git API to be initialized, opens the
+    requested repository through the Git API, and constructs `ReadyRepository`
+    only after `repository.status()` has completed. This replaces editor-local
+    `repoReady` flags and `_readyRepos` maps with construction-time readiness.
+  - `conflictedItemForDocument()` performs the same initialized acquisition for
+    real text documents, using `getRepositoryRoot()`/`openRepository()` at the
+    Git API boundary and converting documented absence into typed errors instead
+    of leaking `null` into editor code.
   - `createConflictedItem()` attaches repository context, the original VS Code Git API `mergeChanges` entry, and the `conflictStatus()` method to a conflicted URI.
   - `createConflictedItemFromUri()` is only for active-editor/URI fallback paths and resolved-file rows where we start from a bare URI rather than a current `mergeChanges` entry.
   - `ConflictedItem.conflictStatus()` computes both-modified, delete/modify, and unexpected both-deleted status from readable stage 2/3 content via `repository.show()`. This is slower than trusting `mergeChanges.status`, but more reliable in Cursor/remote hosts. `mergeChanges.status` is used only as advisory metadata for concise mismatch warnings.

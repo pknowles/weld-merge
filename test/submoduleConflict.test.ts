@@ -13,7 +13,16 @@ import {
 } from "vscode";
 import { initializeWeldLogChannel } from "../src/log.ts";
 import type { GitApiRepository } from "../src/repoContext.ts";
-import { GitStatus, notifyRepositoryReady } from "../src/repoContext.ts";
+import {
+	conflictedItemForDocument,
+	EditorDisposedError,
+	GitApiUnavailableError,
+	GitStatus,
+	NotInRepositoryError,
+	notifyRepositoryStateChanged,
+	RepositoryUnavailableError,
+	readyRepositoryForRoot,
+} from "../src/repoContext.ts";
 import {
 	isActiveSubmoduleGitlinkConflict,
 	isKnownSubmoduleConflictPath,
@@ -104,6 +113,7 @@ function makeRepository(rootPath: string, submoduleUri: Uri): GitApiRepository {
 			onDidChange: () => ({ dispose: () => undefined }),
 		},
 		show: () => Promise.reject(new Error("not used")),
+		status: () => Promise.resolve(),
 		getCommit: () => Promise.reject(new Error("not used")),
 		getMergeBase: (ref1: string, ref2: string) =>
 			Promise.resolve(runGit(["merge-base", ref1, ref2], rootPath)),
@@ -147,29 +157,60 @@ function makeWebviewPanel(): {
 	};
 }
 
+function makeDisposablePanel(): {
+	panel: { onDidDispose(listener: () => void): { dispose(): void } };
+	dispose(): void;
+} {
+	const listeners: Array<() => void> = [];
+	return {
+		panel: {
+			onDidDispose: (listener) => {
+				listeners.push(listener);
+				return { dispose: () => undefined };
+			},
+		},
+		dispose: () => {
+			for (const listener of listeners) {
+				listener();
+			}
+		},
+	};
+}
+
 function installGitApi(repository: GitApiRepository): () => void {
 	const mutableExtensions = extensions as unknown as MutableExtensions;
 	const originalGetExtension = mutableExtensions.getExtension;
+	const gitExtension = {
+		enabled: true,
+		onDidChangeEnablement: () => ({ dispose: () => undefined }),
+		getAPI: () => ({
+			git: { path: "git" },
+			repositories: [repository],
+			onDidOpenRepository: () => ({ dispose: () => undefined }),
+			onDidCloseRepository: () => ({ dispose: () => undefined }),
+			state: "initialized",
+			onDidChangeState: () => ({ dispose: () => undefined }),
+			getRepository: (uri: Uri) =>
+				uri.toString() === repository.rootUri.toString()
+					? repository
+					: null,
+			getRepositoryRoot: (uri: Uri) =>
+				uri.fsPath.startsWith(repository.rootUri.fsPath)
+					? Promise.resolve(repository.rootUri)
+					: Promise.resolve(null),
+			openRepository: () => Promise.resolve(repository),
+			toGitUri: (uri: Uri, ref: string) =>
+				Uri.from({
+					scheme: "git",
+					path: uri.path,
+					query: new URLSearchParams({ ref }).toString(),
+				}),
+		}),
+	};
 	mutableExtensions.getExtension = () => ({
-		exports: {
-			getAPI: () => ({
-				git: { path: "git" },
-				repositories: [repository],
-				onDidOpenRepository: () => ({ dispose: () => undefined }),
-				onDidCloseRepository: () => ({ dispose: () => undefined }),
-				getRepository: (uri: Uri) =>
-					uri.toString() === repository.rootUri.toString()
-						? repository
-						: null,
-				openRepository: () => Promise.resolve(repository),
-				toGitUri: (uri: Uri, ref: string) =>
-					Uri.from({
-						scheme: "git",
-						path: uri.path,
-						query: new URLSearchParams({ ref }).toString(),
-					}),
-			}),
-		},
+		isActive: true,
+		exports: gitExtension,
+		activate: () => Promise.resolve(gitExtension),
 	});
 	return () => {
 		mutableExtensions.getExtension = originalGetExtension;
@@ -656,6 +697,253 @@ beforeAll(() => {
 	initializeWeldLogChannel();
 });
 
+describe("repoContext repository acquisition", () => {
+	it("constructs ready repositories only after repository status has completed", async () => {
+		const root = mkdtempSync(join(tmpdir(), "weld-ready-repo-"));
+		const fileUri = Uri.file(join(root, "tracked.txt"));
+		let statusCalls = 0;
+		const repository = makeRepository(root, fileUri);
+		repository.status = () => {
+			statusCalls += 1;
+			return Promise.resolve();
+		};
+		const restoreGitApi = installGitApi(repository);
+		try {
+			const { panel } = makeWebviewPanel();
+			const readyRepository = await readyRepositoryForRoot(
+				Uri.file(root),
+				panel,
+			);
+			expect(readyRepository.repository).toBe(repository);
+			expect(statusCalls).toBe(1);
+		} finally {
+			restoreGitApi();
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("resolves document conflicts through Git API root acquisition without exposing null", async () => {
+		const root = mkdtempSync(join(tmpdir(), "weld-conflicted-item-"));
+		const fileUri = Uri.file(join(root, "tracked.txt"));
+		const repository = makeRepository(root, fileUri);
+		const restoreGitApi = installGitApi(repository);
+		try {
+			const { panel } = makeWebviewPanel();
+			const item = await conflictedItemForDocument(fileUri, panel);
+			expect(item.repository).toBe(repository);
+			expect(item.uri.toString()).toBe(fileUri.toString());
+			expect(item.mergeChange?.uri.toString()).toBe(fileUri.toString());
+		} finally {
+			restoreGitApi();
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("throws a typed not-in-repository error when Git cannot resolve a root", async () => {
+		const { panel } = makeWebviewPanel();
+		await expect(
+			conflictedItemForDocument(Uri.file("/outside/tracked.txt"), panel),
+		).rejects.toBeInstanceOf(NotInRepositoryError);
+	});
+});
+
+describe("repoContext Git API initialization", () => {
+	it("throws a typed error when the built-in Git extension is unavailable", async () => {
+		const mutableExtensions = extensions as unknown as MutableExtensions;
+		const originalGetExtension = mutableExtensions.getExtension;
+		mutableExtensions.getExtension = () => undefined;
+		try {
+			const { panel } = makeDisposablePanel();
+			await expect(
+				readyRepositoryForRoot(Uri.file("/repo"), panel),
+			).rejects.toBeInstanceOf(GitApiUnavailableError);
+		} finally {
+			mutableExtensions.getExtension = originalGetExtension;
+		}
+	});
+
+	it("throws immediately when the Git extension is disabled", async () => {
+		const mutableExtensions = extensions as unknown as MutableExtensions;
+		const originalGetExtension = mutableExtensions.getExtension;
+		const gitExtension = {
+			enabled: false,
+			onDidChangeEnablement: () => ({ dispose: () => undefined }),
+			getAPI: () => {
+				throw new Error("disabled Git API should not be requested");
+			},
+		};
+		mutableExtensions.getExtension = () => ({
+			isActive: true,
+			exports: gitExtension,
+			activate: () => Promise.resolve(gitExtension),
+		});
+		try {
+			const { panel } = makeWebviewPanel();
+			await expect(
+				readyRepositoryForRoot(Uri.file("/repo"), panel),
+			).rejects.toBeInstanceOf(GitApiUnavailableError);
+		} finally {
+			mutableExtensions.getExtension = originalGetExtension;
+		}
+	});
+
+	it("waits for the Git API initialized event before opening repositories", async () => {
+		const root = mkdtempSync(join(tmpdir(), "weld-api-init-"));
+		const fileUri = Uri.file(join(root, "tracked.txt"));
+		const repository = makeRepository(root, fileUri);
+		const mutableExtensions = extensions as unknown as MutableExtensions;
+		const originalGetExtension = mutableExtensions.getExtension;
+		const stateListeners: Array<(state: "initialized") => void> = [];
+		let initialized = false;
+		let opened = false;
+		const gitApi = {
+			git: { path: "git" },
+			get state() {
+				return initialized ? "initialized" : "uninitialized";
+			},
+			repositories: [repository],
+			onDidChangeState: (listener: (state: "initialized") => void) => {
+				stateListeners.push(listener);
+				return { dispose: () => undefined };
+			},
+			onDidOpenRepository: () => ({ dispose: () => undefined }),
+			onDidCloseRepository: () => ({ dispose: () => undefined }),
+			getRepository: (uri: Uri) =>
+				uri.toString() === repository.rootUri.toString()
+					? repository
+					: null,
+			getRepositoryRoot: () => Promise.resolve(repository.rootUri),
+			openRepository: () => {
+				opened = true;
+				return Promise.resolve(repository);
+			},
+			toGitUri: (uri: Uri) => uri,
+		};
+		const gitExtension = {
+			enabled: true,
+			onDidChangeEnablement: () => ({ dispose: () => undefined }),
+			getAPI: () => gitApi,
+		};
+		mutableExtensions.getExtension = () => ({
+			isActive: true,
+			exports: gitExtension,
+			activate: () => Promise.resolve(gitExtension),
+		});
+		try {
+			const { panel } = makeWebviewPanel();
+			const readyPromise = readyRepositoryForRoot(Uri.file(root), panel);
+			await Promise.resolve();
+			expect(opened).toBe(false);
+
+			initialized = true;
+			for (const listener of stateListeners) {
+				listener("initialized");
+			}
+
+			const readyRepository = await readyPromise;
+			expect(readyRepository.repository).toBe(repository);
+		} finally {
+			mutableExtensions.getExtension = originalGetExtension;
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("repoContext panel disposal", () => {
+	it("rejects with EditorDisposedError when the panel closes during acquisition", async () => {
+		const root = mkdtempSync(join(tmpdir(), "weld-disposed-repo-"));
+		const repository = makeRepository(
+			root,
+			Uri.file(join(root, "tracked.txt")),
+		);
+		const mutableExtensions = extensions as unknown as MutableExtensions;
+		const originalGetExtension = mutableExtensions.getExtension;
+		const stateListeners: Array<(state: "initialized") => void> = [];
+		let initialized = false;
+		const gitApi = {
+			git: { path: "git" },
+			get state() {
+				return initialized ? "initialized" : "uninitialized";
+			},
+			repositories: [repository],
+			onDidChangeState: (listener: (state: "initialized") => void) => {
+				stateListeners.push(listener);
+				return { dispose: () => undefined };
+			},
+			onDidOpenRepository: () => ({ dispose: () => undefined }),
+			onDidCloseRepository: () => ({ dispose: () => undefined }),
+			getRepository: () => repository,
+			getRepositoryRoot: () => Promise.resolve(repository.rootUri),
+			openRepository: () => Promise.resolve(repository),
+			toGitUri: (uri: Uri) => uri,
+		};
+		const gitExtension = {
+			enabled: true,
+			onDidChangeEnablement: () => ({ dispose: () => undefined }),
+			getAPI: () => gitApi,
+		};
+		mutableExtensions.getExtension = () => ({
+			isActive: true,
+			exports: gitExtension,
+			activate: () => Promise.resolve(gitExtension),
+		});
+		try {
+			const { panel, dispose } = makeDisposablePanel();
+			const readyPromise = readyRepositoryForRoot(Uri.file(root), panel);
+			dispose();
+			await expect(readyPromise).rejects.toBeInstanceOf(
+				EditorDisposedError,
+			);
+		} finally {
+			initialized = true;
+			for (const listener of stateListeners) {
+				listener("initialized");
+			}
+			mutableExtensions.getExtension = originalGetExtension;
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("repoContext repository acquisition errors", () => {
+	it("throws a typed repository-unavailable error when Git cannot open the resolved root", async () => {
+		const root = mkdtempSync(join(tmpdir(), "weld-unavailable-repo-"));
+		const mutableExtensions = extensions as unknown as MutableExtensions;
+		const originalGetExtension = mutableExtensions.getExtension;
+		const gitApi = {
+			git: { path: "git" },
+			state: "initialized",
+			repositories: [],
+			onDidChangeState: () => ({ dispose: () => undefined }),
+			onDidOpenRepository: () => ({ dispose: () => undefined }),
+			onDidCloseRepository: () => ({ dispose: () => undefined }),
+			getRepository: () => null,
+			getRepositoryRoot: () => Promise.resolve(Uri.file(root)),
+			openRepository: () => Promise.resolve(null),
+			toGitUri: (uri: Uri) => uri,
+		};
+		const gitExtension = {
+			enabled: true,
+			onDidChangeEnablement: () => ({ dispose: () => undefined }),
+			getAPI: () => gitApi,
+		};
+		mutableExtensions.getExtension = () => ({
+			isActive: true,
+			exports: gitExtension,
+			activate: () => Promise.resolve(gitExtension),
+		});
+		try {
+			const { panel } = makeDisposablePanel();
+			await expect(
+				readyRepositoryForRoot(Uri.file(root), panel),
+			).rejects.toBeInstanceOf(RepositoryUnavailableError);
+		} finally {
+			mutableExtensions.getExtension = originalGetExtension;
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
 describe("SubmoduleConflictEditorProvider", () => {
 	it("routes webview messages through live submodule conflict state", async () => {
 		const fixture = makeSubmoduleConflictRepo();
@@ -705,7 +993,7 @@ describe("SubmoduleConflictEditorProvider", () => {
 				{} as CancellationToken,
 			);
 
-			notifyRepositoryReady(repository);
+			notifyRepositoryStateChanged(repository);
 			await receive({ command: "ready" });
 			expect(messages).toContainEqual(
 				expect.objectContaining({ command: "snapshot" }),
@@ -787,7 +1075,7 @@ describe("SubmoduleConflictEditorProvider states", () => {
 			);
 
 			repository.state.mergeChanges = [];
-			notifyRepositoryReady(repository);
+			notifyRepositoryStateChanged(repository);
 			await receive({ command: "ready" });
 			expect(messages).toContainEqual({
 				command: "conflictLost",

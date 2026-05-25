@@ -131,6 +131,17 @@ applying Meld's auto-merge operation. There are sometimes cases where conflicts
 detected by git and VS Code can be resolved automatically. This operation
 happens when you open the 3-way merge editor too.
 
+### Conflicting Submodule Hashes
+
+When working with submodules, it is inevitable that you eventually rebase or
+merge something that updates a submodule differently. In most cases, the
+resolution is to just update the submodule to the latest commit. You'd normally
+`cd` to the submodule, figure out which hash to choose, `git checkout`, `cd`
+back and `git add`. This extension simplifies that with a submodule resolution
+UI that shows a graph of the git history between the commits that **base**,
+**local** and **remote** chose and allowing you to stage your desired commit
+directly from the UI.
+
 ### Source Control Panel
 
 The extension adds a **Weld Merge : Conflicted Files** view to the native Source Control (SCM) panel. `Alt + M` to open by default (`Cmd + Alt + M` on Mac).
@@ -269,8 +280,6 @@ Example `settings.json` snippet to tweak colors:
 ## Known Limitations
 
 Git worktrees are not supported, but the feature is planned.
-
-Git submodules are not supported, but the feature is planned.
 
 Partial support for browser / web extension host environments. Some operations
 run `git` directly (`merge-file`, `checkout -m`, `rerere forget`) which cannot

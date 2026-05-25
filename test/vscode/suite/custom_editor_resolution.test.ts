@@ -4,7 +4,14 @@ import { join } from "node:path";
 import { before, describe, it } from "mocha";
 import sinon from "sinon";
 import type { TextDocument, WebviewPanel } from "vscode";
-import { commands, EventEmitter, extensions, Uri, window } from "vscode";
+import {
+	commands,
+	Disposable,
+	EventEmitter,
+	extensions,
+	Uri,
+	window,
+} from "vscode";
 import type { WeldExtensionApi } from "../../../src/extension.ts";
 import {
 	type ConflictedItem,
@@ -47,6 +54,7 @@ interface FakeWebview {
 
 interface FakePanel {
 	webview: FakeWebview;
+	onDidDispose(listener: () => void): Disposable;
 }
 
 type InitializeWebviewFn = (
@@ -85,6 +93,7 @@ function makeFakePanel(): FakePanel {
 			html: "",
 			options: {},
 		},
+		onDidDispose: () => new Disposable(() => undefined),
 	};
 }
 
@@ -213,6 +222,7 @@ async function assertBothDeletedCustomEditorStatus(
 			],
 			onDidChange: changeEmitter.event,
 		},
+		status: () => Promise.resolve(),
 		show: () => Promise.reject(new Error("not used")),
 		getCommit: () => Promise.reject(new Error("not used")),
 		getMergeBase: () => Promise.reject(new Error("not used")),
@@ -260,6 +270,7 @@ async function assertMisreportedBothDeletedCustomEditorStatus(
 			],
 			onDidChange: changeEmitter.event,
 		},
+		status: () => Promise.resolve(),
 		show: (ref: string) => Promise.resolve(`content for ${ref}`),
 		getCommit: () => Promise.reject(new Error("not used")),
 		getMergeBase: () => Promise.reject(new Error("not used")),

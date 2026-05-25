@@ -178,19 +178,29 @@ const commands = {
 };
 
 const extensions = {
-	getExtension: () => ({
-		exports: {
+	getExtension: () => {
+		const gitExtension = {
+			enabled: true,
+			onDidChangeEnablement: () => ({ dispose: () => undefined }),
 			getAPI: () => ({
 				git: { path: "git" },
+				state: "initialized",
 				repositories: [],
+				onDidChangeState: () => ({ dispose: () => undefined }),
 				onDidOpenRepository: () => ({ dispose: () => undefined }),
 				onDidCloseRepository: () => ({ dispose: () => undefined }),
 				getRepository: () => null,
+				getRepositoryRoot: () => Promise.resolve(null),
 				openRepository: () => Promise.resolve(null),
 				toGitUri: (uri: Uri) => uri,
 			}),
-		},
-	}),
+		};
+		return {
+			isActive: true,
+			exports: gitExtension,
+			activate: () => Promise.resolve(gitExtension),
+		};
+	},
 };
 
 class WorkspaceEdit {

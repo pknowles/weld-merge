@@ -27,15 +27,16 @@ import {
 import { getWeldLogChannel } from "../log.ts";
 import {
 	type ConflictedItem,
-	conflictedItemFromUri,
-	createConflictedItemFromUri,
-	fileIsInRepo,
+	conflictedItemForDocument,
+	EditorDisposedError,
 	GIT_STAGE_LOCAL,
 	type GitApiRepository,
+	GitApiUnavailableError,
 	type GitConflictStage,
 	getGitApi,
 	isSupportedScheme,
-	onRepositoryStateChanged,
+	NotInRepositoryError,
+	RepositoryUnavailableError,
 } from "../repoContext.ts";
 import {
 	type ConflictLabels,
@@ -287,70 +288,68 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			enableScripts: true,
 			localResourceRoots: [Uri.joinPath(this.extensionUri, "out")],
 		};
+		webviewPanel.webview.html = this._getLoadingHtml();
 
-		// Files with no workspace folder and no direct git repo will never have
-		// a repo registered — show the error immediately rather than waiting forever.
-		const hasRepo =
-			workspace.getWorkspaceFolder(document.uri) ||
-			getGitApi().getRepository(document.uri);
-		if (!hasRepo) {
-			webviewPanel.webview.html =
-				"<p>Cannot open: file is not in a git repository.</p>";
-			return;
+		try {
+			const item = await conflictedItemForDocument(
+				document.uri,
+				webviewPanel,
+			);
+			await this._resolveWithItem(document, webviewPanel, item);
+		} catch (error: unknown) {
+			if (error instanceof EditorDisposedError) {
+				return;
+			}
+			if (error instanceof NotInRepositoryError) {
+				webviewPanel.webview.html = this._getNotInRepositoryHtml();
+				return;
+			}
+			if (
+				error instanceof GitApiUnavailableError ||
+				error instanceof RepositoryUnavailableError
+			) {
+				webviewPanel.webview.html = this._getCannotOpenHtml(error);
+				return;
+			}
+			throw error;
 		}
-
-		// _waitForRepository resolves immediately if git is already initialized,
-		// or suspends until onRepositoryStateChanged fires for this file's repo
-		// (VS Code startup race: tabs restored before the git extension is ready).
-		// The webview HTML is only set inside _initializeWebview, which runs after
-		// this await — so "ready" from the webview cannot arrive before we are
-		// prepared to handle it.
-		const item = await this._waitForRepository(document.uri, webviewPanel);
-		if (!item) {
-			return; // panel disposed while waiting
-		}
-
-		await this._resolveWithItem(document, webviewPanel, item);
 	}
 
-	// Returns a ConflictedItem once the git repo covering uri is registered,
-	// or null if the panel is disposed before the repo becomes available.
-	//
-	// Fast path: if the repo is already registered, wraps the item in
-	// Promise.resolve so the caller's await completes without suspending.
-	//
-	// Deferred path: suspends until onRepositoryStateChanged fires for a repo
-	// that contains uri. A dispose sentinel ensures the Promise doesn't leak
-	// if the panel is closed while we're waiting.
-	private _waitForRepository(
-		uri: Uri,
-		panel: WebviewPanel,
-	): Promise<ConflictedItem | null> {
-		const immediate = conflictedItemFromUri(uri);
-		if (immediate) {
-			return Promise.resolve(immediate);
-		}
-
-		return new Promise((resolve) => {
-			const disposables: Disposable[] = [];
-			const finish = (result: ConflictedItem | null): void => {
-				for (const d of disposables) {
-					d.dispose();
-				}
-				resolve(result);
-			};
-			disposables.push(
-				onRepositoryStateChanged((repo) => {
-					if (!fileIsInRepo(uri, repo)) {
-						return;
+	private _getLoadingHtml(): string {
+		return `<!DOCTYPE html>
+			<html lang="en">
+			<head>
+				<meta charset="UTF-8">
+				<meta name="viewport" content="width=device-width, initial-scale=1.0">
+				<title>Weld Merge Loading</title>
+				<style>
+					body {
+						margin: 0;
+						padding: 1rem;
+						background: var(--vscode-editor-background);
+						color: var(--vscode-editor-foreground);
+						font: var(--vscode-font-size) var(--vscode-font-family);
 					}
-					finish(createConflictedItemFromUri(repo, uri));
-				}),
-				panel.onDidDispose(() => {
-					finish(null);
-				}),
-			);
-		});
+				</style>
+			</head>
+			<body>Loading...</body>
+			</html>`;
+	}
+
+	private _getNotInRepositoryHtml(): string {
+		return "<p>Cannot open: file is not in a git repository.</p>";
+	}
+
+	private _getCannotOpenHtml(error: Error): string {
+		return `<p>Cannot open: ${MeldCustomEditorProvider._escapeHtml(error.message)}</p>`;
+	}
+
+	private static _escapeHtml(value: string): string {
+		return value
+			.replaceAll("&", "&amp;")
+			.replaceAll("<", "&lt;")
+			.replaceAll(">", "&gt;")
+			.replaceAll('"', "&quot;");
 	}
 
 	private async _resolveWithItem(
