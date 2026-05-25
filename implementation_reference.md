@@ -40,6 +40,21 @@ Located in `src/webview/ui/`.
 - For e2e vscode interaction, use ./test/vscode/*
 - For e2e browser interaction and benchmarks, use playwrite, e.g. in ./test/benchmarking/
 - xvfb may be used if real windows MUST be displayed
+- `test/vscode/launchTelemetrySuite/launch_telemetry.test.ts` runs in its own
+  VS Code extension host with two conflicted repositories already in the
+  workspace, enables the hidden `weld.launchTelemetry` setting, then reads
+  activation-owned telemetry from `WeldExtensionApi` so launch work is counted
+  from extension activation rather than from the later Mocha attach point. The
+  counters are disabled in normal production activation and report refresh-repo
+  trigger reasons rather than capturing stack traces. `@vscode/test-electron`
+  did not restore custom editor tabs across separate test launches, so real
+  restored-tab launch coverage is not claimed here.
+- `test/vscode/suite/launch_telemetry.test.ts` keeps the complementary
+  active-host regression checks. It opens two real conflicted repositories,
+  spies on the bundled extension objects exposed through `WeldExtensionApi`,
+  and counts tree refreshes, Git state changes, meld state events, and
+  submodule snapshot posts so restored-tab behavior cannot silently add
+  repeated runtime work.
 
 Test coverage with jest, mutations with stryker, fuzz testing with jazzer should be kept up to date.
 

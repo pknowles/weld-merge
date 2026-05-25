@@ -160,10 +160,17 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 	private readonly _onDidChangeTreeData: EventEmitter<
 		ConflictedTreeItem | undefined | null
 	> = new EventEmitter<ConflictedTreeItem | undefined | null>();
+	private readonly _onDidRefresh: EventEmitter<void> =
+		new EventEmitter<void>();
+	private readonly _onDidGetChildren: EventEmitter<void> =
+		new EventEmitter<void>();
 	readonly onDidChangeTreeData: Event<ConflictedTreeItem | undefined | null> =
 		this._onDidChangeTreeData.event;
+	readonly onDidRefresh: Event<void> = this._onDidRefresh.event;
+	readonly onDidGetChildren: Event<void> = this._onDidGetChildren.event;
 
 	refresh(): void {
+		this._onDidRefresh.fire();
 		this._onDidChangeTreeData.fire(undefined);
 	}
 
@@ -176,6 +183,7 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 	async getChildren(
 		element?: ConflictedTreeItem,
 	): Promise<ConflictedTreeItem[]> {
+		this._onDidGetChildren.fire();
 		if (element) {
 			return [];
 		}

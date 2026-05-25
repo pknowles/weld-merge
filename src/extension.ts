@@ -50,9 +50,80 @@ import { SubmoduleConflictEditorProvider } from "./webview/submoduleConflictEdit
 const lastConflictedFilesPerRepo: Map<string, Set<string>> = new Map();
 const ZERO_OBJECT_ID = "0000000000000000000000000000000000000000";
 const REMOTE_SMOKE_TEST_SETTING = "remoteSmokeTest";
+const LAUNCH_TELEMETRY_SETTING = "launchTelemetry";
 const LS_TREE_ENTRY_REGEX = /^(\d{6})\s+\S+\s+([0-9a-fA-F]+)\t/;
 const CHECKOUT_MISSING_STAGES_REGEX =
 	/path ['"].+['"] does not have all necessary versions/;
+
+type RefreshRepoReason = "statusCompleted" | "repositoryStateChanged";
+
+class WeldTelemetry {
+	private readonly enabled: boolean;
+	private treeRefreshes = 0;
+	private treeGetChildrenCalls = 0;
+	private refreshRepoCalls = 0;
+	private conflictStateChangedEvents = 0;
+	private repositoryStateChangedEvents = 0;
+	private readonly refreshRepoReasons: Record<RefreshRepoReason, number> = {
+		statusCompleted: 0,
+		repositoryStateChanged: 0,
+	};
+
+	constructor(enabled: boolean) {
+		this.enabled = enabled;
+	}
+
+	// Records extension-owned work from activation onward so launch tests can
+	// inspect startup behavior after VS Code has already activated this extension.
+	recordTreeRefresh(): void {
+		if (!this.enabled) {
+			return;
+		}
+		this.treeRefreshes += 1;
+	}
+
+	recordTreeGetChildren(): void {
+		if (!this.enabled) {
+			return;
+		}
+		this.treeGetChildrenCalls += 1;
+	}
+
+	recordRefreshRepo(reasons: readonly RefreshRepoReason[]): void {
+		if (!this.enabled) {
+			return;
+		}
+		this.refreshRepoCalls += 1;
+		for (const reason of reasons) {
+			this.refreshRepoReasons[reason] += 1;
+		}
+	}
+
+	recordConflictStateChanged(): void {
+		if (!this.enabled) {
+			return;
+		}
+		this.conflictStateChangedEvents += 1;
+	}
+
+	recordRepositoryStateChanged(): void {
+		if (!this.enabled) {
+			return;
+		}
+		this.repositoryStateChangedEvents += 1;
+	}
+
+	snapshot(): WeldTelemetrySnapshot {
+		return {
+			treeRefreshes: this.treeRefreshes,
+			treeGetChildrenCalls: this.treeGetChildrenCalls,
+			refreshRepoCalls: this.refreshRepoCalls,
+			conflictStateChangedEvents: this.conflictStateChangedEvents,
+			repositoryStateChangedEvents: this.repositoryStateChangedEvents,
+			refreshRepoReasons: { ...this.refreshRepoReasons },
+		};
+	}
+}
 
 interface TreeEntry {
 	mode: string;
@@ -151,45 +222,80 @@ function notifyIfNewConflicts(repoKey: string, repository: GitApiRepository) {
 async function refreshRepo(
 	repo: GitApiRepository,
 	conflictedFilesProvider: ConflictedFilesProvider,
+	telemetry: WeldTelemetry,
+	reasons: readonly RefreshRepoReason[],
 ): Promise<void> {
+	telemetry.recordRefreshRepo(reasons);
 	conflictedFilesProvider.refresh();
 	await notifyIfNewConflicts(repo.rootUri.toString(), repo);
 	const stateKey =
 		await MeldCustomEditorProvider.getCurrentConflictStateKey(repo);
+	telemetry.recordConflictStateChanged();
 	MeldCustomEditorProvider.onConflictStateChanged.fire({
 		repoUri: repo.rootUri,
 		stateKey,
 	});
+	telemetry.recordRepositoryStateChanged();
 	notifyRepositoryStateChanged(repo);
 }
 
 function watchRepo(
 	repo: GitApiRepository,
 	conflictedFilesProvider: ConflictedFilesProvider,
+	telemetry: WeldTelemetry,
 ): Disposable {
 	let timer: NodeJS.Timeout | undefined;
-	const scheduleRefresh = () => {
+	let disposed = false;
+	const pendingReasons = new Set<RefreshRepoReason>();
+	const scheduleRefresh = (reason: RefreshRepoReason) => {
+		pendingReasons.add(reason);
 		clearTimeout(timer);
 		timer = setTimeout(() => {
 			timer = undefined;
-			refreshRepo(repo, conflictedFilesProvider).catch(
-				(error: unknown) => {
-					getWeldLogChannel().error(
-						`Refresh failed for ${repo.rootUri}: ${getErrorMessage(error)}`,
-					);
-				},
-			);
+			const reasons = [...pendingReasons];
+			pendingReasons.clear();
+			refreshRepo(
+				repo,
+				conflictedFilesProvider,
+				telemetry,
+				reasons,
+			).catch((error: unknown) => {
+				getWeldLogChannel().error(
+					`Refresh failed for ${repo.rootUri}: ${getErrorMessage(error)}`,
+				);
+			});
 		}, 50);
 	};
-	scheduleRefresh();
-	// Mark the first-status registry on the raw state.onDidChange so editors that
-	// open after the initial status run use the ReadyRepository fast path.
+
+	// The Git API opens repositories before their first status has populated
+	// mergeChanges. Drive the initial tree/editor notification from status()
+	// completion instead of from repository-open so startup never broadcasts an
+	// empty pre-status state.
+	repo.status().then(
+		() => {
+			if (disposed) {
+				return;
+			}
+			markRepositoryFirstStatusComplete(repo.rootUri);
+			scheduleRefresh("statusCompleted");
+		},
+		(error: unknown) => {
+			getWeldLogChannel().error(
+				`Initial status failed for ${repo.rootUri}: ${getErrorMessage(error)}`,
+			);
+		},
+	);
+
+	// Mark the first-status registry on the raw state.onDidChange too. VS Code
+	// fires this after status runs; keeping the registry at that boundary lets
+	// custom editors acquire ReadyRepository as soon as Git has real state.
 	const sub = repo.state.onDidChange(() => {
 		markRepositoryFirstStatusComplete(repo.rootUri);
-		scheduleRefresh();
+		scheduleRefresh("repositoryStateChanged");
 	});
 	return {
 		dispose: () => {
+			disposed = true;
 			clearTimeout(timer);
 			sub.dispose();
 		},
@@ -1067,6 +1173,7 @@ function registerCommands(
 function setupGitRepoWatchers(
 	context: ExtensionContext,
 	conflictedFilesProvider: ConflictedFilesProvider,
+	telemetry: WeldTelemetry,
 ): void {
 	const gitApi = getGitApi();
 	const repoWatchers = new Map<string, Disposable>();
@@ -1079,7 +1186,10 @@ function setupGitRepoWatchers(
 		if (repoWatchers.has(key)) {
 			return;
 		}
-		repoWatchers.set(key, watchRepo(repo, conflictedFilesProvider));
+		repoWatchers.set(
+			key,
+			watchRepo(repo, conflictedFilesProvider, telemetry),
+		);
 	};
 
 	const onRepoClosed = (repo: GitApiRepository) => {
@@ -1112,30 +1222,57 @@ function setupGitRepoWatchers(
 }
 
 // Shape of `extensions.getExtension(...).exports` for this extension.
-// MeldCustomEditorProvider is exposed so that tests can instantiate the
-// bundled class rather than a source-imported copy, keeping all static
-// fields (e.g. onConflictStateChanged) on the same module instance as the
-// running extension.
+// Custom editor classes and repository notifications are exposed so VS Code
+// host tests observe the bundled extension instance instead of a source-imported
+// copy with separate static fields or event emitters.
 export interface WeldExtensionApi {
 	setInitialConflictContent: typeof MeldCustomEditorProvider.setInitialConflictContent;
 	meldCustomEditorProvider: typeof MeldCustomEditorProvider;
+	submoduleConflictEditorProvider: typeof SubmoduleConflictEditorProvider;
 	restoreConflictedFile: typeof restoreConflictedFile;
 	conflictedFilesProvider: ConflictedFilesProvider;
+	notifyRepositoryStateChanged: typeof notifyRepositoryStateChanged;
+	getTelemetrySnapshot(): WeldTelemetrySnapshot;
+}
+
+export interface WeldTelemetrySnapshot {
+	readonly treeRefreshes: number;
+	readonly treeGetChildrenCalls: number;
+	readonly refreshRepoCalls: number;
+	readonly conflictStateChangedEvents: number;
+	readonly repositoryStateChangedEvents: number;
+	readonly refreshRepoReasons: Readonly<Record<RefreshRepoReason, number>>;
 }
 
 export function activate(context: ExtensionContext): WeldExtensionApi {
 	const logChannel = initializeWeldLogChannel();
 	context.subscriptions.push(logChannel);
+	const telemetry = new WeldTelemetry(
+		workspace
+			.getConfiguration("weld")
+			.get<boolean>(LAUNCH_TELEMETRY_SETTING) === true,
+	);
 	const conflictedFilesProvider = new ConflictedFilesProvider();
+	context.subscriptions.push(
+		conflictedFilesProvider.onDidRefresh(() =>
+			telemetry.recordTreeRefresh(),
+		),
+		conflictedFilesProvider.onDidGetChildren(() =>
+			telemetry.recordTreeGetChildren(),
+		),
+	);
 	registerViews(context, conflictedFilesProvider);
 	registerCommands(context, conflictedFilesProvider);
-	setupGitRepoWatchers(context, conflictedFilesProvider);
+	setupGitRepoWatchers(context, conflictedFilesProvider, telemetry);
 	return {
 		setInitialConflictContent:
 			MeldCustomEditorProvider.setInitialConflictContent,
 		meldCustomEditorProvider: MeldCustomEditorProvider,
+		submoduleConflictEditorProvider: SubmoduleConflictEditorProvider,
 		restoreConflictedFile,
 		conflictedFilesProvider,
+		notifyRepositoryStateChanged,
+		getTelemetrySnapshot: () => telemetry.snapshot(),
 	};
 }
 

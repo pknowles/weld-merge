@@ -65,6 +65,7 @@ interface GitApiRepositoryState {
 interface GitApiRepository {
 	rootUri: Uri;
 	state: GitApiRepositoryState;
+	status(): Promise<void>;
 	show(ref: string, path: string): Promise<string>;
 	getCommit(ref: string): Promise<GitApiCommit>;
 	getMergeBase(ref1: string, ref2: string): Promise<string>;

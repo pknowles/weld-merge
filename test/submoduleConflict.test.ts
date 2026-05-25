@@ -114,6 +114,7 @@ function makeRepository(rootPath: string, submoduleUri: Uri): GitApiRepository {
 			],
 			onDidChange: () => ({ dispose: () => undefined }),
 		},
+		status: () => Promise.resolve(),
 		show: () => Promise.reject(new Error("not used")),
 		getCommit: () => Promise.reject(new Error("not used")),
 		getMergeBase: (ref1: string, ref2: string) =>

@@ -397,6 +397,7 @@ async function withEmptyMergeChanges(
 	const fakeRepository: GitApiRepository = {
 		rootUri: Uri.file(repoPath),
 		state: fakeState as GitApiRepository["state"],
+		status: () => Promise.resolve(),
 		show: (ref, path) => {
 			if (!realRepository) {
 				throw new Error("Repository not yet open");

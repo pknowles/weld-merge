@@ -5,6 +5,7 @@ description:
 # Testing & Quality Checks Workflows
 
 ## Global Philosophy
+- Test the intent of the expected outcomes, not the code's implementation.
 - Don't blindly write tests for the sake of LOC or syntax verification. Tests must execute core logic to ensure project goals are met.
 - Do not test that the code does what the code does. This is far worse than useless. See the writing tests section below.
 - **Never Duplicate Production Code in Tests.** Use utility functions or refactor dependencies instead of copy/pasting.
