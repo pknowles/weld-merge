@@ -340,58 +340,118 @@ async function withGitApiUninitialized(
 	}
 }
 
+// Waits for a repository to appear in the real API and have at least
+// expectedMergeChanges entries — using the unintercepted API directly.
+async function waitForRealRepositoryWithMergeChanges(
+	api: GitApi,
+	repoPath: string,
+	expectedMergeChanges: number,
+): Promise<GitApiRepository> {
+	let repo = api.getRepository(Uri.file(repoPath));
+	if (!repo) {
+		repo = await new Promise<GitApiRepository>((resolve) => {
+			const sub = api.onDidOpenRepository((r) => {
+				if (r.rootUri.fsPath === repoPath) {
+					sub.dispose();
+					resolve(r);
+				}
+			});
+		});
+	}
+	await nextMergeChanges(repo, expectedMergeChanges);
+	return repo;
+}
+
 async function withEmptyMergeChanges(
 	repoPath: string,
 	runTest: (release: () => Promise<GitApiRepository>) => Promise<void>,
 ): Promise<void> {
-	const realRepository = await openRepoWithMergeChanges(repoPath, 1);
+	// The repo is NOT pre-opened here. Opening it first would cause watchRepo
+	// in extension.ts to call markRepositoryFirstStatusComplete, which would
+	// make fromFirstStatusComplete fast-path immediately with empty mergeChanges.
 	const gitExports = gitExtensionExports();
 	const originalGetAPI = gitExports.getAPI.bind(gitExports);
-	let released = false;
+	let realRepository: GitApiRepository | null = null;
+	const stateListeners: Array<() => void> = [];
+	const controlledOnDidChange = (listener: () => void): Disposable => {
+		stateListeners.push(listener);
+		return {
+			dispose: () => {
+				const index = stateListeners.indexOf(listener);
+				if (index !== -1) {
+					stateListeners.splice(index, 1);
+				}
+			},
+		};
+	};
+
+	// fakeRepository stands in for the real one until release() populates it.
+	// mergeChanges delegates to the real repo after release; methods fail fast
+	// if called before that (they only run after fromFirstStatusComplete resolves,
+	// which happens after release() fires the controlled emitter).
+	const fakeState = { onDidChange: controlledOnDidChange };
+	Object.defineProperty(fakeState, "mergeChanges", {
+		configurable: true,
+		get: () => realRepository?.state.mergeChanges ?? [],
+	});
+	const fakeRepository: GitApiRepository = {
+		rootUri: Uri.file(repoPath),
+		state: fakeState as GitApiRepository["state"],
+		show: (ref, path) => {
+			if (!realRepository) {
+				throw new Error("Repository not yet open");
+			}
+			return realRepository.show(ref, path);
+		},
+		getCommit: (ref) => {
+			if (!realRepository) {
+				throw new Error("Repository not yet open");
+			}
+			return realRepository.getCommit(ref);
+		},
+		getMergeBase: (ref1, ref2) => {
+			if (!realRepository) {
+				throw new Error("Repository not yet open");
+			}
+			return realRepository.getMergeBase(ref1, ref2);
+		},
+		add: (paths) => {
+			if (!realRepository) {
+				throw new Error("Repository not yet open");
+			}
+			return realRepository.add(paths);
+		},
+	};
 
 	const getAPIStub = sinon
 		.stub(gitExports, "getAPI")
 		.callsFake((version: number): GitApi => {
 			const realApi = originalGetAPI(version);
 			const originalGetRepository = realApi.getRepository.bind(realApi);
-			const wrapperState = {
-				onDidChange: realRepository.state.onDidChange,
-			};
-			Object.defineProperty(wrapperState, "mergeChanges", {
-				configurable: true,
-				get: () => (released ? realRepository.state.mergeChanges : []),
-			});
-			const wrapperRepository: GitApiRepository = {
-				rootUri: realRepository.rootUri,
-				state: wrapperState as GitApiRepository["state"],
-				status: realRepository.status.bind(realRepository),
-				show: realRepository.show.bind(realRepository),
-				getCommit: realRepository.getCommit.bind(realRepository),
-				getMergeBase: realRepository.getMergeBase.bind(realRepository),
-				add: realRepository.add.bind(realRepository),
-			};
 			realApi.getRepository = (uri: Uri): GitApiRepository | null => {
 				if (targetUriMatches(repoPath, uri)) {
-					return wrapperRepository;
+					return fakeRepository;
 				}
 				return originalGetRepository(uri);
 			};
-			const originalRepositories = realApi.repositories;
-			Object.defineProperty(realApi, "repositories", {
-				configurable: true,
-				get: () =>
-					originalRepositories.map((repository) =>
-						repository.rootUri.fsPath === repoPath
-							? wrapperRepository
-							: repository,
-					),
-			});
 			return realApi;
 		});
 	try {
-		await runTest(() => {
-			released = true;
-			return Promise.resolve(realRepository);
+		await runTest(async () => {
+			// Open the real repo via the original API, bypassing the stub so
+			// that nextMergeChanges waits on the real state.onDidChange rather
+			// than the controlled one.
+			await openRepoInGitExtension(repoPath);
+			const real = await waitForRealRepositoryWithMergeChanges(
+				originalGetAPI(1),
+				repoPath,
+				1,
+			);
+			realRepository = real;
+			for (const listener of stateListeners.splice(0)) {
+				listener();
+			}
+			return real;
 		});
 	} finally {
 		getAPIStub.restore();
@@ -514,13 +574,18 @@ describe("custom editor Git initialization race — submodule tabs", () => {
 				const { panel } = resolveSubmoduleEditor(repoPath);
 				const snapshotPromise = panel.nextMessage("snapshot");
 
-				await panel.fireWebviewMessage({ command: "ready" });
+				// Don't await — fromFirstStatusComplete blocks until release() fires
+				// the controlled onDidChange, so awaiting here would deadlock.
+				const readyPromise = panel.fireWebviewMessage({
+					command: "ready",
+				});
 
 				assertNormalWebviewShell(panel, "submodule.js");
+				assertNoTerminalSubmoduleMessage(panel);
 
-				const repo = await release();
-				notifyRepositoryStateChanged(repo);
+				await release();
 				assertSnapshotMessage(await snapshotPromise);
+				await readyPromise;
 			});
 		} finally {
 			await cleanupRepoFixture(fixture);

@@ -14,10 +14,12 @@ import {
 import { initializeWeldLogChannel } from "../src/log.ts";
 import type { GitApiRepository } from "../src/repoContext.ts";
 import {
+	clearRepositoryFirstStatus,
 	conflictedItemForDocument,
 	EditorDisposedError,
 	GitApiUnavailableError,
 	GitStatus,
+	markRepositoryFirstStatusComplete,
 	NotInRepositoryError,
 	notifyRepositoryStateChanged,
 	RepositoryUnavailableError,
@@ -113,7 +115,6 @@ function makeRepository(rootPath: string, submoduleUri: Uri): GitApiRepository {
 			onDidChange: () => ({ dispose: () => undefined }),
 		},
 		show: () => Promise.reject(new Error("not used")),
-		status: () => Promise.resolve(),
 		getCommit: () => Promise.reject(new Error("not used")),
 		getMergeBase: (ref1: string, ref2: string) =>
 			Promise.resolve(runGit(["merge-base", ref1, ref2], rootPath)),
@@ -212,8 +213,10 @@ function installGitApi(repository: GitApiRepository): () => void {
 		exports: gitExtension,
 		activate: () => Promise.resolve(gitExtension),
 	});
+	markRepositoryFirstStatusComplete(repository.rootUri);
 	return () => {
 		mutableExtensions.getExtension = originalGetExtension;
+		clearRepositoryFirstStatus(repository.rootUri);
 	};
 }
 
@@ -698,15 +701,10 @@ beforeAll(() => {
 });
 
 describe("repoContext repository acquisition", () => {
-	it("constructs ready repositories only after repository status has completed", async () => {
+	it("resolves immediately when the repository first-status registry is populated", async () => {
 		const root = mkdtempSync(join(tmpdir(), "weld-ready-repo-"));
 		const fileUri = Uri.file(join(root, "tracked.txt"));
-		let statusCalls = 0;
 		const repository = makeRepository(root, fileUri);
-		repository.status = () => {
-			statusCalls += 1;
-			return Promise.resolve();
-		};
 		const restoreGitApi = installGitApi(repository);
 		try {
 			const { panel } = makeWebviewPanel();
@@ -715,7 +713,6 @@ describe("repoContext repository acquisition", () => {
 				panel,
 			);
 			expect(readyRepository.repository).toBe(repository);
-			expect(statusCalls).toBe(1);
 		} finally {
 			restoreGitApi();
 			rmSync(root, { recursive: true, force: true });
@@ -836,6 +833,9 @@ describe("repoContext Git API initialization", () => {
 			expect(opened).toBe(false);
 
 			initialized = true;
+			// Simulate watchRepo calling markRepositoryFirstStatusComplete on the
+			// first state.onDidChange after the API becomes ready.
+			markRepositoryFirstStatusComplete(repository.rootUri);
 			for (const listener of stateListeners) {
 				listener("initialized");
 			}
@@ -844,6 +844,7 @@ describe("repoContext Git API initialization", () => {
 			expect(readyRepository.repository).toBe(repository);
 		} finally {
 			mutableExtensions.getExtension = originalGetExtension;
+			clearRepositoryFirstStatus(repository.rootUri);
 			rmSync(root, { recursive: true, force: true });
 		}
 	});

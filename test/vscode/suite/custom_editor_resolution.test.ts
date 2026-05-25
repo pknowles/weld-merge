@@ -222,7 +222,6 @@ async function assertBothDeletedCustomEditorStatus(
 			],
 			onDidChange: changeEmitter.event,
 		},
-		status: () => Promise.resolve(),
 		show: () => Promise.reject(new Error("not used")),
 		getCommit: () => Promise.reject(new Error("not used")),
 		getMergeBase: () => Promise.reject(new Error("not used")),
@@ -270,7 +269,6 @@ async function assertMisreportedBothDeletedCustomEditorStatus(
 			],
 			onDidChange: changeEmitter.event,
 		},
-		status: () => Promise.resolve(),
 		show: (ref: string) => Promise.resolve(`content for ${ref}`),
 		getCommit: () => Promise.reject(new Error("not used")),
 		getMergeBase: () => Promise.reject(new Error("not used")),
@@ -304,6 +302,23 @@ async function withMockGitRepository(
 	repository: GitApiRepository,
 	runTest: () => Promise<void>,
 ): Promise<void> {
+	// Wrap state.onDidChange to auto-fire any registered listener after a
+	// microtask. fromFirstStatusComplete registers a listener when the
+	// extension's _firstStatusComplete Set doesn't have the key (module
+	// isolation: test imports src/repoContext.ts; the bundled extension has its
+	// own separate Set). Auto-firing lets fromFirstStatusComplete resolve
+	// without depending on the extension's registry.
+	const wrappedRepository: GitApiRepository = {
+		...repository,
+		state: {
+			...repository.state,
+			onDidChange: (listener: () => void) => {
+				const sub = repository.state.onDidChange(listener);
+				Promise.resolve().then(() => listener());
+				return sub;
+			},
+		} as GitApiRepository["state"],
+	};
 	const gitExt = extensions.getExtension("vscode.git");
 	assert.ok(gitExt, "Git extension must be available");
 	const originalGetAPI = gitExt.exports.getAPI.bind(gitExt.exports);
@@ -317,7 +332,7 @@ async function withMockGitRepository(
 					uri.toString() === repository.rootUri.toString() ||
 					uri.fsPath.startsWith(`${repository.rootUri.fsPath}/`)
 				) {
-					return repository;
+					return wrappedRepository;
 				}
 				return originalGetRepository(uri);
 			};

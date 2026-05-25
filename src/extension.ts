@@ -24,6 +24,7 @@ import { getWeldLogChannel, initializeWeldLogChannel } from "./log.ts";
 import { GitTextMerger } from "./matchers/gitTextMerger.ts";
 import {
 	type ConflictedItem,
+	clearRepositoryFirstStatus,
 	conflictedItemFromUri,
 	createConflictedItem,
 	GIT_STAGE_LOCAL,
@@ -33,6 +34,7 @@ import {
 	type GitConflictStage,
 	getGitApi,
 	isSupportedScheme,
+	markRepositoryFirstStatusComplete,
 	notifyRepositoryStateChanged,
 } from "./repoContext.ts";
 import { SubmoduleConflict } from "./submoduleConflict.ts";
@@ -180,7 +182,12 @@ function watchRepo(
 		}, 50);
 	};
 	scheduleRefresh();
-	const sub = repo.state.onDidChange(scheduleRefresh);
+	// Mark the first-status registry on the raw state.onDidChange so editors that
+	// open after the initial status run use the ReadyRepository fast path.
+	const sub = repo.state.onDidChange(() => {
+		markRepositoryFirstStatusComplete(repo.rootUri);
+		scheduleRefresh();
+	});
 	return {
 		dispose: () => {
 			clearTimeout(timer);
@@ -1079,6 +1086,7 @@ function setupGitRepoWatchers(
 		const key = repo.rootUri.toString();
 		repoWatchers.get(key)?.dispose();
 		repoWatchers.delete(key);
+		clearRepositoryFirstStatus(repo.rootUri);
 		lastConflictedFilesPerRepo.delete(key);
 		conflictedFilesProvider.refresh();
 	};

@@ -65,7 +65,6 @@ interface GitApiRepositoryState {
 interface GitApiRepository {
 	rootUri: Uri;
 	state: GitApiRepositoryState;
-	status(): Promise<void>;
 	show(ref: string, path: string): Promise<string>;
 	getCommit(ref: string): Promise<GitApiCommit>;
 	getMergeBase(ref1: string, ref2: string): Promise<string>;
@@ -74,6 +73,15 @@ interface GitApiRepository {
 
 const _onRepositoryStateChangedEmitter = new EventEmitter<GitApiRepository>();
 let gitApiWhenInitializedPromise: Promise<GitApi> | undefined;
+
+// Root URIs of repositories that have fired at least one state.onDidChange event,
+// proving their first status run has completed and mergeChanges are populated.
+// Populated by markRepositoryFirstStatusComplete() (called from extension.ts
+// watchRepo on the first raw state.onDidChange) and by ReadyRepository acquisition
+// when it waits for state.onDidChange directly. Cleared on onDidCloseRepository via
+// clearRepositoryFirstStatus(). Never exported as a boolean query; used only as a
+// fast-path check inside readyRepositoryForRoot().
+const _firstStatusComplete = new Set<string>();
 
 // Broadcast after a repository status refresh has produced new state. This is
 // only a live-refresh signal for already-open editors; startup readiness is
@@ -157,8 +165,8 @@ class EditorDisposedError extends Error {
 }
 
 // A ReadyRepository is the only repository object custom editors should use for
-// initial state. Its constructor is private so callers cannot accidentally use a
-// Repository observed at the Git API boundary before mergeChanges are populated.
+// initial state. Its constructor is private so callers cannot accidentally construct
+// one from a raw GitApiRepository observed before mergeChanges are populated.
 class ReadyRepository {
 	readonly repository: GitApiRepository;
 
@@ -166,15 +174,63 @@ class ReadyRepository {
 		this.repository = repository;
 	}
 
-	static async fromRepository(
+	// Resolves once the repository's first status run has completed, proving that
+	// mergeChanges and related Git API state are populated. Uses the private
+	// _firstStatusComplete registry as a fast path when status has already run;
+	// otherwise waits for state.onDidChange, which VS Code fires after each status
+	// run. Panel disposal during the wait rejects with EditorDisposedError.
+	static fromFirstStatusComplete(
 		repository: GitApiRepository,
+		panel: { onDidDispose(listener: () => void): Disposable },
 	): Promise<ReadyRepository> {
-		// VS Code opens repositories before their first status run. Awaiting the
-		// concrete status operation is the Git API-supported readiness proof that
-		// mergeChanges and related state have been populated.
-		await repository.status();
-		return new ReadyRepository(repository);
+		const key = repository.rootUri.toString();
+		if (_firstStatusComplete.has(key)) {
+			return Promise.resolve(new ReadyRepository(repository));
+		}
+		return new Promise((resolve, reject) => {
+			let settled = false;
+			const disposables: Disposable[] = [];
+			const finish = (result: ReadyRepository | Error): void => {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				for (const disposable of disposables) {
+					disposable.dispose();
+				}
+				if (result instanceof Error) {
+					reject(result);
+					return;
+				}
+				resolve(result);
+			};
+			disposables.push(
+				repository.state.onDidChange(() => {
+					_firstStatusComplete.add(key);
+					finish(new ReadyRepository(repository));
+				}),
+				panel.onDidDispose(() => finish(new EditorDisposedError())),
+			);
+			// Re-check in case the event fired between the set.has() above and
+			// listener registration.
+			if (_firstStatusComplete.has(key)) {
+				finish(new ReadyRepository(repository));
+			}
+		});
 	}
+}
+
+// Called from extension.ts watchRepo on the first raw state.onDidChange so that
+// editors opening after the initial status run use the registry fast path rather
+// than waiting for the next event.
+function markRepositoryFirstStatusComplete(rootUri: Uri): void {
+	_firstStatusComplete.add(rootUri.toString());
+}
+
+// Called from extension.ts onDidCloseRepository so a re-opened repository does not
+// satisfy acquisition from stale registry state.
+function clearRepositoryFirstStatus(rootUri: Uri): void {
+	_firstStatusComplete.delete(rootUri.toString());
 }
 
 function isSupportedScheme(uri: Uri): boolean {
@@ -356,10 +412,7 @@ async function readyRepositoryForRoot(
 ): Promise<ReadyRepository> {
 	const api = await withPanelDisposal(panel, getGitApiWhenInitialized());
 	const repository = await openRepositoryAtRoot(api, rootUri, panel);
-	return await withPanelDisposal(
-		panel,
-		ReadyRepository.fromRepository(repository),
-	);
+	return ReadyRepository.fromFirstStatusComplete(repository, panel);
 }
 
 async function conflictedItemForDocument(
@@ -523,6 +576,7 @@ export type {
 	GitConflictStage,
 };
 export {
+	clearRepositoryFirstStatus,
 	conflictedItemForDocument,
 	conflictedItemFromUri,
 	createConflictedItem,
@@ -535,6 +589,7 @@ export {
 	getGitApi,
 	getGitStatusName,
 	isSupportedScheme,
+	markRepositoryFirstStatusComplete,
 	NotInRepositoryError,
 	notifyRepositoryStateChanged,
 	onRepositoryStateChanged,
