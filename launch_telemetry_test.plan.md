@@ -354,8 +354,9 @@ one, but `state.onDidChange` is the test's emitter.
 handler, which fires when `openRepoInGitExtension` calls `api.openRepository`.
 If the git API stub is installed *after* that call, `watchRepo` is already
 subscribed to the **real** repo's emitter. Firing the controlled emitter then
-unblocks the editor's `fromFirstStatusComplete` but does **not** trigger
-`watchRepo`'s `scheduleRefresh` → `refreshRepo` → `notifyRepositoryStateChanged`
+does not complete the shared repository acquisition promise, so the editor's
+`readyRepositoryForRoot()` wait remains blocked and the
+`scheduleRefresh` → `refreshRepo` → `notifyRepositoryStateChanged`
 chain — the second snapshot path is never exercised and the race is not
 reproduced.
 
@@ -368,10 +369,11 @@ reproduced.
 4. Call `openRepoInGitExtension` — `onDidOpenRepository` fires, `watchRepo`
    subscribes to the fake emitter.
 5. Resolve the custom editor, fire `ready`.
-6. Assert ≥ 1 listener on the fake emitter (proves both `watchRepo` and
-   `fromFirstStatusComplete` are waiting). If zero, fail with "race window not
-   reached — stub is misconfigured or fast-path fired unexpectedly".
-7. Fire the emitter. Both `watchRepo` and `fromFirstStatusComplete` receive it.
+6. Assert ≥ 1 listener on the fake emitter (proves `watchRepo` is subscribed to
+   the controlled repository). If zero, fail with "race window not reached —
+   stub is misconfigured or fast-path fired unexpectedly".
+7. Fire the emitter. The shared repository acquisition promise resolves, which
+   unblocks `readyRepositoryForRoot()` and schedules the debounced refresh.
 
 **Settling**: After firing and receiving the first snapshot, run
 `waitForQuiet(() => snapshotCount + refreshSpy.callCount, 1000ms)` — the

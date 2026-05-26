@@ -10,7 +10,7 @@ Found in `src/matchers/`. High-performance, side-effect-free TypeScript logic.
 ## Extension Host (VS Code Plumbing)
 Entry point and Git integration.
 - **`extension.ts`**: Extension lifecycle, command registrations, and workspace event handling.
-- **`repoContext.ts`**: Resolves per-file Git repository context via `vscode.git`. Custom-editor startup uses typed acquisition helpers that activate/wait for the Git API, open the requested repository, await `repository.status()`, and then return fully usable objects (`ReadyRepository`/`ConflictedItem`) or throw typed errors; editor startup code does not consume nullable Git API results directly.
+- **`repoContext.ts`**: Resolves per-file Git repository context via `vscode.git`. Custom-editor startup uses typed acquisition helpers that activate/wait for the Git API, open the requested repository, await the repository's first status-backed state event through a shared acquisition promise, and then return fully usable objects (`ReadyRepository`/`ConflictedItem`) or throw typed errors; editor startup code does not consume nullable Git API results directly.
 - **`gitUtils.ts`**: Shared git helpers for subprocess-backed commands plus URI-safe `.git` resolution and conflict-state detection via `workspace.fs`.
 - **`submoduleConflict.ts`**: Submodule conflict domain boundary. Uses VS Code Git API merge changes for discovery, then path-scoped raw Git for gitlink stage/object/index plumbing that the Git API cannot expose. It also contains read-only submodule history queries for the resolver graph/search/file list. This intentionally avoids `git ls-files`.
 - **`log.ts`**: Shared `LogOutputChannel` initialization/access for extension-host diagnostics.
@@ -92,8 +92,10 @@ Granular performance telemetry is **opt-in only** and has zero production impact
   - `readyRepositoryForRoot()` is the custom-editor startup boundary for
     repository state. It waits for the Git API to be initialized, opens the
     requested repository through the Git API, and constructs `ReadyRepository`
-    only after `repository.status()` has completed. This replaces editor-local
-    `repoReady` flags and `_readyRepos` maps with construction-time readiness.
+    only after the repository's first status-backed state event has populated
+    `mergeChanges`. Open repositories are tracked as shared acquisition
+    promises, so multiple editors wait on the same eventual object and VS Code
+    close events reject pending acquisition attempts.
   - `conflictedItemForDocument()` performs the same initialized acquisition for
     real text documents, using `getRepositoryRoot()`/`openRepository()` at the
     Git API boundary and converting documented absence into typed errors instead
@@ -103,7 +105,7 @@ Granular performance telemetry is **opt-in only** and has zero production impact
   - `ConflictedItem.conflictStatus()` computes both-modified, delete/modify, and unexpected both-deleted status from readable stage 2/3 content via `repository.show()`. This is slower than trusting `mergeChanges.status`, but more reliable in Cursor/remote hosts. `mergeChanges.status` is used only as advisory metadata for concise mismatch warnings.
 
 - `test/vscode/suite/custom_editor_resolution.test.ts`
-  - `MeldCustomEditorProvider.resolveCustomTextEditor - conflict status handling` verifies delete/modify handling, both-added editor initialization, and the stubbed both-deleted safety path.
+  - `MeldCustomEditorProvider.resolveCustomTextEditor - conflict status handling` verifies delete/modify handling, both-added editor initialization, and a real Git index both-deleted state created with `git update-index --index-info`.
   - `MeldCustomEditorProvider.resolveCustomTextEditor - status/stage mismatch` covers Cursor-style bogus `BOTH_DELETED` statuses where VS Code Git can still read all conflict stages.
   - `handleOpenMeldDiff - conflict status handling` verifies the registered command opens the custom editor for both-modified conflicts and handles delete/modify conflicts through the prompt without opening `vscode.openWith`.
   - `MeldCustomEditorProvider.handleDeleteModifyConflict - Compare` verifies the delete/modify prompt opens `vscode.diff` once, does not re-prompt, and leaves the conflict unresolved.

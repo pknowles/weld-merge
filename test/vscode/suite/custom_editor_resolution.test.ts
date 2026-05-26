@@ -22,12 +22,12 @@ import {
 	GitStatus,
 	getGitApi,
 } from "../../../src/repoContext.ts";
-import type { MeldCustomEditorProvider } from "../../../src/webview/meldWebviewPanel.ts";
 import { runGit } from "../../runGit.ts";
 import {
 	getConflictedItem,
 	lsFilesStages,
 	makeBothAddedConflict,
+	makeBothDeletedConflict,
 	makeConflict,
 	makeDeletedByThemConflict,
 	makeDeletedByUsConflict,
@@ -62,10 +62,12 @@ type InitializeWebviewFn = (
 	webviewPanel: WebviewPanel,
 	conflictedItem: ConflictedItem,
 ) => void;
+type MeldProviderConstructor = WeldExtensionApi["meldCustomEditorProvider"];
+type MeldProvider = InstanceType<MeldProviderConstructor>;
 
 // Resolved in the before() hook to the bundled class so that static fields
 // (e.g. onConflictStateChanged) are the same instance as the running extension.
-let MeldProviderClass: typeof MeldCustomEditorProvider;
+let MeldProviderClass: MeldProviderConstructor;
 let restoreConflictedFileFn: WeldExtensionApi["restoreConflictedFile"];
 
 const BOTH_SIDES_DELETED_REGEX = /both sides deleted/;
@@ -113,7 +115,7 @@ async function resolveEditorHtml(documentUri: Uri): Promise<string> {
 }
 
 function stubInitializeWebview(
-	provider: MeldCustomEditorProvider,
+	provider: MeldProvider,
 	sink: CapturedInitArgs[],
 ): void {
 	// These tests care about the repo root and relative path chosen by
@@ -210,36 +212,16 @@ async function assertBothDeletedCustomEditorStatus(
 ): Promise<void> {
 	await openRepoInGitExtension(repoPath);
 	const fileUri = Uri.file(join(repoPath, "tracked.txt"));
-	const changeEmitter = new EventEmitter<void>();
-	const repository: GitApiRepository = {
-		rootUri: Uri.file(repoPath),
-		state: {
-			mergeChanges: [
-				{
-					uri: fileUri,
-					status: GitStatus.BOTH_DELETED,
-				},
-			],
-			onDidChange: changeEmitter.event,
-		},
-		status: () => Promise.resolve(),
-		show: () => Promise.reject(new Error("not used")),
-		getCommit: () => Promise.reject(new Error("not used")),
-		getMergeBase: () => Promise.reject(new Error("not used")),
-		add: () => Promise.reject(new Error("not used")),
-	};
 	const provider = new MeldProviderClass(Uri.file("/tmp"));
 	const panel = makeFakePanel();
 	const captured: CapturedInitArgs[] = [];
 	stubInitializeWebview(provider, captured);
 	const errorStub = sinon.stub(window, "showErrorMessage");
 	try {
-		await withMockGitRepository(repository, () =>
-			provider.resolveCustomTextEditor(
-				makeDocument(fileUri),
-				panel as unknown as WebviewPanel,
-				{} as never,
-			),
+		await provider.resolveCustomTextEditor(
+			makeDocument(fileUri),
+			panel as unknown as WebviewPanel,
+			{} as never,
 		);
 	} finally {
 		errorStub.restore();
@@ -304,21 +286,8 @@ async function withMockGitRepository(
 	repository: GitApiRepository,
 	runTest: () => Promise<void>,
 ): Promise<void> {
-	// Wrap state.onDidChange to auto-fire any registered listener after a
-	// microtask. ReadyRepository.acquire() takes the unregistered path here
-	// (module isolation: test imports src/repoContext.ts; the bundled extension
-	// has its own _repoReady map). Auto-firing lets acquire() resolve without
-	// depending on the extension's registry.
 	const wrappedRepository: GitApiRepository = {
 		...repository,
-		state: {
-			...repository.state,
-			onDidChange: (listener: () => void) => {
-				const sub = repository.state.onDidChange(listener);
-				Promise.resolve().then(() => listener());
-				return sub;
-			},
-		} as GitApiRepository["state"],
 	};
 	const gitExt = extensions.getExtension("vscode.git");
 	assert.ok(gitExt, "Git extension must be available");
@@ -567,8 +536,9 @@ describe("MeldCustomEditorProvider.resolveCustomTextEditor — conflict status h
 	});
 
 	it("shows error and skips 3-way init for both-deleted conflict", async () => {
-		const repoPath = await makeRepo("weld-both-deleted-stub-");
+		const repoPath = await makeRepo("weld-both-deleted-");
 		try {
+			makeBothDeletedConflict(repoPath);
 			await assertBothDeletedCustomEditorStatus(repoPath);
 		} finally {
 			const closePromise = waitForRepoClose(repoPath);

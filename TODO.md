@@ -47,7 +47,18 @@ display the number of conflicts remaining.
 The Save & Complete Merge button takes up to much space. This could be a button
 at the top of the UI, inline with the next/prev chunks and conflicts buttons.
 
-VSCode tests produce an absurd amount of spurious errors on teardown. It's meant to be fixed but clearly not.
+VSCode tests produce an absurd amount of spurious errors on teardown. It's meant
+to be fixed but clearly not.
+
+Tabs left open from a previous session where the conflict is now resolved have
+bad UX:
+1. 3-way merge editors don't say ANYTHING about there not being a conflict anymore
+2. submodule tabs say the file is no longer conflicted, which is likely a
+   default thrown away from a far better message already present in the tree
+   view
+
+We should follow the tree view and distinguish between conflict-resolved vs
+there wasn't a conflict (e.g. merge was aborted or continued)
 
 ## Behaviour Differences to GNOME Meld
 

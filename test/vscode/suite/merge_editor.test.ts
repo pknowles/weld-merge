@@ -6,7 +6,6 @@ import type { WebviewPanel } from "vscode";
 import { extensions, Uri, workspace } from "vscode";
 import type { WeldExtensionApi } from "../../../src/extension.ts";
 import { getGitApi } from "../../../src/repoContext.ts";
-import type { MeldCustomEditorProvider } from "../../../src/webview/meldWebviewPanel.ts";
 import type {
 	BaseDiffPayload,
 	WebviewPayload,
@@ -152,7 +151,7 @@ function makeFakePanel() {
 
 // Resolved in the before() hook to the bundled class so that static fields
 // (e.g. onConflictStateChanged) are the same instance as the running extension.
-let MeldProviderClass: typeof MeldCustomEditorProvider;
+let MeldProviderClass: WeldExtensionApi["meldCustomEditorProvider"];
 
 before(async () => {
 	const ext = extensions.getExtension("pknowles.meld-auto-merge");

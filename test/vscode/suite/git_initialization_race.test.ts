@@ -16,8 +16,6 @@ import {
 	submoduleConflictUri,
 } from "../../../src/submoduleConflict.ts";
 import { ConflictedFilesProvider } from "../../../src/treeView.ts";
-import type { MeldCustomEditorProvider } from "../../../src/webview/meldWebviewPanel.ts";
-import { SubmoduleConflictEditorProvider } from "../../../src/webview/submoduleConflictEditor.ts";
 import type { WebviewPayload } from "../../../src/webview/ui/types.ts";
 import {
 	cleanupTempFixture,
@@ -76,7 +74,13 @@ const GIT_REPOSITORY_UNAVAILABLE_REGEX = /Git repository is not available/u;
 const NOT_IN_REPOSITORY_TEXT = "Cannot open: file is not in a git repository.";
 const NOT_IN_REPOSITORY_REGEX = new RegExp(NOT_IN_REPOSITORY_TEXT, "u");
 
-let MeldProviderClass: typeof MeldCustomEditorProvider;
+type MeldProviderConstructor = WeldExtensionApi["meldCustomEditorProvider"];
+type SubmoduleProviderConstructor =
+	WeldExtensionApi["submoduleConflictEditorProvider"];
+type SubmoduleProvider = InstanceType<SubmoduleProviderConstructor>;
+
+let MeldProviderClass: MeldProviderConstructor;
+let SubmoduleProviderClass: SubmoduleProviderConstructor;
 
 before(async () => {
 	initializeWeldLogChannel();
@@ -86,6 +90,7 @@ before(async () => {
 	}
 	const api = (await ext.activate()) as WeldExtensionApi;
 	MeldProviderClass = api.meldCustomEditorProvider;
+	SubmoduleProviderClass = api.submoduleConflictEditorProvider;
 });
 
 function makeFakePanel(): FakePanel {
@@ -367,8 +372,8 @@ async function withEmptyMergeChanges(
 	runTest: (release: () => Promise<GitApiRepository>) => Promise<void>,
 ): Promise<void> {
 	// The repo is NOT pre-opened here. Opening it first would cause watchRepo
-	// in extension.ts to call ReadyRepository.deliver(), which would resolve
-	// the _repoReady gate immediately with empty mergeChanges.
+	// in extension.ts to register repository acquisition against the real Git
+	// state instead of this controlled empty-state wrapper.
 	const gitExports = gitExtensionExports();
 	const originalGetAPI = gitExports.getAPI.bind(gitExports);
 	let realRepository: GitApiRepository | null = null;
@@ -387,8 +392,8 @@ async function withEmptyMergeChanges(
 
 	// fakeRepository stands in for the real one until release() populates it.
 	// mergeChanges delegates to the real repo after release; methods fail fast
-	// if called before that (they only run after ReadyRepository.acquire() resolves,
-	// which happens after release() fires the controlled emitter).
+	// if called before acquisition resolves, which happens after release() fires
+	// the controlled emitter.
 	const fakeState = { onDidChange: controlledOnDidChange };
 	Object.defineProperty(fakeState, "mergeChanges", {
 		configurable: true,
@@ -467,15 +472,15 @@ function submoduleDocumentUri(repoPath: string): Uri {
 	return submoduleConflictUri(identity);
 }
 
-function createSubmoduleProvider(): SubmoduleConflictEditorProvider {
-	return new SubmoduleConflictEditorProvider(
+function createSubmoduleProvider(): SubmoduleProvider {
+	return new SubmoduleProviderClass(
 		Uri.file("/tmp"),
 		new ConflictedFilesProvider(),
 	);
 }
 
 function createSubmoduleDocument(
-	provider: SubmoduleConflictEditorProvider,
+	provider: SubmoduleProvider,
 	repoPath: string,
 ) {
 	return provider.openCustomDocument(
@@ -521,7 +526,7 @@ function asLoadDiff(message: CapturedMessage): WebviewPayload["data"] {
 
 function resolveSubmoduleEditor(repoPath: string): {
 	panel: FakePanel;
-	provider: SubmoduleConflictEditorProvider;
+	provider: SubmoduleProvider;
 } {
 	const provider = createSubmoduleProvider();
 	const document = createSubmoduleDocument(provider, repoPath);
@@ -575,7 +580,7 @@ describe("custom editor Git initialization race — submodule tabs", () => {
 				const { panel } = resolveSubmoduleEditor(repoPath);
 				const snapshotPromise = panel.nextMessage("snapshot");
 
-				// Don't await — ReadyRepository.acquire() blocks until release() fires
+				// Don't await — repository acquisition blocks until release() fires
 				// the controlled onDidChange, so awaiting here would deadlock.
 				const readyPromise = panel.fireWebviewMessage({
 					command: "ready",

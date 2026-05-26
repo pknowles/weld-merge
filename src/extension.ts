@@ -34,7 +34,6 @@ import {
 	getGitApi,
 	isSupportedScheme,
 	notifyRepositoryStateChanged,
-	ReadyRepository,
 	registerRepository,
 	unregisterRepository,
 } from "./repoContext.ts";
@@ -66,7 +65,7 @@ const CHECKOUT_MISSING_STAGES_REGEX =
 // Why refreshRepo was called. The set of reasons in a single invocation determines
 // which downstream work is appropriate: firstStatusComplete triggers tree/conflict
 // bookkeeping but must NOT notify editors (they get their initial snapshot from
-// ReadyRepository.acquire()); repositoryStateChanged also notifies open editors so
+// readyRepositoryForRoot()); repositoryStateChanged also notifies open editors so
 // they refresh their live view. Keeping them distinct prevents a duplicate snapshot
 // being posted to editors on every startup.
 type RefreshRepoReason = "firstStatusComplete" | "repositoryStateChanged";
@@ -267,7 +266,7 @@ async function refreshRepo(
 	});
 	// Only notify open editors when the repository state genuinely changed.
 	// On firstStatusComplete, editors receive their initial snapshot by awaiting
-	// ReadyRepository.acquire() inside the "ready" webview message handler.
+	// readyRepositoryForRoot() inside the "ready" webview message handler.
 	// Firing notifyRepositoryStateChanged here too would post a duplicate snapshot
 	// with identical content immediately after startup, before any real change.
 	if (reasons.includes("repositoryStateChanged")) {
@@ -327,7 +326,6 @@ function watchRepo(
 
 	const recordFirstStatusComplete = () => {
 		firstStatusComplete = true;
-		ReadyRepository.deliver(repo);
 		scheduleRefresh("firstStatusComplete");
 	};
 
@@ -1237,7 +1235,7 @@ function setupGitRepoWatchers(
 		if (repoWatchers.has(key)) {
 			return;
 		}
-		registerRepository(repo);
+		registerRepository(gitApi, repo);
 		repoWatchers.set(
 			key,
 			watchRepo(repo, conflictedFilesProvider, telemetry),

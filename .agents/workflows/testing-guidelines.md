@@ -11,6 +11,7 @@ description:
 - **Never Duplicate Production Code in Tests.** Use utility functions or refactor dependencies instead of copy/pasting.
 - Don't copy or reimplement project code in tests - then you're testing tests which is worse than pointless.
 - Fix broken tests/lint warnings immediately, even if unrelated to your current step. Stop and debug. Do NOT skip tests without proof of external fault and explicit user permission.
+- **The project comes first.** Make the project as good as it can; don't sacrifice anything to make your life easier testing it. We fill figure out a way to test whatever the project does.
 - **Take Ownership of Failures:** Claiming its "pre-existing" doesn't help because at the end of the day the test is still failing. Check with the user that another agent isn't working concurrently and then fix it.
 
 ## Mocking
@@ -23,6 +24,8 @@ To mock or to write an end to end test? This should not be something you need to
    to test properly.
 
 If your mocked object has to do non-trivial stuff (e.g. duplicate real code) you're not mocking, you're reimplementing something in test code.
+
+If mocking is hard, causing problems, affecting how you design the main project code, STOP! You're doing it wrong and need something a level up and more end to end.
 
 ## Frontend (JS/TS) Verification
 Run these from the root directory:

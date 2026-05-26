@@ -19,7 +19,7 @@ import {
 	GitStatus,
 	NotInRepositoryError,
 	notifyRepositoryStateChanged,
-	ReadyRepository,
+	RepositoryClosedError,
 	RepositoryUnavailableError,
 	readyRepositoryForRoot,
 	registerRepository,
@@ -175,42 +175,42 @@ function makeDisposablePanel(): {
 function installGitApi(repository: GitApiRepository): () => void {
 	const mutableExtensions = extensions as unknown as MutableExtensions;
 	const originalGetExtension = mutableExtensions.getExtension;
+	const gitApi = {
+		git: { path: "git" },
+		repositories: [repository],
+		onDidOpenRepository: () => ({ dispose: () => undefined }),
+		onDidCloseRepository: () => ({ dispose: () => undefined }),
+		state: "initialized" as const,
+		onDidChangeState: () => ({ dispose: () => undefined }),
+		getRepository: (uri: Uri) =>
+			uri.toString() === repository.rootUri.toString()
+				? repository
+				: null,
+		getRepositoryRoot: (uri: Uri) =>
+			uri.fsPath.startsWith(repository.rootUri.fsPath)
+				? Promise.resolve(repository.rootUri)
+				: Promise.resolve(null),
+		openRepository: () => Promise.resolve(repository),
+		toGitUri: (uri: Uri, ref: string) =>
+			Uri.from({
+				scheme: "git",
+				path: uri.path,
+				query: new URLSearchParams({ ref }).toString(),
+			}),
+	};
 	const gitExtension = {
 		enabled: true,
 		onDidChangeEnablement: () => ({ dispose: () => undefined }),
-		getAPI: () => ({
-			git: { path: "git" },
-			repositories: [repository],
-			onDidOpenRepository: () => ({ dispose: () => undefined }),
-			onDidCloseRepository: () => ({ dispose: () => undefined }),
-			state: "initialized",
-			onDidChangeState: () => ({ dispose: () => undefined }),
-			getRepository: (uri: Uri) =>
-				uri.toString() === repository.rootUri.toString()
-					? repository
-					: null,
-			getRepositoryRoot: (uri: Uri) =>
-				uri.fsPath.startsWith(repository.rootUri.fsPath)
-					? Promise.resolve(repository.rootUri)
-					: Promise.resolve(null),
-			openRepository: () => Promise.resolve(repository),
-			toGitUri: (uri: Uri, ref: string) =>
-				Uri.from({
-					scheme: "git",
-					path: uri.path,
-					query: new URLSearchParams({ ref }).toString(),
-				}),
-		}),
+		getAPI: () => gitApi,
 	};
 	mutableExtensions.getExtension = () => ({
 		isActive: true,
 		exports: gitExtension,
 		activate: () => Promise.resolve(gitExtension),
 	});
-	// Mirror the production call order: registerRepository() creates the gate,
-	// then ReadyRepository.deliver() constructs and delivers the proof object.
-	registerRepository(repository);
-	ReadyRepository.deliver(repository);
+	// Mirror the production call order: VS Code opens the repository, then Weld
+	// registers the shared acquisition promise for that repository lifetime.
+	registerRepository(gitApi, repository);
 	return () => {
 		mutableExtensions.getExtension = originalGetExtension;
 		unregisterRepository(repository.rootUri);
@@ -831,10 +831,8 @@ describe("repoContext Git API initialization", () => {
 
 			initialized = true;
 			// Simulate onRepoOpened + watchRepo running before the editor acquires:
-			// register the gate, then deliver the proof object so acquire() finds it
-			// already resolved when openRepository() completes.
-			registerRepository(repository);
-			ReadyRepository.deliver(repository);
+			// register the shared acquisition promise before openRepository() returns.
+			registerRepository(gitApi, repository);
 			for (const listener of stateListeners) {
 				listener("initialized");
 			}
@@ -850,6 +848,67 @@ describe("repoContext Git API initialization", () => {
 });
 
 describe("repoContext panel disposal", () => {
+	it("rejects pending repository acquisition when the repository closes", async () => {
+		const root = mkdtempSync(join(tmpdir(), "weld-closed-repo-"));
+		const repository = makeRepository(
+			root,
+			Uri.file(join(root, "tracked.txt")),
+		);
+		repository.state.mergeChanges = [];
+		const mutableExtensions = extensions as unknown as MutableExtensions;
+		const originalGetExtension = mutableExtensions.getExtension;
+		const closeListeners: Array<(repo: GitApiRepository) => void> = [];
+		const closeListenerRegistered = new Promise<void>((resolve) => {
+			const gitApi = {
+				git: { path: "git" },
+				repositories: [repository],
+				onDidOpenRepository: () => ({ dispose: () => undefined }),
+				onDidCloseRepository: (
+					listener: (repo: GitApiRepository) => void,
+				) => {
+					closeListeners.push(listener);
+					resolve();
+					return { dispose: () => undefined };
+				},
+				state: "initialized" as const,
+				onDidChangeState: () => ({ dispose: () => undefined }),
+				getRepository: () => repository,
+				getRepositoryRoot: () => Promise.resolve(repository.rootUri),
+				openRepository: () => Promise.resolve(repository),
+				toGitUri: (uri: Uri) => uri,
+			};
+			const gitExtension = {
+				enabled: true,
+				onDidChangeEnablement: () => ({ dispose: () => undefined }),
+				getAPI: () => gitApi,
+			};
+			mutableExtensions.getExtension = () => ({
+				isActive: true,
+				exports: gitExtension,
+				activate: () => Promise.resolve(gitExtension),
+			});
+		});
+		try {
+			const { panel } = makeWebviewPanel();
+			const readyPromise = readyRepositoryForRoot(
+				repository.rootUri,
+				panel,
+			);
+			await closeListenerRegistered;
+			for (const listener of closeListeners) {
+				listener(repository);
+			}
+			unregisterRepository(repository.rootUri);
+			await expect(readyPromise).rejects.toBeInstanceOf(
+				RepositoryClosedError,
+			);
+		} finally {
+			mutableExtensions.getExtension = originalGetExtension;
+			unregisterRepository(repository.rootUri);
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects with EditorDisposedError when the panel closes during acquisition", async () => {
 		const root = mkdtempSync(join(tmpdir(), "weld-disposed-repo-"));
 		const repository = makeRepository(

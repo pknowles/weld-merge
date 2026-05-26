@@ -75,20 +75,13 @@ interface GitApiRepository {
 const _onRepositoryStateChangedEmitter = new EventEmitter<GitApiRepository>();
 let gitApiWhenInitializedPromise: Promise<GitApi> | undefined;
 
-// Per-repository readiness gate. Each entry is created by registerRepository()
-// when a repo opens; the promise resolves (void) when deliver() fires (i.e. the
-// first state.onDidChange has confirmed mergeChanges are populated). acquire()
-// uses this only as a timing gate — it always constructs from its own repository
-// argument so test-injected fakes are not overwritten by the stored object.
-// Entries are removed by unregisterRepository() when the repo closes.
-const _repoReady = new Map<
-	string,
-	{ promise: Promise<void>; resolve: () => void }
->();
+// Repositories currently known to Weld. The promise is the acquisition carrier:
+// it resolves only to a fully usable repository wrapper for this Git lifetime.
+const _gitRepositories = new Map<string, Promise<ReadyRepository>>();
 
 // Broadcast after a repository status refresh has produced new state. Only a
-// live-refresh signal for already-open editors; startup readiness is gated by
-// _repoReady promises, not by observing this event.
+// live-refresh signal for already-open editors; startup state comes from the
+// shared repository acquisition promise, not by observing this event.
 const onRepositoryStateChanged: Event<GitApiRepository> =
 	_onRepositoryStateChangedEmitter.event;
 
@@ -167,6 +160,15 @@ class EditorDisposedError extends Error {
 	}
 }
 
+class RepositoryClosedError extends Error {
+	constructor(uri: Uri) {
+		super(
+			`Git repository closed before it became ready: ${uri.toString()}`,
+		);
+		this.name = "RepositoryClosedError";
+	}
+}
+
 // ReadyRepository carries the proof that a repository's first status run has
 // completed and mergeChanges are populated. The private constructor enforces that
 // all construction goes through the static methods below, so holding a
@@ -178,62 +180,72 @@ class ReadyRepository {
 		this.repository = repo;
 	}
 
-	// Awaits the readiness gate for this repository. Two cases exist because the
-	// VS Code Git API does not guarantee that the extension's onDidOpenRepository
-	// handler runs before api.openRepository() resolves:
-	//
-	//   Registered path: registerRepository() ran before this call. The gate
-	//   promise resolves to the ReadyRepository delivered by deliver().
-	//
-	//   Unregistered path: the editor received the repository before onRepoOpened
-	//   fired (openRepository resolved first) or a test injected a fake repository
-	//   that bypasses watchRepo entirely. Fall back to state.onDidChange as proof
-	//   that mergeChanges are live, then construct the ReadyRepository here.
-	static async acquire(
-		repository: GitApiRepository,
-		panel: { onDidDispose(listener: () => void): Disposable },
-	): Promise<ReadyRepository> {
-		const entry = _repoReady.get(repository.rootUri.toString());
-		if (entry) {
-			await withPanelDisposal(panel, entry.promise);
-			return new ReadyRepository(repository);
-		}
-		await withPanelDisposal(
-			panel,
-			new Promise<void>((resolve) => {
-				const sub = repository.state.onDidChange(() => {
-					sub.dispose();
-					resolve();
-				});
+	static fromFirstStatus(repo: GitApiRepository): ReadyRepository {
+		return new ReadyRepository(repo);
+	}
+}
+
+// Resolves only after the first status-backed state event. That event is the Git
+// API boundary where mergeChanges become reliable for editors.
+function waitForFirstStatus(
+	api: GitApi,
+	repo: GitApiRepository,
+): Promise<ReadyRepository> {
+	if (repo.state.mergeChanges.length > 0) {
+		return Promise.resolve(ReadyRepository.fromFirstStatus(repo));
+	}
+	return new Promise((resolve, reject) => {
+		let settled = false;
+		const disposables: Disposable[] = [];
+		const finish = (result: ReadyRepository | Error): void => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			for (const disposable of disposables) {
+				disposable.dispose();
+			}
+			if (result instanceof Error) {
+				reject(result);
+				return;
+			}
+			resolve(result);
+		};
+		disposables.push(
+			repo.state.onDidChange(() =>
+				finish(ReadyRepository.fromFirstStatus(repo)),
+			),
+			api.onDidCloseRepository((closedRepo) => {
+				if (repositoryMatchesRoot(closedRepo, repo.rootUri)) {
+					finish(new RepositoryClosedError(repo.rootUri));
+				}
 			}),
 		);
-		return new ReadyRepository(repository);
-	}
-
-	// Called from extension.ts watchRepo on the first state.onDidChange. Constructs
-	// and delivers the ReadyRepository to any waiting acquire() calls in one step —
-	// construction and resolution are atomic, so there is no window where the gate
-	// is resolved but the object does not yet exist.
-	static deliver(repo: GitApiRepository): void {
-		_repoReady.get(repo.rootUri.toString())?.resolve();
-	}
-}
-
-// Called from extension.ts onRepoOpened before watchRepo. Creates the gate so
-// ReadyRepository.acquire() always finds an entry when it runs.
-function registerRepository(repo: GitApiRepository): void {
-	const key = repo.rootUri.toString();
-	let resolve!: () => void;
-	const promise = new Promise<void>((res) => {
-		resolve = res;
 	});
-	_repoReady.set(key, { promise, resolve });
 }
 
-// Called from extension.ts onDidCloseRepository. Removes the gate so a stale
-// resolved promise from the previous open cannot satisfy a future acquire().
+// Mirrors VS Code's repository-open lifetime. The stored promise is retained
+// after fulfillment so later editors receive the same acquired repository, and is
+// removed on rejection so a later repository open can create a fresh acquisition.
+function registerRepository(api: GitApi, repo: GitApiRepository): void {
+	const key = repo.rootUri.toString();
+	if (_gitRepositories.has(key)) {
+		return;
+	}
+	const promise = waitForFirstStatus(api, repo);
+	promise.catch(() => {
+		if (_gitRepositories.get(key) === promise) {
+			_gitRepositories.delete(key);
+		}
+	});
+	_gitRepositories.set(key, promise);
+}
+
+// Called from extension.ts onDidCloseRepository. Existing waiters are rejected by
+// the promise's own Git close listener; this removes the fulfilled/pending entry
+// from the current repository map so a later open starts a fresh acquisition.
 function unregisterRepository(rootUri: Uri): void {
-	_repoReady.delete(rootUri.toString());
+	_gitRepositories.delete(rootUri.toString());
 }
 
 function isSupportedScheme(uri: Uri): boolean {
@@ -409,6 +421,18 @@ function openRepositoryAtRoot(
 	});
 }
 
+function repositoryPromiseFor(
+	api: GitApi,
+	repository: GitApiRepository,
+): Promise<ReadyRepository> {
+	registerRepository(api, repository);
+	const promise = _gitRepositories.get(repository.rootUri.toString());
+	if (!promise) {
+		throw new RepositoryUnavailableError(repository.rootUri);
+	}
+	return promise;
+}
+
 // The sole entry point for custom editors needing a repository. Resolves once
 // the Git API is initialized, the repository is open, and first status has fired.
 // Returns a ReadyRepository whose type proves all three conditions hold, so callers
@@ -419,7 +443,7 @@ async function readyRepositoryForRoot(
 ): Promise<ReadyRepository> {
 	const api = await withPanelDisposal(panel, getGitApiWhenInitialized());
 	const repository = await openRepositoryAtRoot(api, rootUri, panel);
-	return ReadyRepository.acquire(repository, panel);
+	return withPanelDisposal(panel, repositoryPromiseFor(api, repository));
 }
 
 async function conflictedItemForDocument(
@@ -598,7 +622,7 @@ export {
 	NotInRepositoryError,
 	notifyRepositoryStateChanged,
 	onRepositoryStateChanged,
-	ReadyRepository,
+	RepositoryClosedError,
 	RepositoryUnavailableError,
 	readyRepositoryForRoot,
 	registerRepository,

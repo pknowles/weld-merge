@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -316,6 +317,36 @@ function makeBothAddedConflict(repoPath: string): void {
 	assertUnmergedPaths(repoPath, ["conflict.txt"]);
 }
 
+// Creates the raw index state Git reports as BOTH_DELETED. Normal merges usually
+// auto-resolve this case, so write the unmerged index directly: remove the
+// resolved stage-0 entry and leave only stage 1 for the original path.
+function makeBothDeletedConflict(repoPath: string): void {
+	const fileName = "tracked.txt";
+	const blob = execFileSync(
+		"git",
+		["-C", repoPath, "hash-object", "-w", "--stdin"],
+		{
+			input: "base\n",
+			encoding: "utf8",
+			stdio: ["pipe", "pipe", "pipe"],
+		},
+	).trim();
+	execFileSync("git", ["-C", repoPath, "update-index", "--index-info"], {
+		input: `0 0000000000000000000000000000000000000000 0\t${fileName}\n100644 ${blob} 1\t${fileName}\n`,
+		encoding: "utf8",
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	assertUnmergedPaths(repoPath, [fileName]);
+	if (
+		runGit(["status", "--short", "--", fileName], repoPath) !==
+		"DD tracked.txt"
+	) {
+		throw new Error(
+			`Expected ${fileName} to be both-deleted in ${repoPath}`,
+		);
+	}
+}
+
 // Waits for the git extension to fire onDidCloseRepository for repoPath.
 // Subscribe BEFORE deleting the repo directory so no events are missed.
 // Returns immediately if the repo is not currently registered.
@@ -439,6 +470,7 @@ export {
 	getConflictedItem,
 	lsFilesStages,
 	makeBothAddedConflict,
+	makeBothDeletedConflict,
 	makeConflict,
 	makeDeletedByThemConflict,
 	makeDeletedByUsConflict,
