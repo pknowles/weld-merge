@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,20 +11,13 @@ import {
 	createConflictedItemFromUri,
 	getGitApi,
 } from "../../../src/repoContext.ts";
+import { runGit } from "../../runGit.ts";
 
 const LS_FILES_STAGE_REGEX = /^\S+ \S+ (\d+)\t/;
 
 interface TempRepoFixture {
 	repoPath: string;
 	cleanupPath: string;
-}
-
-function runGit(args: string[], cwd: string): string {
-	return execFileSync("git", args, {
-		cwd,
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "pipe"],
-	}).trim();
 }
 
 function assertUnmergedPaths(repoPath: string, expectedPaths: string[]): void {
@@ -458,7 +450,6 @@ export {
 	makeSubmoduleConflictFixture,
 	makeSubmoduleConflictRepo,
 	openRepoInGitExtension,
-	runGit,
 	waitForMergeChanges,
 	waitForRepoClose,
 	withConflictRepo,

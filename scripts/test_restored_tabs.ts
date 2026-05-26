@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { execFileSync } from "node:child_process";
 import {
 	mkdirSync,
 	mkdtempSync,
@@ -12,6 +11,7 @@ import path from "node:path";
 import process from "node:process";
 import { downloadAndUnzipVSCode } from "@vscode/test-electron";
 import Xvfb from "xvfb";
+import { runGit } from "../test/runGit.ts";
 
 interface WorkspaceFixture {
 	readonly rootPath: string;
@@ -55,10 +55,6 @@ const EXPECTED_TAB_COUNT =
 const STARTUP_REFRESH_CEILING = 2;
 const TREE_GET_CHILDREN_CEILING = 2;
 
-function runGit(args: string[], cwd: string): void {
-	execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
-}
-
 function createMixedConflictRepo(parentPath: string, name: string): string {
 	const fixtureRoot = path.join(parentPath, name);
 	const subSourcePath = path.join(fixtureRoot, "subsrc");
@@ -71,15 +67,15 @@ function createMixedConflictRepo(parentPath: string, name: string): string {
 	writeFileSync(path.join(subSourcePath, "file.txt"), "base\n");
 	runGit(["add", "file.txt"], subSourcePath);
 	runGit(["commit", "-m", "base"], subSourcePath);
-	const base = runGitWithOutput(["rev-parse", "HEAD"], subSourcePath);
+	const base = runGit(["rev-parse", "HEAD"], subSourcePath);
 	runGit(["checkout", "-b", "other"], subSourcePath);
 	writeFileSync(path.join(subSourcePath, "file.txt"), "remote\n");
 	runGit(["commit", "-am", "remote"], subSourcePath);
-	const remote = runGitWithOutput(["rev-parse", "HEAD"], subSourcePath);
+	const remote = runGit(["rev-parse", "HEAD"], subSourcePath);
 	runGit(["checkout", "main"], subSourcePath);
 	writeFileSync(path.join(subSourcePath, "file.txt"), "local\n");
 	runGit(["commit", "-am", "local"], subSourcePath);
-	const local = runGitWithOutput(["rev-parse", "HEAD"], subSourcePath);
+	const local = runGit(["rev-parse", "HEAD"], subSourcePath);
 
 	runGit(["init", "-b", "main"], repoPath);
 	runGit(["config", "user.name", "Weld Test"], repoPath);
@@ -115,14 +111,6 @@ function createMixedConflictRepo(parentPath: string, name: string): string {
 		// Git exits non-zero for the expected text and submodule conflicts.
 	}
 	return repoPath;
-}
-
-function runGitWithOutput(args: string[], cwd: string): string {
-	return execFileSync("git", args, {
-		cwd,
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "pipe"],
-	}).trim();
 }
 
 function createWorkspace(): WorkspaceFixture {

@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { describe, it } from "mocha";
 import { Uri } from "vscode";
 import { conflictedItemFromUri } from "../../../src/repoContext.ts";
+import { runGit } from "../../runGit.ts";
 import {
 	makeRepo,
 	makeRepoFile,
 	openRepoInGitExtension,
-	runGit,
 	waitForRepoClose,
 } from "./helpers.ts";
 

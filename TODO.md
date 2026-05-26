@@ -47,6 +47,8 @@ display the number of conflicts remaining.
 The Save & Complete Merge button takes up to much space. This could be a button
 at the top of the UI, inline with the next/prev chunks and conflicts buttons.
 
+VSCode tests produce an absurd amount of spurious errors on teardown. It's meant to be fixed but clearly not.
+
 ## Behaviour Differences to GNOME Meld
 
 The initial merge is correct, but after making changes the diffs/highlighting do

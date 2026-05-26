@@ -367,8 +367,8 @@ async function withEmptyMergeChanges(
 	runTest: (release: () => Promise<GitApiRepository>) => Promise<void>,
 ): Promise<void> {
 	// The repo is NOT pre-opened here. Opening it first would cause watchRepo
-	// in extension.ts to call markRepositoryFirstStatusComplete, which would
-	// make fromFirstStatusComplete fast-path immediately with empty mergeChanges.
+	// in extension.ts to call ReadyRepository.deliver(), which would resolve
+	// the _repoReady gate immediately with empty mergeChanges.
 	const gitExports = gitExtensionExports();
 	const originalGetAPI = gitExports.getAPI.bind(gitExports);
 	let realRepository: GitApiRepository | null = null;
@@ -387,7 +387,7 @@ async function withEmptyMergeChanges(
 
 	// fakeRepository stands in for the real one until release() populates it.
 	// mergeChanges delegates to the real repo after release; methods fail fast
-	// if called before that (they only run after fromFirstStatusComplete resolves,
+	// if called before that (they only run after ReadyRepository.acquire() resolves,
 	// which happens after release() fires the controlled emitter).
 	const fakeState = { onDidChange: controlledOnDidChange };
 	Object.defineProperty(fakeState, "mergeChanges", {
@@ -575,7 +575,7 @@ describe("custom editor Git initialization race — submodule tabs", () => {
 				const { panel } = resolveSubmoduleEditor(repoPath);
 				const snapshotPromise = panel.nextMessage("snapshot");
 
-				// Don't await — fromFirstStatusComplete blocks until release() fires
+				// Don't await — ReadyRepository.acquire() blocks until release() fires
 				// the controlled onDidChange, so awaiting here would deadlock.
 				const readyPromise = panel.fireWebviewMessage({
 					command: "ready",

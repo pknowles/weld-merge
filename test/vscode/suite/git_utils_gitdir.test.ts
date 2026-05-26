@@ -5,10 +5,10 @@ import { describe, it } from "mocha";
 import { Uri } from "vscode";
 import { getGitDirUri, readConflictState } from "../../../src/gitUtils.ts";
 import { getGitApi } from "../../../src/repoContext.ts";
+import { runGit } from "../../runGit.ts";
 import {
 	makeRepo,
 	openRepoInGitExtension,
-	runGit,
 	waitForRepoClose,
 } from "./helpers.ts";
 

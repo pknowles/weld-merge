@@ -486,7 +486,12 @@ describe("runtime telemetry — submodule tab startup", () => {
 		}
 	});
 
-	it("does not echo an unchanged snapshot after a repository refresh signal", async () => {
+	it("posts one live snapshot per repository refresh signal", async () => {
+		// Each panel receives its initial snapshot from the "ready" handshake
+		// (SNAPSHOTS_PER_TAB = 1). A subsequent notifyRepositoryStateChanged call
+		// must trigger exactly one additional snapshot per panel, proving that
+		// editors respond to live state changes and that the startup path does
+		// not suppress real refresh signals.
 		const fixtures = await makeTwoSubmoduleFixtures();
 		const launchTelemetry = installTelemetry(weldApi);
 		try {
@@ -502,8 +507,26 @@ describe("runtime telemetry — submodule tab startup", () => {
 					launchTelemetry.refreshCount(),
 				RACE_QUIET_WINDOW_MS,
 			);
-			assertSubmodulePanelHealthy(panel1);
-			assertSubmodulePanelHealthy(panel2);
+			assert.equal(
+				snapshotCount(panel1),
+				SNAPSHOTS_PER_TAB + 1,
+				`panel1: expected ${SNAPSHOTS_PER_TAB + 1} snapshots (initial + refresh signal)`,
+			);
+			assert.equal(
+				snapshotCount(panel2),
+				SNAPSHOTS_PER_TAB + 1,
+				`panel2: expected ${SNAPSHOTS_PER_TAB + 1} snapshots (initial + refresh signal)`,
+			);
+			assert.equal(
+				terminalCount(panel1),
+				0,
+				"panel1: no terminal errors",
+			);
+			assert.equal(
+				terminalCount(panel2),
+				0,
+				"panel2: no terminal errors",
+			);
 			panel1.dispose();
 			panel2.dispose();
 		} finally {

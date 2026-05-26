@@ -24,7 +24,6 @@ import { getWeldLogChannel, initializeWeldLogChannel } from "./log.ts";
 import { GitTextMerger } from "./matchers/gitTextMerger.ts";
 import {
 	type ConflictedItem,
-	clearRepositoryFirstStatus,
 	conflictedItemFromUri,
 	createConflictedItem,
 	GIT_STAGE_LOCAL,
@@ -34,8 +33,10 @@ import {
 	type GitConflictStage,
 	getGitApi,
 	isSupportedScheme,
-	markRepositoryFirstStatusComplete,
 	notifyRepositoryStateChanged,
+	ReadyRepository,
+	registerRepository,
+	unregisterRepository,
 } from "./repoContext.ts";
 import { SubmoduleConflict } from "./submoduleConflict.ts";
 import { ConflictedFilesProvider, GitFile } from "./treeView.ts";
@@ -48,6 +49,12 @@ import { MeldCustomEditorProvider } from "./webview/meldWebviewPanel.ts";
 import { SubmoduleConflictEditorProvider } from "./webview/submoduleConflictEditor.ts";
 
 const lastConflictedFilesPerRepo: Map<string, Set<string>> = new Map();
+// Per-repository content fingerprint of the last completed refreshRepo call.
+// VS Code fires state.onDidChange multiple times during startup (e.g., once when
+// the index first loads and again immediately after), producing identical state on
+// consecutive calls. Without this dedup, both fires reach conflictedFilesProvider.refresh()
+// and telemetry even though nothing changed — verified by the launch_telemetry test
+// which requires <= 2 tree refreshes for 2 startup repositories.
 const lastRefreshKeyPerRepo: Map<string, string> = new Map();
 const ZERO_OBJECT_ID = "0000000000000000000000000000000000000000";
 const REMOTE_SMOKE_TEST_SETTING = "remoteSmokeTest";
@@ -56,6 +63,12 @@ const LS_TREE_ENTRY_REGEX = /^(\d{6})\s+\S+\s+([0-9a-fA-F]+)\t/;
 const CHECKOUT_MISSING_STAGES_REGEX =
 	/path ['"].+['"] does not have all necessary versions/;
 
+// Why refreshRepo was called. The set of reasons in a single invocation determines
+// which downstream work is appropriate: firstStatusComplete triggers tree/conflict
+// bookkeeping but must NOT notify editors (they get their initial snapshot from
+// ReadyRepository.acquire()); repositoryStateChanged also notifies open editors so
+// they refresh their live view. Keeping them distinct prevents a duplicate snapshot
+// being posted to editors on every startup.
 type RefreshRepoReason = "firstStatusComplete" | "repositoryStateChanged";
 
 class WeldTelemetry {
@@ -229,16 +242,19 @@ async function refreshRepo(
 	const repoKey = repo.rootUri.toString();
 	const stateKey =
 		await MeldCustomEditorProvider.getCurrentConflictStateKey(repo);
+	// Skip entirely when the conflict state has not changed since the last refresh.
+	// VS Code fires state.onDidChange multiple times during startup with identical
+	// state, which would otherwise produce extra tree refreshes and telemetry counts.
+	// The launch_telemetry test verifies this bound: <= 2 tree refreshes for 2 repos.
 	const refreshKey = repositoryRefreshKey(repo, stateKey);
 	const previousRefreshKey = lastRefreshKeyPerRepo.get(repoKey);
 	if (previousRefreshKey === refreshKey) {
 		return;
 	}
 	lastRefreshKeyPerRepo.set(repoKey, refreshKey);
-	if (
-		previousRefreshKey === undefined &&
-		repositoryRefreshKeyIsEmpty(repo, stateKey)
-	) {
+	// Skip the very first call when the repository has no conflicts at all.
+	// This prevents counting an empty-state open as a meaningful event.
+	if (previousRefreshKey === undefined && refreshKeyIsEmpty(repo, stateKey)) {
 		return;
 	}
 	telemetry.recordRefreshRepo(reasons);
@@ -249,10 +265,20 @@ async function refreshRepo(
 		repoUri: repo.rootUri,
 		stateKey,
 	});
-	telemetry.recordRepositoryStateChanged();
-	notifyRepositoryStateChanged(repo);
+	// Only notify open editors when the repository state genuinely changed.
+	// On firstStatusComplete, editors receive their initial snapshot by awaiting
+	// ReadyRepository.acquire() inside the "ready" webview message handler.
+	// Firing notifyRepositoryStateChanged here too would post a duplicate snapshot
+	// with identical content immediately after startup, before any real change.
+	if (reasons.includes("repositoryStateChanged")) {
+		telemetry.recordRepositoryStateChanged();
+		notifyRepositoryStateChanged(repo);
+	}
 }
 
+// Full content fingerprint of a repository's conflict state. Two consecutive
+// calls with the same mergeChanges and stateKey return the same string, so
+// refreshRepo can skip duplicate work when VS Code fires onDidChange repeatedly.
 function repositoryRefreshKey(
 	repo: GitApiRepository,
 	stateKey: string | undefined,
@@ -264,7 +290,7 @@ function repositoryRefreshKey(
 	return `${stateKey ?? "no-conflict-state"}\n${mergeChangesKey}`;
 }
 
-function repositoryRefreshKeyIsEmpty(
+function refreshKeyIsEmpty(
 	repo: GitApiRepository,
 	stateKey: string | undefined,
 ): boolean {
@@ -301,7 +327,7 @@ function watchRepo(
 
 	const recordFirstStatusComplete = () => {
 		firstStatusComplete = true;
-		markRepositoryFirstStatusComplete(repo.rootUri);
+		ReadyRepository.deliver(repo);
 		scheduleRefresh("firstStatusComplete");
 	};
 
@@ -1211,6 +1237,7 @@ function setupGitRepoWatchers(
 		if (repoWatchers.has(key)) {
 			return;
 		}
+		registerRepository(repo);
 		repoWatchers.set(
 			key,
 			watchRepo(repo, conflictedFilesProvider, telemetry),
@@ -1221,7 +1248,7 @@ function setupGitRepoWatchers(
 		const key = repo.rootUri.toString();
 		repoWatchers.get(key)?.dispose();
 		repoWatchers.delete(key);
-		clearRepositoryFirstStatus(repo.rootUri);
+		unregisterRepository(repo.rootUri);
 		lastConflictedFilesPerRepo.delete(key);
 		lastRefreshKeyPerRepo.delete(key);
 		conflictedFilesProvider.refresh();

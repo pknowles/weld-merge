@@ -6,13 +6,13 @@ import { describe, it } from "mocha";
 import { Uri } from "vscode";
 import { getGitApi } from "../../../src/repoContext.ts";
 import { ConflictedFilesProvider, GitFile } from "../../../src/treeView.ts";
+import { runGit } from "../../runGit.ts";
 import {
 	makeConflict,
 	makeRepo,
 	makeSubmoduleAndTextConflictRepo,
 	makeSubmoduleConflictRepo,
 	openRepoInGitExtension,
-	runGit,
 	waitForMergeChanges,
 	waitForRepoClose,
 } from "./helpers.ts";

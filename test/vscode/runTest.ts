@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -7,26 +6,19 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { runTests } from "@vscode/test-electron";
 import Xvfb from "xvfb";
+import { runGit } from "../runGit.ts";
 
 function createTestWorkspace(): string {
 	const workspacePath = mkdtempSync(
 		path.join(tmpdir(), "weld-vscode-workspace-"),
 	);
-	execFileSync("git", ["init"], { cwd: workspacePath });
-	execFileSync("git", ["config", "user.name", "Weld Test"], {
-		cwd: workspacePath,
-	});
-	execFileSync("git", ["config", "user.email", "weld-test@example.com"], {
-		cwd: workspacePath,
-	});
+	runGit(["init"], workspacePath);
+	runGit(["config", "user.name", "Weld Test"], workspacePath);
+	runGit(["config", "user.email", "weld-test@example.com"], workspacePath);
 	writeFileSync(path.join(workspacePath, "README.md"), "# Test Workspace\n");
-	execFileSync("git", ["add", "--", "README.md"], { cwd: workspacePath });
-	execFileSync("git", ["commit", "-m", "init"], { cwd: workspacePath });
+	runGit(["add", "--", "README.md"], workspacePath);
+	runGit(["commit", "-m", "init"], workspacePath);
 	return workspacePath;
-}
-
-function runGit(args: string[], cwd: string): void {
-	execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
 }
 
 function createConflictedRepo(parentPath: string, name: string): string {

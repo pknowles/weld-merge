@@ -23,6 +23,7 @@ import {
 	getGitApi,
 } from "../../../src/repoContext.ts";
 import type { MeldCustomEditorProvider } from "../../../src/webview/meldWebviewPanel.ts";
+import { runGit } from "../../runGit.ts";
 import {
 	getConflictedItem,
 	lsFilesStages,
@@ -33,7 +34,6 @@ import {
 	makeRepo,
 	makeRepoFile,
 	openRepoInGitExtension,
-	runGit,
 	waitForMergeChanges,
 	waitForRepoClose,
 	withConflictRepo,
@@ -305,11 +305,10 @@ async function withMockGitRepository(
 	runTest: () => Promise<void>,
 ): Promise<void> {
 	// Wrap state.onDidChange to auto-fire any registered listener after a
-	// microtask. fromFirstStatusComplete registers a listener when the
-	// extension's _firstStatusComplete Set doesn't have the key (module
-	// isolation: test imports src/repoContext.ts; the bundled extension has its
-	// own separate Set). Auto-firing lets fromFirstStatusComplete resolve
-	// without depending on the extension's registry.
+	// microtask. ReadyRepository.acquire() takes the unregistered path here
+	// (module isolation: test imports src/repoContext.ts; the bundled extension
+	// has its own _repoReady map). Auto-firing lets acquire() resolve without
+	// depending on the extension's registry.
 	const wrappedRepository: GitApiRepository = {
 		...repository,
 		state: {

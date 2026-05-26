@@ -11,12 +11,12 @@ import type {
 	BaseDiffPayload,
 	WebviewPayload,
 } from "../../../src/webview/ui/types.ts";
+import { runGit } from "../../runGit.ts";
 import {
 	makeConflict,
 	makeRepo,
 	makeSecondConflict,
 	openRepoInGitExtension,
-	runGit,
 	waitForMergeChanges,
 	waitForRepoClose,
 } from "./helpers.ts";

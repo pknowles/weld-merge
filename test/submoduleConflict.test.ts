@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,16 +13,17 @@ import {
 import { initializeWeldLogChannel } from "../src/log.ts";
 import type { GitApiRepository } from "../src/repoContext.ts";
 import {
-	clearRepositoryFirstStatus,
 	conflictedItemForDocument,
 	EditorDisposedError,
 	GitApiUnavailableError,
 	GitStatus,
-	markRepositoryFirstStatusComplete,
 	NotInRepositoryError,
 	notifyRepositoryStateChanged,
+	ReadyRepository,
 	RepositoryUnavailableError,
 	readyRepositoryForRoot,
+	registerRepository,
+	unregisterRepository,
 } from "../src/repoContext.ts";
 import {
 	isActiveSubmoduleGitlinkConflict,
@@ -38,6 +38,7 @@ import {
 } from "../src/submoduleConflict.ts";
 import type { ConflictedFilesProvider } from "../src/treeView.ts";
 import { SubmoduleConflictEditorProvider } from "../src/webview/submoduleConflictEditor.ts";
+import { runGit } from "./runGit.ts";
 
 interface SubmoduleRepoFixture {
 	parentPath: string;
@@ -87,14 +88,6 @@ interface MutableExtensions {
 
 interface MutableWindow {
 	showInformationMessage(message: string): Promise<unknown>;
-}
-
-function runGit(args: string[], cwd: string): string {
-	return execFileSync("git", args, {
-		cwd,
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "pipe"],
-	}).trim();
 }
 
 function expectUnmergedPaths(repoPath: string, paths: string[]): void {
@@ -214,10 +207,13 @@ function installGitApi(repository: GitApiRepository): () => void {
 		exports: gitExtension,
 		activate: () => Promise.resolve(gitExtension),
 	});
-	markRepositoryFirstStatusComplete(repository.rootUri);
+	// Mirror the production call order: registerRepository() creates the gate,
+	// then ReadyRepository.deliver() constructs and delivers the proof object.
+	registerRepository(repository);
+	ReadyRepository.deliver(repository);
 	return () => {
 		mutableExtensions.getExtension = originalGetExtension;
-		clearRepositoryFirstStatus(repository.rootUri);
+		unregisterRepository(repository.rootUri);
 	};
 }
 
@@ -834,9 +830,11 @@ describe("repoContext Git API initialization", () => {
 			expect(opened).toBe(false);
 
 			initialized = true;
-			// Simulate watchRepo calling markRepositoryFirstStatusComplete on the
-			// first state.onDidChange after the API becomes ready.
-			markRepositoryFirstStatusComplete(repository.rootUri);
+			// Simulate onRepoOpened + watchRepo running before the editor acquires:
+			// register the gate, then deliver the proof object so acquire() finds it
+			// already resolved when openRepository() completes.
+			registerRepository(repository);
+			ReadyRepository.deliver(repository);
 			for (const listener of stateListeners) {
 				listener("initialized");
 			}
@@ -845,7 +843,7 @@ describe("repoContext Git API initialization", () => {
 			expect(readyRepository.repository).toBe(repository);
 		} finally {
 			mutableExtensions.getExtension = originalGetExtension;
-			clearRepositoryFirstStatus(repository.rootUri);
+			unregisterRepository(repository.rootUri);
 			rmSync(root, { recursive: true, force: true });
 		}
 	});
