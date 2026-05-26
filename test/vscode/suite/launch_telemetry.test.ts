@@ -486,7 +486,7 @@ describe("runtime telemetry — submodule tab startup", () => {
 		}
 	});
 
-	it("posts one live snapshot per repository refresh signal", async () => {
+	it("does not echo an unchanged snapshot after a repository refresh signal", async () => {
 		const fixtures = await makeTwoSubmoduleFixtures();
 		const launchTelemetry = installTelemetry(weldApi);
 		try {
@@ -502,18 +502,8 @@ describe("runtime telemetry — submodule tab startup", () => {
 					launchTelemetry.refreshCount(),
 				RACE_QUIET_WINDOW_MS,
 			);
-			assert.equal(
-				snapshotCount(panel1),
-				SNAPSHOTS_PER_TAB + 1,
-				`expected one initial and one live snapshot, got ${snapshotCount(panel1)}`,
-			);
-			assert.equal(
-				snapshotCount(panel2),
-				SNAPSHOTS_PER_TAB + 1,
-				`expected one initial and one live snapshot, got ${snapshotCount(panel2)}`,
-			);
-			assert.equal(terminalCount(panel1), 0);
-			assert.equal(terminalCount(panel2), 0);
+			assertSubmodulePanelHealthy(panel1);
+			assertSubmodulePanelHealthy(panel2);
 			panel1.dispose();
 			panel2.dispose();
 		} finally {

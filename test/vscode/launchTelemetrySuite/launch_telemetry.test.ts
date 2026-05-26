@@ -11,11 +11,11 @@ import { getGitApi } from "../../../src/repoContext.ts";
 
 const EXPECTED_REPOSITORIES = 2;
 const EXPECTED_MERGE_CHANGES_PER_REPOSITORY = 1;
-const TREE_REFRESH_CEILING = 4;
+const TREE_REFRESH_CEILING = 2;
 const TREE_GET_CHILDREN_CEILING = 4;
-const REFRESH_REPO_CEILING = 4;
-const REPOSITORY_STATE_CHANGED_CEILING = 4;
-const CONFLICT_STATE_CHANGED_CEILING = 4;
+const REFRESH_REPO_CEILING = 2;
+const REPOSITORY_STATE_CHANGED_CEILING = 2;
+const CONFLICT_STATE_CHANGED_CEILING = 2;
 const QUIET_WINDOW_MS = 300;
 const QUIET_TIMEOUT_MS = 10_000;
 
@@ -28,7 +28,7 @@ before(async () => {
 });
 
 describe("launch telemetry — isolated extension host", () => {
-	it("captures bounded startup work for two conflicted workspace repositories", async () => {
+	it("captures one startup refresh per conflicted workspace repository", async () => {
 		assert.equal(
 			workspace.workspaceFolders?.length,
 			EXPECTED_REPOSITORIES,

@@ -89,6 +89,7 @@ class SubmoduleConflictEditorProvider
 	private readonly extensionUri: Uri;
 	private readonly conflictedFilesProvider: ConflictedFilesProvider;
 	private readonly snapshotVersions = new WeakMap<WebviewPanel, number>();
+	private readonly snapshotSignatures = new WeakMap<WebviewPanel, string>();
 
 	constructor(
 		extensionUri: Uri,
@@ -271,6 +272,11 @@ class SubmoduleConflictEditorProvider
 			if (!this.isCurrentSnapshotVersion(webviewPanel, version)) {
 				return;
 			}
+			const signature = snapshotSignature(snapshot);
+			if (this.snapshotSignatures.get(webviewPanel) === signature) {
+				return;
+			}
+			this.snapshotSignatures.set(webviewPanel, signature);
 			await webviewPanel.webview.postMessage({
 				command: "snapshot",
 				snapshot,
@@ -398,6 +404,18 @@ class SubmoduleConflictEditorProvider
 			</body>
 			</html>`;
 	}
+}
+
+function snapshotSignature(
+	snapshot: Awaited<ReturnType<SubmoduleConflict["buildSnapshot"]>>,
+): string {
+	return [
+		snapshot.submodulePath,
+		snapshot.base,
+		snapshot.local,
+		snapshot.remote,
+		snapshot.selected,
+	].join("\n");
 }
 
 function repositoryRelativePath(

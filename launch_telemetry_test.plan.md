@@ -15,16 +15,21 @@ the temporary test workspace setting `weld.launchTelemetry`; normal production
 activation keeps the counters disabled. Refresh-repo work is labeled with its
 real trigger reason instead of using production stack capture.
 
-There are two layers:
+There are three layers:
 
 1. `test/vscode/launchTelemetrySuite/launch_telemetry.test.ts` runs in a
    separate VS Code extension host with two conflicted repositories already in
    the workspace. It reads activation-owned telemetry from `WeldExtensionApi`,
    so it captures real launch work that happened before Mocha could attach
-   spies. A two-launch restored-tab experiment was removed because
-   `@vscode/test-electron` did not restore the custom editor tabs across
-   separate test launches in this harness.
-2. `test/vscode/suite/launch_telemetry.test.ts` keeps active-host runtime
+   spies.
+2. `scripts/test_restored_tabs.ts` runs the true restored-tab scenario outside
+   the `--extensionTestsPath` harness. It launches a normal development VS Code
+   window twice with a fixed user-data-dir, fixed extensions-dir, and fixed
+   workspace: the first launch opens two text merge tabs and two submodule
+   resolver tabs across two conflicted repositories, then exits cleanly; the
+   second launch opens only the workspace and asserts VS Code restored all four
+   tabs while Weld startup telemetry stays bounded.
+3. `test/vscode/suite/launch_telemetry.test.ts` keeps active-host runtime
    regression checks for tab startup and repository refresh behavior. These are
    not true launch tests because the normal VS Code suite runs inside one
    already-activated extension host.
@@ -97,8 +102,8 @@ change above.
 
 The isolated launch test also reads `refreshRepoReasons` from the extension's
 opt-in telemetry snapshot. Reasons are explicit domain labels such as
-`statusCompleted` and `repositoryStateChanged`; no production stack traces are
-captured.
+`firstStatusComplete` and `repositoryStateChanged`; no production stack traces
+are captured.
 
 **Note on `treeGetChildren`**: VS Code only calls `getChildren()` if the tree
 view is visible and expanded. In a headless test host the count may be zero
@@ -162,7 +167,7 @@ is still calling `refresh()`.
 
 ---
 
-## True Launch Test File
+## Extension-Test Launch File
 
 `test/vscode/launchTelemetrySuite/launch_telemetry.test.ts`
 
@@ -183,6 +188,54 @@ assert.ok(snapshot.treeGetChildrenCalls <= TREE_GET_CHILDREN_CEILING);
 
 The snapshot prints `refreshRepoReasons` even on success so an unexpected
 number comes with its trigger breakdown.
+
+---
+
+## Restored-Tab Launch Script
+
+`scripts/test_restored_tabs.ts`
+
+Run by `npm run test:vscode:restored-tabs` and included in `npm run
+pre-checkin`. This is the restored-tab coverage that the extension-test harness
+cannot provide reliably.
+
+The script creates:
+
+- A temporary workspace with two conflicted repositories. Each repository has
+  one normal text conflict and one submodule gitlink conflict.
+- A fixed temporary user-data-dir.
+- A fixed temporary extensions-dir.
+- A tiny driver extension loaded with `--extensionDevelopmentPath` alongside
+  Weld.
+
+It then launches VS Code twice:
+
+1. Seed launch: open the workspace, activate Weld, open both conflicted text
+   files with `vscode.openWith(..., "weld.mergeEditor")`, open both submodule
+   conflicts with `vscode.openWith(..., "weld.submoduleConflict")`, wait for
+   all four tabs, write the Weld telemetry snapshot, and close the window
+   cleanly.
+2. Assertion launch: open only the same workspace and fixed profile, wait for
+   VS Code to restore the two `weld.mergeEditor` tabs and two
+   `weld.submoduleConflict` tabs, write the Weld telemetry snapshot, and close
+   the window cleanly.
+
+The assertion launch must not open files itself. If the tabs appear, they came
+from VS Code's persisted workbench state. Both launches assert the same bounded
+telemetry:
+
+```typescript
+treeRefreshes <= 2;
+refreshRepoCalls <= 2;
+repositoryStateChangedEvents <= 2;
+conflictStateChangedEvents <= 2;
+treeGetChildrenCalls <= 2;
+```
+
+This test protects the real user complaint: two restored editor tabs across two
+repositories must not trigger blind whole-extension refreshes, repeated tree
+churn, or launch loops. The production path is allowed to load only the repo
+state and editor state justified by the actual Git and webview lifecycle events.
 
 ---
 
@@ -351,10 +404,13 @@ assert.equal(terminal2, 0);
 
 ## Completion Criteria
 
-`npm run pre-checkin` passes. The four tests together catch:
+`npm run pre-checkin` passes, including `npm run test:vscode:restored-tabs`.
+The tests together catch:
 
-- Isolated launch test: operation counts multiplying during real extension
+- Extension-test launch: operation counts multiplying during real extension
   launch with two workspace repositories
+- Restored-tab launch script: operation counts multiplying when VS Code restores
+  two real Weld editor tabs from a fixed profile on the second launch
 - Test 1: any runtime repository-open operation count multiplying beyond its
   constant
 - Test 1: ongoing activity after settle (`waitForQuiet` timeout or counter mismatch)

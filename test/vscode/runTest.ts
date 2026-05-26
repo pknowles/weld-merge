@@ -54,7 +54,12 @@ function createConflictedRepo(parentPath: string, name: string): string {
 	return repoPath;
 }
 
-function createLaunchTelemetryWorkspace(): string {
+interface LaunchTelemetryWorkspace {
+	rootPath: string;
+	workspacePath: string;
+}
+
+function createLaunchTelemetryWorkspace(): LaunchTelemetryWorkspace {
 	const workspaceRoot = mkdtempSync(
 		path.join(tmpdir(), "weld-vscode-launch-telemetry-"),
 	);
@@ -67,14 +72,21 @@ function createLaunchTelemetryWorkspace(): string {
 			{
 				folders: [{ path: repoA }, { path: repoB }],
 				settings: {
+					"files.hotExit": "onExitAndWindowClose",
 					"weld.launchTelemetry": true,
+					"window.restoreWindows": "all",
+					"workbench.editor.restoreViewState": true,
+					"workbench.startupEditor": "none",
 				},
 			},
 			null,
 			2,
 		),
 	);
-	return workspaceRoot;
+	return {
+		rootPath: workspaceRoot,
+		workspacePath: workspaceFile,
+	};
 }
 
 async function main(): Promise<void> {
@@ -97,11 +109,7 @@ async function main(): Promise<void> {
 	const launchTelemetryUserDataDir = mkdtempSync(
 		path.join(tmpdir(), "weld-vscode-launch-telemetry-test-"),
 	);
-	const launchTelemetryWorkspaceRoot = createLaunchTelemetryWorkspace();
-	const launchTelemetryWorkspacePath = path.join(
-		launchTelemetryWorkspaceRoot,
-		"launch.code-workspace",
-	);
+	const launchTelemetryWorkspace = createLaunchTelemetryWorkspace();
 	const workspacePath = createTestWorkspace();
 
 	try {
@@ -109,7 +117,7 @@ async function main(): Promise<void> {
 			extensionDevelopmentPath,
 			extensionTestsPath: launchTelemetryTestsPath,
 			launchArgs: [
-				launchTelemetryWorkspacePath,
+				launchTelemetryWorkspace.workspacePath,
 				`--user-data-dir=${launchTelemetryUserDataDir}`,
 				"--disable-extensions",
 				"--skip-welcome",
@@ -132,7 +140,10 @@ async function main(): Promise<void> {
 			xvfb.stopSync();
 		}
 		rmSync(launchTelemetryUserDataDir, { recursive: true, force: true });
-		rmSync(launchTelemetryWorkspaceRoot, { recursive: true, force: true });
+		rmSync(launchTelemetryWorkspace.rootPath, {
+			recursive: true,
+			force: true,
+		});
 		rmSync(userDataDir, { recursive: true, force: true });
 		rmSync(workspacePath, { recursive: true, force: true });
 	}

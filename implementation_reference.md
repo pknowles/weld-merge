@@ -46,9 +46,15 @@ Located in `src/webview/ui/`.
   activation-owned telemetry from `WeldExtensionApi` so launch work is counted
   from extension activation rather than from the later Mocha attach point. The
   counters are disabled in normal production activation and report refresh-repo
-  trigger reasons rather than capturing stack traces. `@vscode/test-electron`
-  did not restore custom editor tabs across separate test launches, so real
-  restored-tab launch coverage is not claimed here.
+  trigger reasons rather than capturing stack traces.
+- `scripts/test_restored_tabs.ts` provides the true restored-tab startup
+  coverage. It runs normal development VS Code windows, not the
+  `--extensionTestsPath` harness: a seed launch opens two real Weld custom
+  text merge tabs and two real submodule resolver tabs in a fixed profile and
+  closes cleanly, then an assertion launch reopens only the same
+  workspace/profile and verifies VS Code restored all four tabs while Weld
+  telemetry remains bounded. `npm run pre-checkin` includes this as `npm run
+  test:vscode:restored-tabs`.
 - `test/vscode/suite/launch_telemetry.test.ts` keeps the complementary
   active-host regression checks. It opens two real conflicted repositories,
   spies on the bundled extension objects exposed through `WeldExtensionApi`,

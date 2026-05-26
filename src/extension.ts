@@ -48,6 +48,7 @@ import { MeldCustomEditorProvider } from "./webview/meldWebviewPanel.ts";
 import { SubmoduleConflictEditorProvider } from "./webview/submoduleConflictEditor.ts";
 
 const lastConflictedFilesPerRepo: Map<string, Set<string>> = new Map();
+const lastRefreshKeyPerRepo: Map<string, string> = new Map();
 const ZERO_OBJECT_ID = "0000000000000000000000000000000000000000";
 const REMOTE_SMOKE_TEST_SETTING = "remoteSmokeTest";
 const LAUNCH_TELEMETRY_SETTING = "launchTelemetry";
@@ -55,7 +56,7 @@ const LS_TREE_ENTRY_REGEX = /^(\d{6})\s+\S+\s+([0-9a-fA-F]+)\t/;
 const CHECKOUT_MISSING_STAGES_REGEX =
 	/path ['"].+['"] does not have all necessary versions/;
 
-type RefreshRepoReason = "statusCompleted" | "repositoryStateChanged";
+type RefreshRepoReason = "firstStatusComplete" | "repositoryStateChanged";
 
 class WeldTelemetry {
 	private readonly enabled: boolean;
@@ -65,7 +66,7 @@ class WeldTelemetry {
 	private conflictStateChangedEvents = 0;
 	private repositoryStateChangedEvents = 0;
 	private readonly refreshRepoReasons: Record<RefreshRepoReason, number> = {
-		statusCompleted: 0,
+		firstStatusComplete: 0,
 		repositoryStateChanged: 0,
 	};
 
@@ -225,11 +226,24 @@ async function refreshRepo(
 	telemetry: WeldTelemetry,
 	reasons: readonly RefreshRepoReason[],
 ): Promise<void> {
-	telemetry.recordRefreshRepo(reasons);
-	conflictedFilesProvider.refresh();
-	await notifyIfNewConflicts(repo.rootUri.toString(), repo);
+	const repoKey = repo.rootUri.toString();
 	const stateKey =
 		await MeldCustomEditorProvider.getCurrentConflictStateKey(repo);
+	const refreshKey = repositoryRefreshKey(repo, stateKey);
+	const previousRefreshKey = lastRefreshKeyPerRepo.get(repoKey);
+	if (previousRefreshKey === refreshKey) {
+		return;
+	}
+	lastRefreshKeyPerRepo.set(repoKey, refreshKey);
+	if (
+		previousRefreshKey === undefined &&
+		repositoryRefreshKeyIsEmpty(repo, stateKey)
+	) {
+		return;
+	}
+	telemetry.recordRefreshRepo(reasons);
+	conflictedFilesProvider.refresh();
+	await notifyIfNewConflicts(repoKey, repo);
 	telemetry.recordConflictStateChanged();
 	MeldCustomEditorProvider.onConflictStateChanged.fire({
 		repoUri: repo.rootUri,
@@ -239,13 +253,31 @@ async function refreshRepo(
 	notifyRepositoryStateChanged(repo);
 }
 
+function repositoryRefreshKey(
+	repo: GitApiRepository,
+	stateKey: string | undefined,
+): string {
+	const mergeChangesKey = repo.state.mergeChanges
+		.map((change) => `${change.uri.toString()}:${change.status}`)
+		.sort()
+		.join("\n");
+	return `${stateKey ?? "no-conflict-state"}\n${mergeChangesKey}`;
+}
+
+function repositoryRefreshKeyIsEmpty(
+	repo: GitApiRepository,
+	stateKey: string | undefined,
+): boolean {
+	return stateKey === undefined && repo.state.mergeChanges.length === 0;
+}
+
 function watchRepo(
 	repo: GitApiRepository,
 	conflictedFilesProvider: ConflictedFilesProvider,
 	telemetry: WeldTelemetry,
 ): Disposable {
 	let timer: NodeJS.Timeout | undefined;
-	let disposed = false;
+	let firstStatusComplete = false;
 	const pendingReasons = new Set<RefreshRepoReason>();
 	const scheduleRefresh = (reason: RefreshRepoReason) => {
 		pendingReasons.add(reason);
@@ -267,35 +299,28 @@ function watchRepo(
 		}, 50);
 	};
 
-	// The Git API opens repositories before their first status has populated
-	// mergeChanges. Drive the initial tree/editor notification from status()
-	// completion instead of from repository-open so startup never broadcasts an
-	// empty pre-status state.
-	repo.status().then(
-		() => {
-			if (disposed) {
-				return;
-			}
-			markRepositoryFirstStatusComplete(repo.rootUri);
-			scheduleRefresh("statusCompleted");
-		},
-		(error: unknown) => {
-			getWeldLogChannel().error(
-				`Initial status failed for ${repo.rootUri}: ${getErrorMessage(error)}`,
-			);
-		},
-	);
-
-	// Mark the first-status registry on the raw state.onDidChange too. VS Code
-	// fires this after status runs; keeping the registry at that boundary lets
-	// custom editors acquire ReadyRepository as soon as Git has real state.
-	const sub = repo.state.onDidChange(() => {
+	const recordFirstStatusComplete = () => {
+		firstStatusComplete = true;
 		markRepositoryFirstStatusComplete(repo.rootUri);
+		scheduleRefresh("firstStatusComplete");
+	};
+
+	if (repo.state.mergeChanges.length > 0) {
+		recordFirstStatusComplete();
+	}
+
+	// VS Code fires state.onDidChange after repository status has produced real
+	// state. Use that event as the first-refresh boundary so Weld does not add a
+	// second Git status run or broadcast an empty repository-open state.
+	const sub = repo.state.onDidChange(() => {
+		if (!firstStatusComplete) {
+			recordFirstStatusComplete();
+			return;
+		}
 		scheduleRefresh("repositoryStateChanged");
 	});
 	return {
 		dispose: () => {
-			disposed = true;
 			clearTimeout(timer);
 			sub.dispose();
 		},
@@ -1198,6 +1223,7 @@ function setupGitRepoWatchers(
 		repoWatchers.delete(key);
 		clearRepositoryFirstStatus(repo.rootUri);
 		lastConflictedFilesPerRepo.delete(key);
+		lastRefreshKeyPerRepo.delete(key);
 		conflictedFilesProvider.refresh();
 	};
 
