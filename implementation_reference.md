@@ -134,7 +134,7 @@ Granular performance telemetry is **opt-in only** and has zero production impact
 - `src/webview/ui/App.tsx`
   - `LoadingError` renders structured error payloads as an alert while the merge editor is still waiting for initial diff data.
 
-- `test/webview_e2e.test.tsx`
+- `test/webview_react.test.tsx`
   - `renders ready callback exceptions as an obvious error alert` verifies the webview displays the structured error title and message.
 
 ## Submodule Conflict Resolution

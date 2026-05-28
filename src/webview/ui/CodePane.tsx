@@ -32,7 +32,7 @@ interface CodePaneProps {
 	baseSide?: "left" | "right" | undefined;
 	isBaseActive?: boolean | undefined;
 	style?: CSSProperties | undefined;
-	onMount: (ed: editor.IStandaloneCodeEditor, i: number) => void;
+	onMount: (ed: editor.IStandaloneCodeEditor, i: number) => () => void;
 	applyExternalEditsRef?:
 		| React.RefObject<{
 				applyIncrementalEdits: (changes: MonacoContentChange[]) => void;
@@ -711,12 +711,17 @@ const HEADER_STYLE: CSSProperties = {
 
 export const CodePane: FC<CodePaneProps> = (p) => {
 	const { setEd, isFlashing, onSubmit, sendSaveRef } = useCodePaneLogic(p);
+	const mountCleanupRef = useRef<(() => void) | null>(null);
 
 	useEffect(
 		() => () => {
+			if (mountCleanupRef.current) {
+				mountCleanupRef.current();
+				mountCleanupRef.current = null;
+			}
 			p.ui.editorRefArray.current[p.index] =
 				undefined as unknown as editor.IStandaloneCodeEditor;
-			p.actions.setRenderTrigger((p) => p + 1);
+			p.actions.setRenderTrigger((prev) => prev + 1);
 		},
 		[p.index, p.actions.setRenderTrigger, p.ui.editorRefArray],
 	);
@@ -778,7 +783,10 @@ export const CodePane: FC<CodePaneProps> = (p) => {
 					)}
 					onMount={(e) => {
 						setEd(e);
-						p.onMount(e, p.index);
+						if (mountCleanupRef.current) {
+							mountCleanupRef.current();
+						}
+						mountCleanupRef.current = p.onMount(e, p.index);
 						setupActions(e, p, sendSaveRef);
 						if (p.index === 2 && p.ui.files[1] !== null) {
 							setTimeout(() => {

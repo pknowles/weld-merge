@@ -195,7 +195,10 @@ interface MeldUIActionsProps {
 	setDiffs: (d: PaneDiffs) => void;
 	diffsRef: React.MutableRefObject<PaneDiffs>;
 	vscodeApi: ReturnType<typeof useVscodeMessageBus>;
-	attachScrollListener: (ed: editor.IStandaloneCodeEditor, i: number) => void;
+	attachScrollListener: (
+		ed: editor.IStandaloneCodeEditor,
+		i: number,
+	) => { dispose: () => void };
 	forceSyncToPane: (target: number, source: number) => void;
 	chunkActions: ReturnType<typeof useAppChunkActions>;
 	handleNavigate: (dir: "prev" | "next", type: "diff" | "conflict") => void;

@@ -1,3 +1,13 @@
+// React component integration tests with mocked Monaco and mocked VSCode API.
+//
+// What this CAN test: React render logic, VSCode message handling, DOM structure,
+// UI interactions, component lifecycle, animation state transitions.
+//
+// What this CANNOT test: real Monaco editor behaviour — scroll events, layout
+// changes, ResizeObserver, onDidLayoutChange firing on resize, etc. The Monaco
+// mock stubs these out structurally but does not fire them in response to DOM
+// changes. Tests requiring real Monaco event behaviour belong in a real browser
+// E2E test with actual Monaco loaded.
 import { afterEach, beforeEach, describe, it, jest } from "@jest/globals";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 // TODO: seems flaky - has to be after mockMonacoSetup.tsx. Why?

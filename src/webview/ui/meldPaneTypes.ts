@@ -25,7 +25,10 @@ export interface MeldUIState {
 }
 
 export interface MeldUIActions {
-	attachScrollListener: (ed: editor.IStandaloneCodeEditor, i: number) => void;
+	attachScrollListener: (
+		ed: editor.IStandaloneCodeEditor,
+		i: number,
+	) => { dispose: () => void };
 	forceSyncToPane: (target: number, source: number) => void;
 	handleApplyChunk: (paneIndex: number, chunk: DiffChunk) => void;
 	handleDeleteChunk: (paneIndex: number, chunk: DiffChunk) => void;

@@ -2,10 +2,6 @@
 
 ## Annoyances
 
-Closing the right hand compare-with-base window resets the scroll position -
-probably a react re-render. This does not happen when closing the left
-compare-with-base panel.
-
 Hovering the mouse over the Local and Remote commits shows a giant commit card.
 This just gets in the way. We should make these dropdowns instead that the user
 has to click to open.
@@ -59,6 +55,22 @@ bad UX:
 
 We should follow the tree view and distinguish between conflict-resolved vs
 there wasn't a conflict (e.g. merge was aborted or continued)
+
+## Low Priority Visual Polish
+
+Opening the right-hand compare-with-base panel can produce a visible flicker in
+the already-open editor area at the start of the slide-in animation. The current
+Playwright diagnostic samples Local/Merged/Remote with 1k-line dummy files,
+scattered changed ranges, and the viewport near 90% height; it does not detect a
+scroll-position jump or blank Monaco content in those existing panes. This
+suggests the visible flicker is likely layout/repaint caused by the right column
+animation changing available width, not a scroll sync reset.
+
+There is known asymmetry in compare-with-base behavior: the right base pane
+detaches Monaco immediately on close (apparently "so the closing animation
+cannot leak a Monaco scroll/layout event into Remote"), while the left base pane
+keeps Monaco alive until its close animation finishes to (apparently this is to
+"preserve the existing left-side fade behavior"). This is a smell.
 
 ## Behaviour Differences to GNOME Meld
 
@@ -298,7 +310,7 @@ Questionable code in c06d4923:
    triggers on an externalSyncId is a bit "hammer-ish" and could lead to
    performance issues or cursor jumping if the sync frequency increases.
 
-3. Fragile Testing Mocks The mocking of Monaco in test/webview_e2e.test.tsx
+3. Fragile Testing Mocks The mocking of Monaco in test/webview_react.test.tsx
    (lines 8-51) is extremely verbose and "brittle"—it defines specific numeric
    values for KeyCode and KeyMod (e.g., CtrlCmd: 2048). If the version of Monaco
    ever changes its internal enum values (which it occasionally does), these

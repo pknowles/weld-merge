@@ -114,8 +114,9 @@ const renderMeldCodePane = (
 		isBaseActive={Boolean(ui.files[idx === 1 ? 0 : 4])}
 		onMount={(ed, i) => {
 			ui.editorRefArray.current[i] = ed;
-			actions.attachScrollListener(ed, i);
+			const scrollDisposable = actions.attachScrollListener(ed, i);
 			actions.setRenderTrigger((p) => p + 1);
+			let layoutDisposable: { dispose: () => void } | null = null;
 			if (i === 0 || i === 4) {
 				const source = i === 0 ? 1 : 3;
 				const sync = () => {
@@ -124,8 +125,14 @@ const renderMeldCodePane = (
 					}
 				};
 				sync();
-				ed.onDidLayoutChange(sync);
+				layoutDisposable = ed.onDidLayoutChange(sync);
 			}
+			return () => {
+				scrollDisposable.dispose();
+				if (layoutDisposable) {
+					layoutDisposable.dispose();
+				}
+			};
 		}}
 	/>
 );
