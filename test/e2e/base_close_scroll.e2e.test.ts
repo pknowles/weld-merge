@@ -338,106 +338,82 @@ const existingPaneDriftFrames = (
 	);
 };
 
-interface ScrollCounter {
-	scrollable: HTMLElement;
-	fireCount: number;
-}
-
-// Extend the browser Window so page.evaluate callbacks can access the
-// test-state property without casting to any.
-declare global {
-	interface Window {
-		__scrollCounters: ScrollCounter[];
-	}
-}
-
-interface ScrollCounterState {
-	fireCount: number;
-	scrollTop: number;
-}
-
-// Attach a scroll-fire counter to each stable pane's .monaco-scrollable-element
-// BEFORE the initial scroll, so later reads can prove the hook actually fires.
-// Throws if any element is missing so failures are explicit.
-const attachScrollCounters = async (page: Page, domIndices: number[]) => {
-	await page.evaluate((indices) => {
-		window.__scrollCounters = indices.map((i: number) => {
-			const editor = document.querySelectorAll(".monaco-editor")[i];
-			if (!editor) {
-				throw new Error(`.monaco-editor[${i}] not found`);
-			}
-			const scrollable = editor.querySelector(
-				".monaco-scrollable-element",
-			) as HTMLElement | null;
-			if (!scrollable) {
-				throw new Error(
-					`.monaco-scrollable-element not found in .monaco-editor[${i}]`,
-				);
-			}
-			const counter: ScrollCounter = { scrollable, fireCount: 0 };
-			scrollable.addEventListener(
-				"scroll",
-				() => {
-					counter.fireCount++;
-				},
-				{ passive: true },
-			);
-			return counter;
-		});
-	}, domIndices);
-};
-
-const readScrollCounters = (page: Page): Promise<ScrollCounterState[]> =>
-	page.evaluate(() =>
-		window.__scrollCounters.map((s) => ({
-			fireCount: s.fireCount,
-			scrollTop: s.scrollable.scrollTop,
-		})),
-	);
-
 // Clicks the close button, waits for the CSS transitionend on the column, then
-// returns which panes had a vertical scrollTop change during the animation.
+// returns which panes had a user-visible vertical line change during the
+// animation. Sampling visible text avoids depending on Monaco's private scroll
+// element implementation, which can change without changing the behavior users
+// see.
 const watchCloseAndDetectVerticalScroll = (
 	page: Page,
 	columnId: string,
 	toggleTestId: string,
+	stableDomIndices: number[],
 ): Promise<{ shifted: boolean[]; transitionEndFired: boolean }> =>
 	page.evaluate(
-		({ columnId, toggleTestId }) =>
+		({ columnId, stableDomIndices, toggleTestId }) =>
 			new Promise<{ shifted: boolean[]; transitionEndFired: boolean }>(
 				(resolve) => {
-					const counters = window.__scrollCounters;
-
-					// Co-locate initial scrollTop with handler so no parallel
-					// array indexing is needed.
-					const monitored = counters.map((c) => {
-						const initialTop = c.scrollable.scrollTop;
-						const state = { shifted: false };
-						const handler = () => {
-							if (c.scrollable.scrollTop !== initialTop) {
-								state.shifted = true;
-							}
+					const normalize = (text: string | null) =>
+						(text ?? "").replace(/\s+/g, " ").trim();
+					const firstVisibleLine = (index: number) => {
+						const editor =
+							document.querySelectorAll(".monaco-editor")[index];
+						if (!editor) {
+							throw new Error(
+								`.monaco-editor[${index}] not found`,
+							);
+						}
+						return normalize(
+							editor.querySelector(".view-line")?.textContent ??
+								null,
+						);
+					};
+					const monitored = stableDomIndices.map((index: number) => {
+						const initialLine = firstVisibleLine(index);
+						if (initialLine.length === 0) {
+							throw new Error(
+								`.monaco-editor[${index}] has no visible first line`,
+							);
+						}
+						return {
+							index,
+							initialLine,
+							state: { shifted: false },
 						};
-						c.scrollable.addEventListener("scroll", handler, {
-							passive: true,
-						});
-						return { scrollable: c.scrollable, handler, state };
 					});
 
 					const col = document.querySelector(`#${columnId}`);
 					if (!col) {
 						throw new Error(`#${columnId} not found`);
 					}
+					let transitionEnded = false;
+					const sample = () => {
+						for (const item of monitored) {
+							if (
+								firstVisibleLine(item.index) !==
+								item.initialLine
+							) {
+								item.state.shifted = true;
+							}
+						}
+						if (!transitionEnded) {
+							requestAnimationFrame(sample);
+						}
+					};
+					requestAnimationFrame(sample);
 					col.addEventListener(
 						"transitionend",
 						() => {
-							for (const { scrollable, handler } of monitored) {
-								scrollable.removeEventListener(
-									"scroll",
-									handler,
-								);
-							}
+							transitionEnded = true;
 							requestAnimationFrame(() => {
+								for (const item of monitored) {
+									if (
+										firstVisibleLine(item.index) !==
+										item.initialLine
+									) {
+										item.state.shifted = true;
+									}
+								}
 								resolve({
 									shifted: monitored.map(
 										({ state }) => state.shifted,
@@ -460,7 +436,7 @@ const watchCloseAndDetectVerticalScroll = (
 					btn.click();
 				},
 			),
-		{ columnId, toggleTestId },
+		{ columnId, stableDomIndices, toggleTestId },
 	);
 
 // When the right base pane is open the DOM order is:
@@ -499,34 +475,32 @@ test.describe("Base pane close scroll preservation", () => {
 			await loadInitialDiff(page);
 			await loadBaseDiff(page, side);
 
-			// Hook scroll events BEFORE the initial scroll so we can verify
-			// the hooks actually fire (guards against false negatives).
-			await attachScrollCounters(page, stableDomIndices);
 			await scrollPaneUntilLineVisible(
 				page,
 				remoteDomIndex,
 				"remote line 0880",
 			);
 
-			// Invariant: hooks fired during initial scroll — confirms the right
-			// elements are hooked and native scroll events reach them.
-			// scrollTop > 0 ensures a reset to zero would trigger the hook.
-			const preClose = await readScrollCounters(page);
-			for (const [j, state] of preClose.entries()) {
+			// Invariant: every stable pane is scrolled down before close, so a
+			// reset to the top or any vertical nudge during close is observable.
+			const preCloseFirstLines = await Promise.all(
+				stableDomIndices.map(async (index) => ({
+					index,
+					firstLine: await firstVisibleLineInPane(page, index),
+				})),
+			);
+			for (const { firstLine, index } of preCloseFirstLines) {
 				expect(
-					state.fireCount,
-					`DOM[${stableDomIndices[j]}] scroll hook did not fire during initial scroll`,
-				).toBeGreaterThan(0);
-				expect(
-					state.scrollTop,
-					`DOM[${stableDomIndices[j]}] scrollTop must be > 0 before close`,
-				).toBeGreaterThan(0);
+					lineNumberFromText(firstLine),
+					`DOM[${index}] first visible line must be below the top before close`,
+				).toBeGreaterThan(1);
 			}
 
 			const result = await watchCloseAndDetectVerticalScroll(
 				page,
 				columnId,
 				toggleTestId,
+				stableDomIndices,
 			);
 
 			// Invariant: the CSS transition actually ran.

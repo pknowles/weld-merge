@@ -9,7 +9,7 @@
 // changes. Tests requiring real Monaco event behaviour belong in a real browser
 // E2E test with actual Monaco loaded.
 import { afterEach, beforeEach, describe, it, jest } from "@jest/globals";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 // TODO: seems flaky - has to be after mockMonacoSetup.tsx. Why?
 import { App } from "../src/webview/ui/App.tsx";
 import {
@@ -35,6 +35,7 @@ jest.mock("@monaco-editor/react", () =>
 installResizeObserverMock();
 const vscode: VscodeStub = createVscodeStub();
 installVscodeApi(vscode);
+const LOCAL_COMMIT_BUTTON_NAME = /\[local commit\]/;
 
 const runTestCase = async (config: {
 	local: string;
@@ -221,6 +222,55 @@ const setupApp = async () => {
 	});
 };
 
+const setupAppWithCommits = async () => {
+	render(<App />);
+	await act(() => {
+		window.dispatchEvent(
+			new MessageEvent("message", {
+				data: {
+					command: "loadDiff",
+					data: {
+						files: [
+							{
+								label: "Local",
+								content: "L",
+								commit: {
+									hash: "1234567890abcdef",
+									title: "local commit",
+									authorName: "Ada Local",
+									authorEmail: "ada@example.com",
+									date: "2026-05-28T12:00:00.000Z",
+									body: "Local commit body",
+								},
+							},
+							{ label: "Merged", content: "M" },
+							{
+								label: "Remote",
+								content: "R",
+								commit: {
+									hash: "abcdef1234567890",
+									title: "remote commit",
+									authorName: "Robin Remote",
+									authorEmail: "robin@example.com",
+									date: "2026-05-28T13:00:00.000Z",
+									body: "Remote commit body",
+								},
+							},
+						],
+						diffs: [[], []],
+						isConflicted: true,
+						lastExternalChangeVersion: 1,
+					},
+				},
+				origin: "*",
+			}),
+		);
+	});
+	await act(() => {
+		jest.advanceTimersByTime(500);
+	});
+};
+
 const setupLongDocumentTestCase = async () => {
 	const localLines = Array.from({ length: 400 }, (_, i) => `Line ${i + 1}`);
 	const mergedLines = Array.from({ length: 50 }, (_, i) => `Line ${i + 1}`);
@@ -258,6 +308,57 @@ const setupLongDocumentTestCase = async () => {
 		);
 	});
 };
+
+describe("Webview E2E - Commit Details", () => {
+	beforeEach(() => {
+		jest.useFakeTimers();
+		vscode.messagesSent.length = 0;
+		resetMountedEditors();
+	});
+
+	afterEach(() => {
+		uninstallVscodeApi();
+		jest.useRealTimers();
+	});
+
+	it("opens commit details on click and keeps diff/copy actions available", async () => {
+		await setupAppWithCommits();
+
+		const localCommitButton = screen.getByRole("button", {
+			name: LOCAL_COMMIT_BUTTON_NAME,
+		});
+		fireEvent.mouseEnter(localCommitButton);
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+		await act(() => {
+			fireEvent.click(localCommitButton);
+		});
+
+		const dialog = screen.getByRole("dialog");
+		expect(dialog).toHaveTextContent("Ada Local");
+		expect(dialog).toHaveTextContent("Local commit body");
+
+		await act(() => {
+			fireEvent.click(
+				within(dialog).getByRole("button", { name: "Open Diff" }),
+			);
+		});
+		expect(vscode.postMessage).toHaveBeenCalledWith({
+			command: "showDiff",
+			paneIndex: 1,
+		});
+
+		await act(() => {
+			fireEvent.click(
+				within(dialog).getByRole("button", { name: "Copy Hash" }),
+			);
+		});
+		expect(vscode.postMessage).toHaveBeenCalledWith({
+			command: "copyHash",
+			hash: "1234567890abcdef",
+		});
+	});
+});
 
 describe("Webview E2E - Base Comparisons", () => {
 	beforeEach(() => {

@@ -3,8 +3,8 @@ import { editor, KeyCode, KeyMod, Selection } from "monaco-editor";
 import {
 	type CSSProperties,
 	type FC,
-	type FocusEvent,
 	type MouseEvent,
+	useCallback,
 	useEffect,
 	useMemo,
 	useRef,
@@ -41,19 +41,119 @@ interface CodePaneProps {
 		| undefined;
 }
 
-const CommitHover: FC<{
+const CommitPopoverHeader: FC<{
+	commit: Commit;
+	onShowDiff: () => void;
+}> = ({ commit, onShowDiff }) => (
+	<div
+		style={{
+			display: "flex",
+			alignItems: "flex-start",
+			gap: "8px",
+			marginBottom: "8px",
+		}}
+	>
+		<div
+			style={{
+				fontWeight: 600,
+				fontSize: "14px",
+				flex: 1,
+				minWidth: 0,
+			}}
+		>
+			{commit.title}
+		</div>
+		<button
+			type="button"
+			onClick={onShowDiff}
+			title="Open Diff"
+			style={{
+				background: "none",
+				border: "none",
+				color: "var(--vscode-textLink-foreground, #3794ff)",
+				cursor: "pointer",
+				padding: "3px",
+				display: "flex",
+				alignItems: "center",
+				justifyContent: "center",
+				flexShrink: 0,
+			}}
+		>
+			<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+				<title>Open Diff</title>
+				<path d="M2 3h5v1H3v9h9V9h1v5H2V3z" />
+				<path d="M9 2h5v5h-1V3.707L7.854 8.854l-.708-.708L12.293 3H9V2z" />
+			</svg>
+		</button>
+	</div>
+);
+
+const CommitHashRow: FC<{
+	commit: Commit;
+	onCopyHash: (e: MouseEvent) => void;
+}> = ({ commit, onCopyHash }) => (
+	<div
+		style={{
+			display: "flex",
+			alignItems: "center",
+			gap: "8px",
+			backgroundColor: "var(--vscode-textCodeBlock-background, #1e1e1e)",
+			padding: "4px 8px",
+			borderRadius: "4px",
+			marginBottom: "12px",
+		}}
+	>
+		<span
+			style={{
+				fontFamily: "var(--vscode-editor-font-family, monospace)",
+			}}
+		>
+			{commit.hash.slice(0, 8)}
+		</span>
+		<button
+			type="button"
+			onClick={onCopyHash}
+			title="Copy Hash"
+			style={{
+				background: "none",
+				border: "none",
+				color: "var(--vscode-textLink-foreground, #3794ff)",
+				cursor: "pointer",
+				marginLeft: "auto",
+				padding: "4px",
+				display: "flex",
+				alignItems: "center",
+				justifyContent: "center",
+			}}
+		>
+			<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+				<title>Copy Hash</title>
+				<path
+					fillRule="evenodd"
+					clipRule="evenodd"
+					d="M4 4l1-1h5.414L14 6.586V14l-1 1H5l-1-1V4zm9 3l-3-3H6v10h6V7z"
+				/>
+				<path
+					fillRule="evenodd"
+					clipRule="evenodd"
+					d="M3 1L2 2v10h2V3h6V1H3z"
+				/>
+			</svg>
+		</button>
+	</div>
+);
+
+const CommitPopover: FC<{
 	commit: Commit;
 	pos: { x: number; y: number };
-	hoverRef: React.RefObject<HTMLDivElement | null>;
+	popoverRef: React.RefObject<HTMLDivElement | null>;
 	onCopyHash: (e: MouseEvent) => void;
-	onMouseEnter?: () => void;
-	onMouseLeave?: () => void;
-}> = ({ commit, pos, hoverRef, onCopyHash, onMouseEnter, onMouseLeave }) => (
+	onShowDiff: () => void;
+}> = ({ commit, pos, popoverRef, onCopyHash, onShowDiff }) => (
 	<div
-		ref={hoverRef}
-		onMouseEnter={onMouseEnter}
-		onMouseLeave={onMouseLeave}
-		role="tooltip"
+		ref={popoverRef}
+		role="dialog"
+		aria-label="Commit details"
 		style={{
 			position: "fixed",
 			top: pos.y,
@@ -62,8 +162,11 @@ const CommitHover: FC<{
 			backgroundColor: "var(--vscode-editorWidget-background, #252526)",
 			border: "1px solid var(--vscode-widget-border, #454545)",
 			borderRadius: "6px",
-			padding: "16px",
-			width: "350px",
+			padding: "12px",
+			width: "320px",
+			maxWidth: "calc(100vw - 16px)",
+			maxHeight: "min(420px, calc(100vh - 16px))",
+			overflowY: "auto",
 			boxShadow: "0 4px 10px rgba(0, 0, 0, 0.2)",
 			color: "var(--vscode-editor-foreground, #cccccc)",
 			fontSize: "13px",
@@ -75,70 +178,14 @@ const CommitHover: FC<{
 			cursor: "auto",
 		}}
 	>
-		<div style={{ fontWeight: 600, marginBottom: "8px", fontSize: "14px" }}>
-			{commit.title}
-		</div>
+		<CommitPopoverHeader commit={commit} onShowDiff={onShowDiff} />
 		<div style={{ opacity: 0.8, marginBottom: "4px" }}>
 			<strong>{commit.authorName}</strong> &lt;{commit.authorEmail}&gt;
 		</div>
 		<div style={{ opacity: 0.8, marginBottom: "12px" }}>
 			{new Date(commit.date).toLocaleString()}
 		</div>
-		<div
-			style={{
-				display: "flex",
-				alignItems: "center",
-				gap: "8px",
-				backgroundColor:
-					"var(--vscode-textCodeBlock-background, #1e1e1e)",
-				padding: "4px 8px",
-				borderRadius: "4px",
-				marginBottom: "12px",
-			}}
-		>
-			<span
-				style={{
-					fontFamily: "var(--vscode-editor-font-family, monospace)",
-				}}
-			>
-				{commit.hash.slice(0, 8)}
-			</span>
-			<button
-				type="button"
-				onClick={onCopyHash}
-				title="Copy Hash"
-				style={{
-					background: "none",
-					border: "none",
-					color: "var(--vscode-textLink-foreground, #3794ff)",
-					cursor: "pointer",
-					marginLeft: "auto",
-					padding: "4px",
-					display: "flex",
-					alignItems: "center",
-					justifyContent: "center",
-				}}
-			>
-				<svg
-					width="14"
-					height="14"
-					viewBox="0 0 16 16"
-					fill="currentColor"
-				>
-					<title>Copy Hash</title>
-					<path
-						fillRule="evenodd"
-						clipRule="evenodd"
-						d="M4 4l1-1h5.414L14 6.586V14l-1 1H5l-1-1V4zm9 3l-3-3H6v10h6V7z"
-					/>
-					<path
-						fillRule="evenodd"
-						clipRule="evenodd"
-						d="M3 1L2 2v10h2V3h6V1H3z"
-					/>
-				</svg>
-			</button>
-		</div>
+		<CommitHashRow commit={commit} onCopyHash={onCopyHash} />
 		{commit.body && (
 			<pre
 				style={{
@@ -161,78 +208,127 @@ const CommitInfo: FC<{
 	onCopyHash?: (hash: string) => void;
 	onShowDiff?: () => void;
 }> = ({ commit, onCopyHash, onShowDiff }) => {
-	const [showHover, setShowHover] = useState(false);
-	const [hoverPos, setHoverPos] = useState({ x: 0, y: 0 });
-	const hoverRef = useRef<HTMLDivElement>(null);
-	const hoverTimerRef = useRef<NodeJS.Timeout | null>(null);
-	const onEnter = (e: MouseEvent<HTMLElement> | FocusEvent<HTMLElement>) => {
-		if (hoverTimerRef.current) {
-			clearTimeout(hoverTimerRef.current);
+	const [isOpen, setIsOpen] = useState(false);
+	const [popoverPos, setPopoverPos] = useState({ x: 0, y: 0 });
+	const buttonRef = useRef<HTMLButtonElement>(null);
+	const popoverRef = useRef<HTMLDivElement>(null);
+	const positionPopover = useCallback(() => {
+		const button = buttonRef.current;
+		if (!button) {
+			return;
 		}
-		const r = e.currentTarget.getBoundingClientRect();
+		const r = button.getBoundingClientRect();
+		const popoverWidth = Math.min(320, window.innerWidth - 16);
 		const x = Math.min(
 			Math.max(8, r.left - 20),
-			Math.max(8, window.innerWidth - 370),
+			Math.max(8, window.innerWidth - popoverWidth - 8),
 		);
+		const popoverHeight = Math.min(420, window.innerHeight - 16);
 		const y =
-			r.bottom + 254 > window.innerHeight - 20 && r.top - 254 > 8
-				? r.top - 254
+			r.bottom + popoverHeight > window.innerHeight - 8 &&
+			r.top - popoverHeight > 8
+				? r.top - popoverHeight
 				: r.bottom + 4;
-		setHoverPos({ x, y });
-		setShowHover(true);
-	};
-	const onLeave = () => {
-		if (hoverTimerRef.current) {
-			clearTimeout(hoverTimerRef.current);
+		setPopoverPos({ x, y });
+	}, []);
+
+	useEffect(() => {
+		if (!isOpen) {
+			return;
 		}
-		hoverTimerRef.current = setTimeout(() => {
-			setShowHover(false);
-		}, 300);
-	};
-	const onHoverStay = () => {
-		if (hoverTimerRef.current) {
-			clearTimeout(hoverTimerRef.current);
-		}
-	};
+		const onPointerDown = (e: globalThis.MouseEvent) => {
+			const target = e.target;
+			if (!(target instanceof Node)) {
+				return;
+			}
+			if (
+				buttonRef.current?.contains(target) ||
+				popoverRef.current?.contains(target)
+			) {
+				return;
+			}
+			setIsOpen(false);
+		};
+		const onKeyDown = (e: KeyboardEvent) => {
+			if (e.key === "Escape") {
+				setIsOpen(false);
+				buttonRef.current?.focus();
+			}
+		};
+		const onViewportChange = () => positionPopover();
+		document.addEventListener("mousedown", onPointerDown);
+		document.addEventListener("keydown", onKeyDown);
+		window.addEventListener("resize", onViewportChange);
+		window.addEventListener("scroll", onViewportChange, true);
+		return () => {
+			document.removeEventListener("mousedown", onPointerDown);
+			document.removeEventListener("keydown", onKeyDown);
+			window.removeEventListener("resize", onViewportChange);
+			window.removeEventListener("scroll", onViewportChange, true);
+		};
+	}, [isOpen, positionPopover]);
+
 	return (
 		<>
 			<button
+				ref={buttonRef}
 				type="button"
+				aria-expanded={isOpen}
+				aria-haspopup="dialog"
 				style={{
 					position: "relative",
 					background: "none",
 					border: "none",
-					padding: 0,
+					padding: "0 2px",
 					margin: "0 8px",
 					color: "inherit",
 					font: "inherit",
-					display: "inline-block",
+					display: "inline-flex",
+					alignItems: "center",
+					gap: "3px",
 					cursor: "pointer",
 					opacity: 0.7,
 					textDecoration: "underline",
 					whiteSpace: "nowrap",
 					overflow: "hidden",
 					textOverflow: "ellipsis",
+					minWidth: 0,
 				}}
-				onClick={() => onShowDiff?.()}
-				onMouseEnter={onEnter}
-				onMouseLeave={onLeave}
-				onFocus={onEnter}
-				onBlur={onLeave}
+				onClick={() => {
+					positionPopover();
+					setIsOpen((open) => !open);
+				}}
+				title="Show Commit Details"
 			>
-				[{commit.title}]
+				<span
+					style={{
+						overflow: "hidden",
+						textOverflow: "ellipsis",
+					}}
+				>
+					[{commit.title}]
+				</span>
+				<svg
+					width="10"
+					height="10"
+					viewBox="0 0 16 16"
+					fill="currentColor"
+					style={{ flexShrink: 0 }}
+				>
+					<title>Show Commit Details</title>
+					<path d="M4 6l4 4 4-4H4z" />
+				</svg>
 			</button>
-			{showHover && (
-				<CommitHover
+			{isOpen && (
+				<CommitPopover
 					commit={commit}
-					pos={hoverPos}
-					hoverRef={hoverRef}
+					pos={popoverPos}
+					popoverRef={popoverRef}
 					onCopyHash={(e) => {
 						e.stopPropagation();
 						onCopyHash?.(commit.hash);
 					}}
-					onMouseEnter={onHoverStay}
-					onMouseLeave={onLeave}
+					onShowDiff={() => onShowDiff?.()}
 				/>
 			)}
 		</>

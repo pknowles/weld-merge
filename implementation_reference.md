@@ -21,7 +21,9 @@ Entry point and Git integration.
 ## Webview UI (React Frontend)
 Located in `src/webview/ui/`.
 - **`App.tsx`**: Main UI container, state orchestration, and message bus handling.
-- **`CodePane.tsx`**: Individual editor panels (Monaco integration).
+- **`CodePane.tsx`**: Individual editor panels (Monaco integration). Pane
+  headers render compact click-only commit detail popovers for Base/Local/Remote
+  commit metadata and actions.
 - **`DiffCurtain.tsx`**: SVG-based connecting lines ("curtains") and action buttons between panels.
 - **`meldPane.tsx`**: High-level layout for a 3-panel merge view.
 - **`src/webview/submoduleUi/`**: Submodule conflict resolver UI. Receives one authoritative snapshot on `ready`, then lazy-loads commit search results and per-commit changed files. The graph preserves Git-provided commit order and renders it with local HTML rows plus a narrow SVG lane strip, keeping ordering/topology data from Git while limiting UI code to lane coordinates and interaction.

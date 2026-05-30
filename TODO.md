@@ -1,10 +1,10 @@
 # Future Improvements & Known Issues
 
-## Annoyances
+## New Ideas and Features
 
-Hovering the mouse over the Local and Remote commits shows a giant commit card.
-This just gets in the way. We should make these dropdowns instead that the user
-has to click to open.
+Buttons to copy local or remote into merged would avoid having to copy/paste.
+
+## Annoyances
 
 Running "auto-merge all conflicted files" prevents the nice auto-merge feature
 of meld where conflict markers are replaced with "(??)" in the 3-view editor
