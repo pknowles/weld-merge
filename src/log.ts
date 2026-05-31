@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles
+
 import { type LogOutputChannel, window } from "vscode";
 
 let weldLogChannel: LogOutputChannel | null = null;

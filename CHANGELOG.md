@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.0.12] - 2026-05-30
+
+### Added
+- **Submodule Conflicts**: Added a dedicated submodule conflict resolver that shows a commit graph for each submodule, letting you pick the correct target commit directly from the 3-view editor.
+- **Commit Info Popover**: The commit info card in the 3-view header is now click-to-open instead of hover, preventing accidental pop-ups while navigating.
+
+### Fixed
+- **Startup Race**: Resolved a Git initialization race where both custom editors could receive snapshot data before the repository was ready, causing blank or stale panels on startup.
+- **Readiness Detection**: Replaced polling via `repository.status()` with `state.onDidChange` event subscription, eliminating a class of startup timing failures.
+- **Compare-with-Base Scroll**: Toggling the right "compare with base" panel resets the editor scroll position less frequently.
+
+### Changed
+- **Repository Readiness**: Refactored startup sequencing into a `ReadyRepository` proof type (a value whose existence guarantees the repo is ready); snapshot delivery is now gated on both the webview and the repository being fully initialized.
+
+### Performance
+- **Diff Engine**: Reduced GC pressure and improved scalability for large files by switching to a line-based text buffer and optimizing the core diff/highlight pipeline.
+
 ## [0.0.11] - 2026-05-17
 
 ### Added

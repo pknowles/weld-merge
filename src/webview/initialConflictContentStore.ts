@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles
+//
 // In-memory store for the "initial git conflict" side of a Compare view.
 //
 // When the user chooses Compare after we detect their working-tree file has

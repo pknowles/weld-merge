@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles
+
 import type { WebviewPayload } from "./ui/types.ts";
 
 export interface ReadyState {

@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles
+
 import { editor } from "monaco-editor";
 import React from "react";
 import { mapLineAcrossPanes } from "./scrollMapping.ts";

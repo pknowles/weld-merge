@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles
+//
 // Parse Git conflict-marker labels from working-tree text.
 //
 // Git does not persist the human-readable conflict labels (HEAD, common

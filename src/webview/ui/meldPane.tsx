@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles
+
 import React, { type FC, Fragment } from "react";
 import { AnimatedColumn } from "./animatedColumn.tsx";
 import { CodePane } from "./CodePane.tsx";

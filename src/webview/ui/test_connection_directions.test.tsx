@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles
+
 import { afterAll, beforeAll, describe, it, jest } from "@jest/globals";
 import "@testing-library/jest-dom";
 import { render } from "@testing-library/react";

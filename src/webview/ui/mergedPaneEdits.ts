@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles
+
 import type { Differ } from "../../matchers/diffutil.ts";
 import type { MonacoContentChange } from "./types.ts";
 

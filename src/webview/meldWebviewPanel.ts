@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles
+
 import { basename } from "node:path";
 import {
 	type CancellationToken,

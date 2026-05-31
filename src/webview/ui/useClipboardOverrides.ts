@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles
+
 import type { editor } from "monaco-editor";
 import React from "react";
 import { useVscodeMessageBus } from "./useVSCodeMessageBus.ts";

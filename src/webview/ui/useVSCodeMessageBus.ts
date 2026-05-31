@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles
+
 interface VsCodeApi {
 	postMessage: (msg: unknown) => void;
 }

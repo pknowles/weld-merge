@@ -142,6 +142,10 @@ UI that shows a graph of the git history between the commits that **base**,
 **local** and **remote** chose and allowing you to stage your desired commit
 directly from the UI.
 
+![Screenshot of the submodule resolution editor, its git graph of the submodule
+and selection to stage as the merge
+result](./images/screenshot_resolve_submodule.png)
+
 ### Source Control Panel
 
 The extension adds a **Weld Merge : Conflicted Files** view to the native Source Control (SCM) panel. `Alt + M` to open by default (`Cmd + Alt + M` on Mac).
@@ -335,5 +339,8 @@ GPL Version 2; see [LICENSE](LICENSE).
 
 ## Feedback & Support
 
-If you encounter a bug, have a feature request, or just want to share feedback, please file an issue on our GitHub repository at:  
-[https://github.com/pknowles/weld-merge/issues](https://github.com/pknowles/weld-merge/issues)
+If you encounter a bug or have a feature request, please file a [**GitHub
+Issue**](https://github.com/pknowles/weld-merge/issues). For anything else -
+feedback, questions, or a quick note that the extension has been useful - you’re
+welcome to message
+[**weldmerge.bsky.social**](https://bsky.app/profile/weldmerge.bsky.social).

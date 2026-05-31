@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles
+
 import Editor from "@monaco-editor/react";
 import { editor, KeyCode, KeyMod, Selection } from "monaco-editor";
 import {

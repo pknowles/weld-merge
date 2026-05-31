@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles
+
 import { diffChars } from "diff";
 import type { DiffChunk, FileState, Highlight } from "./types.ts";
 

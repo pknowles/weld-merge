@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles
+
 import type { editor } from "monaco-editor";
 import { type FC, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DiffLineState, PaneDiffs, PaneFiles } from "./appHooks.ts";

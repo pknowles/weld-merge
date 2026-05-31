@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles
+
 import type { editor } from "monaco-editor";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Differ } from "../../matchers/diffutil.ts";

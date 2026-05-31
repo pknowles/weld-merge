@@ -1,3 +1,5 @@
+// Copyright (C) 2026 Pyarelal Knowles
+
 import { type PropsWithChildren, useLayoutEffect, useState } from "react";
 import { ANIMATION_TRANSITION } from "./types.ts";
 
