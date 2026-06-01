@@ -153,12 +153,12 @@ Target files:
 
 ### Work Checklist
 
-- [ ] Add or strengthen `diffPayload` tests for normal both-modified conflicts.
-- [ ] Add `diffPayload` tests for both-added conflicts where base is absent.
+- [x] Add or strengthen `diffPayload` tests for normal both-modified conflicts.
+- [x] Add `diffPayload` tests for both-added conflicts where base is absent.
 - [ ] Add `diffPayload` tests for diff3 labels and normal conflict labels.
 - [ ] Assert auto-merge replacement only happens when `git merge-file -p`
       output exactly matches the working file.
-- [ ] Assert payload file order, labels, line arrays, diff arrays, and commit
+- [x] Assert payload file order, labels, line arrays, diff arrays, and commit
       metadata exactly.
 - [ ] Add `meldWebviewPanel` message protocol tests for `ready`.
 - [ ] Add message protocol tests for webview edits, save, base diff,
@@ -215,41 +215,41 @@ Target files:
 
 For each applicable algorithm, add curated examples covering:
 
-- [ ] Identical files.
-- [ ] Insert at start, middle, and end.
-- [ ] Delete at start, middle, and end.
-- [ ] Replace with the same line count.
-- [ ] Replace with fewer lines.
-- [ ] Replace with more lines.
-- [ ] Delete every line.
-- [ ] Empty base with non-empty sides.
-- [ ] Repeated equal lines around changes.
+- [x] Identical files.
+- [x] Insert at start, middle, and end.
+- [x] Delete at start, middle, and end.
+- [x] Replace with the same line count.
+- [x] Replace with fewer lines.
+- [x] Replace with more lines.
+- [x] Delete every line.
+- [x] Empty base with non-empty sides.
+- [x] Repeated equal lines around changes.
 - [ ] Leading blank lines.
 - [ ] Trailing blank lines.
 - [ ] Contiguous blank blocks inside a change.
 - [ ] Conflict marker text as ordinary file content.
-- [ ] Local-only change.
-- [ ] Remote-only change.
-- [ ] Same local and remote change.
-- [ ] Overlapping incompatible local and remote changes.
+- [x] Local-only change.
+- [x] Remote-only change.
+- [x] Same local and remote change.
+- [x] Overlapping incompatible local and remote changes.
 
 ### Work Checklist
 
 - [ ] Add helper assertions that apply opcodes to source content and compare
       the reconstructed target.
-- [ ] Add exact opcode assertions for small stable examples.
-- [ ] Add merge result assertions for all same-change and conflict examples.
-- [ ] Add `consumeBlankLines` or public-behavior tests that kill blank-line
+- [x] Add exact opcode assertions for small stable examples.
+- [x] Add merge result assertions for all same-change and conflict examples.
+- [x] Add `consumeBlankLines` or public-behavior tests that kill blank-line
       boundary mutants without copying production trimming logic.
-- [ ] Strengthen Myers tests for prefix/suffix boundaries and overlapping
+- [x] Strengthen Myers tests for prefix/suffix boundaries and overlapping
       repeated sequences.
 - [ ] Strengthen sync-point matcher tests where sync points are at start, end,
       adjacent positions, and inside repeated blocks.
 - [ ] Upgrade fuzz tests so they assert reconstruction, monotonicity, bounds,
       identity, and convergence invariants, not only "does not throw".
-- [ ] Add highlight tests for single-character insert, delete, and replace.
-- [ ] Add highlight tests for multi-line replacements and trailing newlines.
-- [ ] Assert exact `startLine`, `startColumn`, `endLine`, `endColumn`,
+- [x] Add highlight tests for single-character insert, delete, and replace.
+- [x] Add highlight tests for multi-line replacements and trailing newlines.
+- [x] Assert exact `startLine`, `startColumn`, `endLine`, `endColumn`,
       `isWholeLine`, and `tag` for highlight fixtures.
 
 ### Verification
@@ -291,7 +291,7 @@ Target files:
 - [ ] Add fixtures for gaps before, between, and after chunks.
 - [ ] Add fixtures for zero-width insert and delete chunks.
 - [ ] Add fixtures for reversed diffs and multi-hop five-pane mappings.
-- [ ] Assert exact mapped values at chunk starts, midpoints, ends, and just
+- [x] Assert exact mapped values at chunk starts, midpoints, ends, and just
       outside boundaries.
 - [ ] Add fake Monaco editor tests with constant line heights.
 - [ ] Add fake Monaco editor tests with variable line heights.
@@ -304,7 +304,7 @@ Target files:
 - [ ] Assert exact clipboard text for empty selection and non-empty selection.
 - [ ] Assert exact `executeEdits` ranges and final model content after cut and
       paste.
-- [ ] Add app hook navigation tests for previous/next conflict boundaries,
+- [x] Add app hook navigation tests for previous/next conflict boundaries,
       missing conflicts, and wrap/no-wrap behavior if supported.
 
 ### Verification
@@ -341,9 +341,9 @@ Target files:
       compare updates, and conflict-lost updates.
 - [ ] Assert the final visible/editor state after each host message.
 - [ ] Assert exact outbound host messages for toolbar/config actions.
-- [ ] Add tests that compare final merged content after applying
+- [x] Add tests that compare final merged content after applying
       `mergedPaneEdits` changes.
-- [ ] Add tests for full replacement range generation on empty, one-line, and
+- [x] Add tests for full replacement range generation on empty, one-line, and
       multi-line documents.
 - [ ] Strengthen `editorActions` tests to assert both `executeEdits` ranges and
       final editor content.
