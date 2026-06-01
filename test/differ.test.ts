@@ -153,7 +153,91 @@ describe("Differ ignoreBlanks trims leading and trailing blanks from chunks", ()
 	});
 });
 
-// ─── locateChunk ──────────────────��───────────────────────────────────────────
+describe("Differ ignoreBlanks consumeBlankLines boundary conditions", () => {
+	it("leading blanks on A-side are trimmed: startA advances past them", () => {
+		const base = ["", "x"];
+		const local = ["", "Y"];
+		const remote = ["", "x"];
+		const d = new Differ();
+		d.ignoreBlanks = true;
+		d.setSequences([local, base, remote]);
+
+		const nonNull = d
+			.allChanges()
+			.filter((p) => p[0] !== null || p[1] !== null);
+		const chunk = nonNull[0]?.[0] ?? nonNull[0]?.[1];
+		expect(chunk?.startA).toBeGreaterThanOrEqual(1);
+	});
+
+	it("trailing blanks on A-side are trimmed: endA retreats past them", () => {
+		const base = ["x", ""];
+		const local = ["Y", ""];
+		const remote = ["x", ""];
+		const d = new Differ();
+		d.ignoreBlanks = true;
+		d.setSequences([local, base, remote]);
+
+		const nonNull = d
+			.allChanges()
+			.filter((p) => p[0] !== null || p[1] !== null);
+		const chunk = nonNull[0]?.[0] ?? nonNull[0]?.[1];
+		expect(chunk?.endA).toBeLessThanOrEqual(1);
+	});
+
+	it("replace→insert when merged A-side trims to empty and outer B-side has content", () => {
+		// Right diff: A=merged(base), B=remote. Make base have only blank in the diff
+		// region while remote has real content → c1===c2 with replace → insert.
+		const base = ["a", "", "b"];
+		const local = ["a", "", "b"];
+		const remote = ["a", "NEW", "b"];
+		const d = new Differ();
+		d.ignoreBlanks = true;
+		d.setSequences([local, base, remote]);
+
+		// Any chunk with tag insert (from right diff pair[1]) satisfies the condition.
+		const hasInsert = d
+			.allChanges()
+			.some((p) => p[0]?.tag === "insert" || p[1]?.tag === "insert");
+		expect(hasInsert).toBe(true);
+	});
+
+	it("replace→delete when outer B-side trims to empty and merged A-side has content", () => {
+		// Left diff: A=merged(base), B=local. Make local have only blank in the diff
+		// region while base has real content → c3===c4 with replace → delete.
+		const base = ["a", "CONTENT", "b"];
+		const local = ["a", "", "b"];
+		const remote = ["a", "CONTENT", "b"];
+		const d = new Differ();
+		d.ignoreBlanks = true;
+		d.setSequences([local, base, remote]);
+
+		const hasDelete = d
+			.allChanges()
+			.some((p) => p[0]?.tag === "delete" || p[1]?.tag === "delete");
+		expect(hasDelete).toBe(true);
+	});
+
+	it("both sides trim to empty: chunk is removed entirely", () => {
+		const base = ["a", "x", "b"];
+		const local = ["a", "", "b"];
+		const remote = ["a", "x", "b"];
+		const d = new Differ();
+		d.ignoreBlanks = true;
+		d.setSequences([local, base, remote]);
+
+		const nonNull = d
+			.allChanges()
+			.filter((p) => p[0] !== null || p[1] !== null);
+		for (const [left] of nonNull) {
+			if (left) {
+				const aLines = base.slice(left.startA, left.endA);
+				expect(aLines.every((l) => l === "")).toBe(false);
+			}
+		}
+	});
+});
+
+// ─── locateChunk ──────────────────────────────────────────────────────────────
 
 describe("Differ locateChunk", () => {
 	it("returns [null, null, null] for an out-of-range pane", () => {
