@@ -166,16 +166,16 @@ Target files:
 - [ ] Assert exact outbound `postMessage` command names and payload shapes.
 - [ ] Add tests where the ready callback throws and verify the webview receives
       the structured error title and message.
-- [ ] Add `treeView` parser tests for valid `MERGE_MSG` conflict blocks.
-- [ ] Add `treeView` parser tests for malformed indentation, missing headers,
+- [x] Add `treeView` parser tests for valid `MERGE_MSG` conflict blocks.
+- [x] Add `treeView` parser tests for malformed indentation, missing headers,
       duplicate paths, and non-comment termination lines.
 - [ ] Add tree item tests for Git API mismatch: repository is mid-conflict but
       merge changes are empty.
 - [ ] Add tree item tests where reading `MERGE_MSG` throws and verify an
       `ErrorTreeItem`, not an empty list.
-- [ ] Add `gitUtils` tests for normal `.git` directories and gitdir pointer
+- [x] Add `gitUtils` tests for normal `.git` directories and gitdir pointer
       files with relative paths.
-- [ ] Add `gitUtils` tests for conflict state detection across merge, rebase,
+- [x] Add `gitUtils` tests for conflict state detection across merge, rebase,
       cherry-pick, and no-operation states.
 - [ ] Add `repoContext` tests for unsupported schemes, unavailable Git API,
       repository close during acquisition, and panel disposal during

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, it } from "mocha";
 import { Uri } from "vscode";
@@ -82,4 +82,53 @@ describe("gitUtils gitdir resolution (VS Code host)", () => {
 			await closePromise;
 		}
 	});
+
+	for (const scenario of [
+		{
+			name: "cherry-pick",
+			statePath: "CHERRY_PICK_HEAD",
+			expectedOtherRef: "CHERRY_PICK_HEAD",
+		},
+		{
+			name: "revert",
+			statePath: "REVERT_HEAD",
+			expectedOtherRef: "REVERT_HEAD",
+		},
+		{
+			name: "rebase-merge",
+			statePath: "rebase-merge",
+			expectedOtherRef: "REBASE_HEAD",
+		},
+		{
+			name: "rebase-apply",
+			statePath: "rebase-apply",
+			expectedOtherRef: "REBASE_HEAD",
+		},
+	] as const) {
+		it(`detects ${scenario.name} conflict state`, async () => {
+			const repoPath = await makeRepo(
+				`weld-vscode-gitdir-${scenario.name}-`,
+			);
+			try {
+				const repository = await getRepository(repoPath);
+				const gitDir = await getGitDirUri(repository);
+				const stateUri = Uri.joinPath(gitDir, scenario.statePath);
+				if (scenario.statePath.startsWith("rebase-")) {
+					await mkdir(stateUri.fsPath);
+				} else {
+					await writeFile(stateUri.fsPath, "deadbeef\n");
+				}
+
+				const state = await readConflictState(repository);
+
+				assert.ok(state);
+				assert.equal(state.operation, scenario.name);
+				assert.equal(state.otherRef, scenario.expectedOtherRef);
+			} finally {
+				const closePromise = waitForRepoClose(repoPath);
+				await rm(repoPath, { recursive: true, force: true });
+				await closePromise;
+			}
+		});
+	}
 });
