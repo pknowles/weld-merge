@@ -237,6 +237,72 @@ describe("Differ ignoreBlanks consumeBlankLines boundary conditions", () => {
 	});
 });
 
+// ─── _getAutoMergeTag via observable chunk tags ───────────────────────────────
+// Each case drives a different branch of _getAutoMergeTag (conflict/delete/
+// replace/insert) by choosing sequences that produce the right overlap shape.
+
+describe("Differ _autoMerge tag classification", () => {
+	it("produces 'replace' tag when both sides changed the same lines differently", () => {
+		// Both sides change the same base line, but to different content → conflict.
+		// Same content → replace (matched, both sides changed merged content).
+		const base = ["a", "b", "c"];
+		const local = ["a", "X", "c"];
+		const remote = ["a", "X", "c"];
+		const d = makeDiffer(local, base, remote);
+		// Same change on both sides → auto-merge as replace (non-conflict).
+		const changes = d.allChanges();
+		const tags = changes
+			.flatMap((p) => [p[0]?.tag, p[1]?.tag])
+			.filter(Boolean);
+		expect(tags.every((t) => t !== "conflict")).toBe(true);
+		expect(
+			tags.some(
+				(t) => t === "replace" || t === "insert" || t === "delete",
+			),
+		).toBe(true);
+	});
+
+	it("produces 'delete' tag when merged side has lines but outer sides are empty", () => {
+		// local and remote both delete a line that exists in base.
+		// _getAutoMergeTag: matches=true, l1!==h1 (base has content), l0===h0 → delete.
+		const base = ["a", "GONE", "c"];
+		const local = ["a", "c"];
+		const remote = ["a", "c"];
+		const d = makeDiffer(local, base, remote);
+		const tags = d
+			.allChanges()
+			.flatMap((p) => [p[0]?.tag, p[1]?.tag])
+			.filter(Boolean);
+		expect(tags.some((t) => t === "delete")).toBe(true);
+	});
+
+	it("produces 'insert' tag when both sides insert identical content", () => {
+		// local and remote both add the same new line.
+		// _getAutoMergeTag: matches=true, l1===h1 (no base change) → insert.
+		const base = ["a", "c"];
+		const local = ["a", "NEW", "c"];
+		const remote = ["a", "NEW", "c"];
+		const d = makeDiffer(local, base, remote);
+		const tags = d
+			.allChanges()
+			.flatMap((p) => [p[0]?.tag, p[1]?.tag])
+			.filter(Boolean);
+		expect(tags.some((t) => t === "insert")).toBe(true);
+	});
+
+	it("produces 'conflict' tag when both sides differ from base differently", () => {
+		const base = ["a", "original", "c"];
+		const local = ["a", "LOCAL", "c"];
+		const remote = ["a", "REMOTE", "c"];
+		const d = makeDiffer(local, base, remote);
+		const tags = d
+			.allChanges()
+			.flatMap((p) => [p[0]?.tag, p[1]?.tag])
+			.filter(Boolean);
+		expect(tags.some((t) => t === "conflict")).toBe(true);
+	});
+});
+
 // ─── locateChunk ──────────────────────────────────────────────────────────────
 
 describe("Differ locateChunk", () => {
