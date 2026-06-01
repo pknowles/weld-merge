@@ -38,7 +38,7 @@ Located in `src/webview/ui/`.
 ## Testing
 
 - Unit test what we can in ./test/test_*
-- Webview mocking in ./test/webview_*
+- Webview mocking in ./test/webview_* and ./test/webview/*
 - For e2e vscode interaction, use ./test/vscode/*
 - For e2e browser interaction and benchmarks, use playwrite, e.g. in ./test/benchmarking/
 - xvfb may be used if real windows MUST be displayed
@@ -66,6 +66,23 @@ Located in `src/webview/ui/`.
 
 Test coverage with jest, mutations with stryker, fuzz testing with jazzer should be kept up to date.
 
+- `testing_makeover_plan.md` is the checklist for turning
+  `mutant_testing_audit.md` into stricter behavior tests. Use it to track
+  mutation-score repair work by subsystem and to keep each test change tied to
+  observable outcomes rather than line coverage alone.
+- Generated test/tool output should be written under the visible repo-root
+  `test-output/` directory when the owning tool allows it. Jest coverage,
+  Stryker temp/report files, Playwright artifacts, and benchmark metrics are
+  configured there; VS Code download caches and fuzz corpora/crash artifacts
+  remain tool-owned exceptions documented in `testing_makeover_plan.md`.
+- `scripts/run_stryker_guarded.ts` is the `npm run test:mutate` entrypoint. It
+  runs Stryker in the active checkout, refuses to start with unmerged index
+  entries, and fails after mutation testing if tracked Git status changed.
+- `test/runGit.ts` gates test Git commands to paths under `tmpdir()`. VS Code
+  integration helpers and the Remote-SSH runner use this guard so conflict
+  fixtures cannot accidentally run mutating Git commands in the project
+  checkout.
+
 ## Benchmarking Telemetry
 
 Granular performance telemetry is **opt-in only** and has zero production impact. It activates only when the Playwright test injects `window["__WELD_PERF_STATS__"]` before the benchmark run.
@@ -73,6 +90,7 @@ Granular performance telemetry is **opt-in only** and has zero production impact
 - **`src/matchers/diffutil.ts`** — `Differ.changeSequence()`: records total diff engine wall time per call to `diffTimes[]`.
 - **`src/webview/ui/CodePane.tsx`** — `useCodePaneLogic`: the `isMiddle`-gated `onDidChangeModelContent` listener stamps `inputStartTimeRef.current` on each user edit. The decoration `useEffect` times `ed.deltaDecorations(...)` into `highlightJsTimes[]`, then schedules a single rAF to record end-to-end latency (from model change to after Monaco's next repaint opportunity) into `fullRenderTimes[]`.
 - **`src/webview/ui/DiffCurtain.tsx`** — `useFilteredDiffs` `useMemo`: records visible-chunk computation time into `curtainRenderTimes[]`.
+- **`test/benchmarking/config.ts`** — owns benchmark paths. The HTML fixture stays in `test/benchmarking/benchmark.html`; generated benchmark metrics and CPU profiles go to `test-output/benchmarking/results/`.
 - **`test/benchmarking/ui_stress.test.ts`**: The "massive 50k document" test injects the stats gate, types 150 keystrokes with a double-rAF yield between each, then extracts avg/max for all four metrics. Also post-processes the `.cpuprofile` via exact function-name matching (`changeSequence`, `useFilteredDiffs`, `deltaDecorations`). **Verify these names against a real `.cpuprofile` run** — if they change (minification/rename), the profile metrics silently report `0`.
 
 ## Delete/Modify Conflict Restore

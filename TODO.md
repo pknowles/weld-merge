@@ -253,7 +253,7 @@ Track as a dedicated refactor; do not fold into unrelated changes.
 Gemini's summary of jscpd (currently thresholded in `.jscpd.json`):
 
 - src/matchers/myers.ts: Contains 4 separate clones (10-13 lines each), mostly within the core diffing logic.
-- src/webview/ui/diffCurtainButtons.test.tsx: Has a significant 31-line internal clone of test setup/logic.
+- test/webview/ui/diffCurtainButtons.test.tsx: Has a significant 31-line internal clone of test setup/logic.
 - src/extension.ts ↔ src/treeView.ts: Shares an 18-line block and a 9-line block, likely related to command registration or VS Code utility logic.
 - src/webview/ui/editorActions.ts: Contains internal clones of 18 and 15 lines in action handlers.
 - src/webview/ui/appHooks.ts ↔ highlightUtil.ts: Shares a 10-line logic block.

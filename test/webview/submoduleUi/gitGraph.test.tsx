@@ -2,8 +2,8 @@
 
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { GitGraph } from "./GitGraph.tsx";
-import type { CommitInfo } from "./types.ts";
+import { GitGraph } from "../../../src/webview/submoduleUi/GitGraph.tsx";
+import type { CommitInfo } from "../../../src/webview/submoduleUi/types.ts";
 
 const originalScrollIntoView = Element.prototype.scrollIntoView;
 const REMOTE_ROW_NAME = /remote.*origin\/remote.*Remote/u;
