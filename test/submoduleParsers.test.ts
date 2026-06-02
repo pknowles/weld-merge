@@ -63,28 +63,17 @@ function makeBlob(
 // ─── parseShaLines ────────────────────────────────────────────────────────────
 
 describe("parseShaLines", () => {
-	it("returns empty array for empty output", () => {
+	it("returns empty array for empty or whitespace-only output", () => {
 		expect(parseShaLines("")).toEqual([]);
-	});
-
-	it("returns empty array for whitespace-only output", () => {
 		expect(parseShaLines("   \n  \n")).toEqual([]);
 	});
 
-	it("parses a single SHA", () => {
-		expect(parseShaLines("abc123\n")).toEqual(["abc123"]);
-	});
-
-	it("parses multiple SHAs, one per line", () => {
-		expect(parseShaLines("sha1\nsha2\nsha3\n")).toEqual([
+	it("parses multiple SHAs one per line and trims whitespace", () => {
+		expect(parseShaLines("  sha1  \nsha2\nsha3\n")).toEqual([
 			"sha1",
 			"sha2",
 			"sha3",
 		]);
-	});
-
-	it("trims whitespace from each SHA", () => {
-		expect(parseShaLines("  sha1  \n  sha2  \n")).toEqual(["sha1", "sha2"]);
 	});
 });
 
