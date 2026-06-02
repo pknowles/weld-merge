@@ -395,3 +395,44 @@ describe("mapLineAcrossChunks exact boundary values", () => {
 		expect(mapLineAcrossChunks(10, twoChunkOpts)).toBe(10);
 	});
 });
+
+// Tests for _upperBoundMid boundary (the <= condition at the chunk midpoint).
+describe("mapLineAcrossChunks srcMid boundary behaviour", () => {
+	const chunk1: DiffChunk = {
+		tag: "replace",
+		startA: 10,
+		endA: 20,
+		startB: 10,
+		endB: 30,
+	};
+	const opts = {
+		chunks: [chunk1],
+		sourceIsA: true,
+		sourceMaxLines: 40,
+		targetMaxLines: 60,
+	};
+
+	it("line exactly at srcMid maps to dstMid", () => {
+		// srcMid=15, dstMid=20.  _upperBoundMid's <= means 15 stays in this chunk.
+		expect(mapLineAcrossChunks(15, opts)).toBe(20);
+	});
+
+	it("line just below srcMid maps below dstMid", () => {
+		expect(mapLineAcrossChunks(14.9, opts)).toBeLessThan(20);
+	});
+
+	it("line just above srcMid maps above dstMid", () => {
+		expect(mapLineAcrossChunks(15.1, opts)).toBeGreaterThan(20);
+	});
+
+	it("reversed diff (sourceIsA=false): srcMid is on B side", () => {
+		// With sourceIsA=false, source=B [10,30]: srcMid=20, dstMid=15.
+		const reversedOpts = {
+			chunks: [chunk1],
+			sourceIsA: false,
+			sourceMaxLines: 40,
+			targetMaxLines: 40,
+		};
+		expect(mapLineAcrossChunks(20, reversedOpts)).toBe(15);
+	});
+});
