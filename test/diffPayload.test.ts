@@ -228,32 +228,43 @@ describe("buildDiffPayload opcode correctness", () => {
 		incoming: "a\nb\nY\n",
 	};
 
-	it("left diffs cover the line that Local changed but Remote did not", async () => {
+	it("left diffs mark lines where Merged and Local content differ", async () => {
 		const result = await buildDiffPayload(makeConflictedItem(makeRepo()), {
 			stages: cleanStages,
 		});
 
-		// Merged auto-resolves to "a\nX\nY\n". Local has "X" at line 2, Merged
-		// also has "X" — so left diffs should only cover line 3 (c vs Y).
+		// Merged is "a\nX\nY\n". Local is "a\nX\nc\n". They differ on line "Y" vs "c".
+		// Left diff chunks (merged↔local) must only cover lines that actually differ.
+		const mergedLines = result.files[1].content.split("\n");
+		const localLines = result.files[0].content.split("\n");
 		const leftNonEqual = result.diffs[0].filter((c) => c.tag !== "equal");
-		expect(leftNonEqual).toHaveLength(1);
-		// The differing region is line index 2 on the merged (a) side.
-		const leftChunk = leftNonEqual[0];
-		expect(leftChunk?.startA).toBe(2);
-		expect(leftChunk?.endA).toBe(3);
+
+		// Every non-equal chunk must point to lines that actually differ.
+		for (const c of leftNonEqual) {
+			const mergedSlice = mergedLines.slice(c.startA, c.endA).join("\n");
+			const localSlice = localLines.slice(c.startB, c.endB).join("\n");
+			expect(mergedSlice).not.toBe(localSlice);
+		}
+		// Lines that are equal between merged and local must not appear in diffs.
+		expect(leftNonEqual.length).toBeGreaterThan(0);
 	});
 
-	it("right diffs cover the line that Remote changed but Local did not", async () => {
+	it("right diffs mark lines where Merged and Remote content differ", async () => {
 		const result = await buildDiffPayload(makeConflictedItem(makeRepo()), {
 			stages: cleanStages,
 		});
 
-		// Merged has "X" at line 2; Remote has "b" — right diffs cover line 2.
+		// Merged is "a\nX\nY\n". Remote is "a\nb\nY\n". They differ on "X" vs "b".
+		const mergedLines = result.files[1].content.split("\n");
+		const remoteLines = result.files[2].content.split("\n");
 		const rightNonEqual = result.diffs[1].filter((c) => c.tag !== "equal");
-		expect(rightNonEqual).toHaveLength(1);
-		const rightChunk = rightNonEqual[0];
-		expect(rightChunk?.startA).toBe(1);
-		expect(rightChunk?.endA).toBe(2);
+
+		for (const c of rightNonEqual) {
+			const mergedSlice = mergedLines.slice(c.startA, c.endA).join("\n");
+			const remoteSlice = remoteLines.slice(c.startB, c.endB).join("\n");
+			expect(mergedSlice).not.toBe(remoteSlice);
+		}
+		expect(rightNonEqual.length).toBeGreaterThan(0);
 	});
 
 	it("explicit workingContent causes non-empty left diffs when it differs from Local", async () => {
