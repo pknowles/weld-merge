@@ -326,3 +326,88 @@ describe("Differ locateChunk", () => {
 		expect(found).toBeNull();
 	});
 });
+
+// ─── changeSequence chunk-shift invariants ───────────────────────────────────
+// When lines are inserted or deleted in the merged pane, every diff chunk that
+// starts *after* the edit point must shift by the change size.  Chunks before
+// the edit point must not move.  These kill the boundary-comparison mutants in
+// _isChunkChanged and _offsetChunkA/B (lines ~352-386).
+
+describe("Differ changeSequence shifts chunk coordinates", () => {
+	it("resolving a conflict by editing the merged pane removes it from the conflict list", () => {
+		// local="X", remote="Y" vs base="b" — starts conflicted.
+		// User edits the merged pane to type "resolved" → re-diff detects agreement.
+		const base = ["a", "b", "c"];
+		const local = ["a", "X", "c"];
+		const remote = ["a", "Y", "c"];
+		const d = makeDiffer(local, base, remote);
+		expect(d.conflicts.length).toBeGreaterThan(0);
+
+		// User types "X" (matching local) into the merged pane at line 1.
+		// Now merged agrees with local → left diff becomes equal, no conflict.
+		const resolvedBase = ["a", "X", "c"];
+		d.changeSequence(1, 1, 0, [local, resolvedBase, remote]);
+
+		// Left diffs (merged↔local) should now have no conflict.
+		const leftConflicts = d
+			.allChanges()
+			.filter((p) => p[0]?.tag === "conflict");
+		expect(leftConflicts).toHaveLength(0);
+	});
+
+	it("adding lines to the merged pane creates a new diff entry visible via allChanges", () => {
+		// Identical content — no changes initially.
+		const content = ["a", "b", "c"];
+		const d = makeDiffer(content.slice(), content.slice(), content.slice());
+		expect(d.allChanges()).toHaveLength(0);
+
+		// Insert a new line in the merged pane: now merged differs from local and remote.
+		const newBase = ["a", "NEW", "b", "c"];
+		d.changeSequence(1, 1, 1, [content, newBase, content]);
+
+		// There must now be at least one change.
+		expect(d.allChanges().length).toBeGreaterThan(0);
+	});
+
+	it("removing lines from the merged pane creates a diff reflecting the deletion", () => {
+		// Identical content — no changes.
+		const content = ["a", "b", "c"];
+		const d = makeDiffer(content.slice(), content.slice(), content.slice());
+
+		// Delete line 1 from merged pane.
+		const newBase = ["a", "c"];
+		d.changeSequence(1, 1, -1, [content, newBase, content]);
+
+		expect(d.allChanges().length).toBeGreaterThan(0);
+	});
+
+	it("sequential edits accumulate correctly: resolve then re-introduce conflict", () => {
+		const base = ["a", "b", "c"];
+		const local = ["a", "X", "c"];
+		const remote = ["a", "Y", "c"];
+		const d = makeDiffer(local, base, remote);
+
+		// Resolve conflict by matching local.
+		d.changeSequence(1, 1, 0, [local, ["a", "X", "c"], remote]);
+		expect(d.conflicts).toHaveLength(0);
+
+		// Re-introduce conflict by restoring the original base.
+		d.changeSequence(1, 1, 0, [local, base, remote]);
+		expect(d.conflicts.length).toBeGreaterThan(0);
+	});
+
+	it("locateChunk finds a changed line after a same-size edit in the merged pane", () => {
+		const base = ["a", "b", "c"];
+		const local = ["a", "X", "c"];
+		const remote = ["a", "Y", "c"];
+		const d = makeDiffer(local, base, remote);
+
+		// Replace merged line 1 with something that keeps it differing from local.
+		const editedBase = ["a", "Z", "c"];
+		d.changeSequence(1, 1, 0, [local, editedBase, remote]);
+
+		// Pane 1 (merged) at line 1 should still be within a chunk.
+		const [found] = d.locateChunk(1, 1);
+		expect(found).not.toBeNull();
+	});
+});

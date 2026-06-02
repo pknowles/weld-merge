@@ -279,3 +279,106 @@ describe("SyncPointMyersSequenceMatcher", () => {
 		expect(blocks).toEqual(r);
 	});
 });
+
+// ─── SyncPointMyersSequenceMatcher.getOpcodes ─────────────────────────────────
+// The subclass overrides getOpcodes(); these exercise _addOpcode (L673-677)
+// and the splitMatchingBlocks loop that the base-class opcode tests skip.
+
+// getOpcodes() on this subclass only produces output when sync points are set —
+// without them it iterates splitMatchingBlocks which is only populated by
+// _processChunk via initialize(). Tests pass explicit sync points.
+describe("SyncPointMyersSequenceMatcher getOpcodes with sync points", () => {
+	it("produces no difference opcodes for identical arrays", () => {
+		const a = ["x", "y", "z"];
+		const m = new SyncPointMyersSequenceMatcher(null, a, [...a], [[1, 1]]);
+		m.initialize();
+		expect(m.getOpcodes().filter((o) => o.tag !== "equal")).toHaveLength(0);
+	});
+
+	it("produces a replace opcode when one line changes with sync point before it", () => {
+		const a = ["a", "b", "c"];
+		const b = ["a", "X", "c"];
+		const m = new SyncPointMyersSequenceMatcher(null, a, b, [[1, 1]]);
+		m.initialize();
+		const nonEqual = m.getOpcodes().filter((o) => o.tag !== "equal");
+		expect(nonEqual.some((o) => o.tag === "replace")).toBe(true);
+		const op = nonEqual.find((o) => o.tag === "replace");
+		if (op) {
+			expect(a.slice(op.startA, op.endA)).not.toEqual(
+				b.slice(op.startB, op.endB),
+			);
+		}
+	});
+
+	it("produces a delete opcode when b is shorter", () => {
+		const a = ["a", "b", "c"];
+		const b = ["a", "c"];
+		const m = new SyncPointMyersSequenceMatcher(null, a, b, [[1, 1]]);
+		m.initialize();
+		expect(m.getOpcodes().some((o) => o.tag === "delete")).toBe(true);
+	});
+
+	it("produces an insert opcode when b is longer", () => {
+		const a = ["a", "c"];
+		const b = ["a", "b", "c"];
+		const m = new SyncPointMyersSequenceMatcher(null, a, b, [[1, 1]]);
+		m.initialize();
+		expect(m.getOpcodes().some((o) => o.tag === "insert")).toBe(true);
+	});
+
+	it("opcodes reconstruct b from a when sync point splits around the change", () => {
+		const a = ["p", "q", "X", "r", "s"];
+		const b = ["p", "q", "Y", "r", "s"];
+		const m = new SyncPointMyersSequenceMatcher(null, a, b, [[2, 2]]);
+		m.initialize();
+		const ops = m.getOpcodes();
+
+		const result: string[] = [];
+		for (const op of ops) {
+			if (op.tag === "equal") {
+				result.push(...a.slice(op.startA, op.endA));
+			} else if (op.tag !== "delete") {
+				result.push(...b.slice(op.startB, op.endB));
+			}
+		}
+		expect(result).toEqual(b);
+	});
+});
+
+// ─── InlineMyersSequenceMatcher short-sequence edge cases ─────────────────────
+// L507: preprocessDiscardNonmatchingLines skips k-mer indexing for length ≤2.
+
+describe("InlineMyersSequenceMatcher short sequences", () => {
+	it("handles 2-char differing sequences without crashing", () => {
+		const m = new InlineMyersSequenceMatcher(null, "ab", "cd");
+		expect(() => m.getMatchingBlocks()).not.toThrow();
+	});
+
+	it("produces equal block for 2-char identical sequence", () => {
+		const m = new InlineMyersSequenceMatcher(null, "ab", "ab");
+		expect(m.getMatchingBlocks().some(([, , size]) => size === 2)).toBe(
+			true,
+		);
+	});
+
+	it("produces a diff opcode for 2-char differing sequence", () => {
+		const m = new InlineMyersSequenceMatcher(null, "ab", "xy");
+		const ops = m.getOpcodes().filter((o) => o.tag !== "equal");
+		expect(ops.length).toBeGreaterThan(0);
+	});
+
+	it("length-3 sequence (above short-circuit threshold) diffs the middle char", () => {
+		const m = new InlineMyersSequenceMatcher(null, "abc", "axc");
+		const nonEqual = m.getOpcodes().filter((o) => o.tag !== "equal");
+		expect(nonEqual).toHaveLength(1);
+		// Verify by content: the differing character is different, not by hardcoded position.
+		const inlineOp = nonEqual[0];
+		const diffA = inlineOp
+			? "abc".slice(inlineOp.startA, inlineOp.endA)
+			: "";
+		const diffB = inlineOp
+			? "axc".slice(inlineOp.startB, inlineOp.endB)
+			: "";
+		expect(diffA).not.toBe(diffB);
+	});
+});
