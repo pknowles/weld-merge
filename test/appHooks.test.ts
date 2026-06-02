@@ -3,6 +3,7 @@ import {
 	assertDiffChunksWellFormed,
 	compareChunkOrder,
 	findTargetChunk,
+	normalizeWebviewError,
 } from "../src/webview/ui/appHooks.ts";
 import type { DiffChunk } from "../src/webview/ui/types.ts";
 
@@ -154,5 +155,64 @@ describe("findTargetChunk", () => {
 	it("prev with single chunk wraps back to that chunk", () => {
 		const one = [chunk(5, 8)];
 		expect(findTargetChunk(one, 4, "prev")).toEqual(one[0]);
+	});
+});
+
+// ─── normalizeWebviewError ────────────────────────────────────────────────────
+
+describe("normalizeWebviewError", () => {
+	it("passes through valid string fields unchanged", () => {
+		const result = normalizeWebviewError({
+			title: "Something failed",
+			message: "The operation could not complete",
+			details: "stack trace here",
+		});
+		expect(result.title).toBe("Something failed");
+		expect(result.message).toBe("The operation could not complete");
+		expect(result.details).toBe("stack trace here");
+	});
+
+	it("substitutes a fallback title when title is missing", () => {
+		const result = normalizeWebviewError({ message: "oops" });
+		expect(result.title).toBe("Error: exception while loading diff");
+	});
+
+	it("substitutes a fallback message when message is missing", () => {
+		const result = normalizeWebviewError({ title: "Failed" });
+		expect(result.message).toBe("Unknown exception");
+	});
+
+	it("substitutes fallback title when title is not a string", () => {
+		const result = normalizeWebviewError({ title: 42, message: "ok" });
+		expect(result.title).toBe("Error: exception while loading diff");
+	});
+
+	it("substitutes fallback message when message is not a string", () => {
+		const result = normalizeWebviewError({
+			title: "T",
+			message: { obj: 1 },
+		});
+		expect(result.message).toBe("Unknown exception");
+	});
+
+	it("omits details when details is undefined", () => {
+		const result = normalizeWebviewError({ title: "T", message: "M" });
+		expect(result.details).toBeUndefined();
+	});
+
+	it("omits details when details is not a string", () => {
+		const result = normalizeWebviewError({
+			title: "T",
+			message: "M",
+			details: 99,
+		});
+		expect(result.details).toBeUndefined();
+	});
+
+	it("handles a completely empty object with all fallbacks", () => {
+		const result = normalizeWebviewError({});
+		expect(result.title).toBe("Error: exception while loading diff");
+		expect(result.message).toBe("Unknown exception");
+		expect(result.details).toBeUndefined();
 	});
 });

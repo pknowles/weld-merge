@@ -637,4 +637,9 @@ export const useAppChunkActions = (
 };
 
 export type { DiffLineState };
-export { assertDiffChunksWellFormed, compareChunkOrder, findTargetChunk };
+export {
+	assertDiffChunksWellFormed,
+	compareChunkOrder,
+	findTargetChunk,
+	normalizeWebviewError,
+};
