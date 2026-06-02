@@ -297,4 +297,4 @@ const useSynchronizedScrolling = (
 	return { attachScrollListener, forceSyncToPane };
 };
 
-export { useSynchronizedScrolling };
+export { getSourceLineDecimal, getSyncPointY, useSynchronizedScrolling };
