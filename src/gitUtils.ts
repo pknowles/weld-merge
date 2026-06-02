@@ -272,5 +272,6 @@ export {
 	execGitWithInput,
 	getGitDirUri,
 	getUnresolvedReasons,
+	parseGitDirPointer,
 	readConflictState,
 };
