@@ -442,35 +442,42 @@ Stryker never sees the extension host process.
 
 ### How To Get Verifiable VS Code Coverage Metrics
 
-The extension is bundled by esbuild to `out/extension.js` with `--sourcemap`.
-V8 native coverage works against this without instrumentation:
+**Attempted and partially working (2026-06-03):**
 
-```sh
-# Build with source maps (already the default)
-npm run build:extension
+Running with `NODE_V8_COVERAGE=test-output/coverage/vscode npm run test:vscode`
+produces V8 coverage files, and `c8 report --include='src/**'` successfully
+reports against TypeScript source for files that the test process loads
+*directly via `tsx/cjs`*:
 
-# Run VS Code tests with V8 coverage collection
-NODE_V8_COVERAGE=test-output/coverage/vscode \
-npm run test:vscode
-
-# Merge V8 output to LCOV using c8
-npx c8 report \
-  --reporter=lcov \
-  --reporter=text \
-  --include='out/extension.js' \
-  test-output/coverage/vscode
+```
+ treeView.ts     91%   gitUtils.ts   61%
+ repoContext.ts  48%   submoduleConflict.ts  28%
 ```
 
-Known issues to solve first:
-- The extension host may exit before V8 flushes coverage. Add a short delay
-  (`await new Promise(r => setTimeout(r, 500))`) at the end of the Mocha suite
-  root hook, or hook into `process.on('beforeExit')` in `runTest.ts`.
-- esbuild bundles everything into one file; the LCOV report will be against
-  `out/extension.js` line numbers until `c8` resolves source maps. Make sure
-  `--all` is passed to c8 to include non-executed files.
-- c8 needs to know the original source root: `--src src/`.
+**The critical gap:** `meldWebviewPanel.ts` (and all of `src/webview/`) does
+**not** appear in the coverage. The extension's activation path runs from
+`out/extension.js` inside a sandboxed Electron sub-process that does **not**
+inherit `NODE_V8_COVERAGE`. V8 coverage is only collected in the Mocha test
+runner process, not in the VS Code extension host.
 
-Once working, add a `test:vscode:coverage` script and run it in Phase 6.
+**What this means practically:**
+- Files that tests import directly from `src/` (repoContext, treeView, etc.) —
+  coverable now with this setup.
+- Files that only execute through the extension activation + VS Code APIs
+  (meldWebviewPanel, diffPayload, etc.) — not reachable this way.
+
+**The remaining question for meldWebviewPanel.ts coverage:**
+Option A: instrument `out/extension.js` with Istanbul before running tests
+  (fragile with esbuild bundles, source map issues likely).
+Option B: accept that `test:vscode` coverage is partial and rely on code review
+  + targeted integration tests to know what's exercised.
+Option C: migrate to `@vscode/test-cli` which has built-in `--coverage` support
+  — it instruments the extension before launch and may handle the process
+  boundary correctly. Worth spiking before investing more here.
+
+For now, add a `test:vscode:coverage` script that gives partial (but real)
+coverage numbers for the extension-host-adjacent code, and treat
+meldWebviewPanel.ts as needing manual gap analysis until Option C is evaluated.
 
 ### Right Next Targets (by real bug risk, not mutation score)
 

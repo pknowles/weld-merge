@@ -353,6 +353,7 @@
 		"test": "npx jest",
 		"test:coverage": "npx jest --coverage",
 		"test:vscode": "env -u ELECTRON_RUN_AS_NODE npx tsx test/vscode/runTest.ts",
+		"test:vscode:coverage": "env -u ELECTRON_RUN_AS_NODE NODE_V8_COVERAGE=test-output/coverage/vscode npx tsx test/vscode/runTest.ts && npx c8 report --reporter=text --reporter=lcov --lcov-file=test-output/coverage/vscode/lcov.info --temp-directory=test-output/coverage/vscode --include='src/**' --exclude='src/**/*.test.ts' --exclude='src/**/*.d.ts'",
 		"test:vscode:restored-tabs": "env -u ELECTRON_RUN_AS_NODE npx tsx scripts/test_restored_tabs.ts",
 		"test:vscode:remote-ssh": "env -u ELECTRON_RUN_AS_NODE npx tsx test/vscode-remote-ssh/runTest.ts",
 		"test:mutate": "npx tsx scripts/run_stryker_guarded.ts",
