@@ -36,6 +36,22 @@ interface CoverageConfig {
 	};
 }
 
+interface JestCoverageThresholds {
+	branches: number;
+	functions: number;
+	lines: number;
+	statements: number;
+}
+
+interface LcovAccum {
+	lf: number;
+	lh: number;
+	fnf: number;
+	fnh: number;
+	brf: number;
+	brh: number;
+}
+
 interface StrykerConfig {
 	thresholds?: {
 		high: number;
@@ -48,22 +64,22 @@ interface StrykerReport extends MutationTestResult {}
 
 const SLACK = 1;
 
-const JEST_REGEXES = {
-	branches: /branches:\s*(\d+)/,
-	functions: /functions:\s*(\d+)/,
-	lines: /lines:\s*(\d+)/,
-	statements: /statements:\s*(\d+)/,
+const LCOV_COUNTERS: Record<string, keyof LcovAccum> = {
+	"LF:": "lf",
+	"LH:": "lh",
+	"FNF:": "fnf",
+	"FNH:": "fnh",
+	"BRF:": "brf",
+	"BRH:": "brh",
 };
-
-const LCOV_COUNTERS: Record<string, [keyof typeof lcovAccumInit, number]> = {
-	"LF:": ["lf", 3],
-	"LH:": ["lh", 3],
-	"FNF:": ["fnf", 4],
-	"FNH:": ["fnh", 4],
-	"BRF:": ["brf", 4],
-	"BRH:": ["brh", 4],
+const lcovAccumInit: LcovAccum = {
+	lf: 0,
+	lh: 0,
+	fnf: 0,
+	fnh: 0,
+	brf: 0,
+	brh: 0,
 };
-const lcovAccumInit = { lf: 0, lh: 0, fnf: 0, fnh: 0, brf: 0, brh: 0 };
 
 function writeAtomic(path: string, content: string): void {
 	const tmpPath = `${path}.tmp`;
@@ -74,11 +90,13 @@ function writeAtomic(path: string, content: string): void {
 function parseLcovTotals(lcov: string): CoverageConfig["combined"] {
 	const acc = { ...lcovAccumInit };
 	for (const line of lcov.split("\n")) {
-		for (const [prefix, [key, offset]] of Object.entries(LCOV_COUNTERS)) {
-			if (line.startsWith(prefix)) {
-				acc[key] += Number(line.slice(offset));
-				break;
-			}
+		const colon = line.indexOf(":");
+		if (colon === -1) {
+			continue;
+		}
+		const key = LCOV_COUNTERS[`${line.slice(0, colon)}:`];
+		if (key !== undefined) {
+			acc[key] += Number(line.slice(colon + 1));
 		}
 	}
 	return {
@@ -109,27 +127,10 @@ export function ratchetJestCoverage(): void {
 	);
 	const { total } = summary;
 
-	const jestConfigPath = join(cwd(), "jest.config.js");
-	let jestConfig = readFileSync(jestConfigPath, "utf8");
-
-	const current: Record<keyof typeof JEST_REGEXES, number> = {
-		branches: Number.parseInt(
-			jestConfig.match(JEST_REGEXES.branches)?.[1] ?? "0",
-			10,
-		),
-		functions: Number.parseInt(
-			jestConfig.match(JEST_REGEXES.functions)?.[1] ?? "0",
-			10,
-		),
-		lines: Number.parseInt(
-			jestConfig.match(JEST_REGEXES.lines)?.[1] ?? "0",
-			10,
-		),
-		statements: Number.parseInt(
-			jestConfig.match(JEST_REGEXES.statements)?.[1] ?? "0",
-			10,
-		),
-	};
+	const thresholdsPath = join(cwd(), "jest.coverage.config.json");
+	const current: JestCoverageThresholds = JSON.parse(
+		readFileSync(thresholdsPath, "utf8"),
+	);
 
 	const next = {
 		branches: Math.max(
@@ -147,22 +148,20 @@ export function ratchetJestCoverage(): void {
 		),
 	};
 
-	// biome-ignore lint/suspicious/noConsole: script output
-	console.log("New Jest thresholds:", next);
-
-	for (const [key, regex] of Object.entries(JEST_REGEXES)) {
-		if (!regex.test(jestConfig)) {
-			throw new Error(
-				`Could not find threshold key "${key}" in jest.config.js. Ensure the config matches the expected format.`,
-			);
-		}
-		jestConfig = jestConfig.replace(
-			regex,
-			`${key}: ${next[key as keyof typeof next]}`,
-		);
+	if (
+		next.branches === current.branches &&
+		next.functions === current.functions &&
+		next.lines === current.lines &&
+		next.statements === current.statements
+	) {
+		// biome-ignore lint/suspicious/noConsole: script output
+		console.log("Jest thresholds unchanged:", next);
+		return;
 	}
 
-	writeAtomic(jestConfigPath, jestConfig);
+	// biome-ignore lint/suspicious/noConsole: script output
+	console.log("New Jest thresholds:", next);
+	writeAtomic(thresholdsPath, `${JSON.stringify(next, null, "\t")}\n`);
 }
 
 export function ratchetCombinedCoverage(): void {
@@ -201,21 +200,28 @@ export function ratchetCombinedCoverage(): void {
 		);
 	}
 
-	config.combined.branches = Math.max(
-		config.combined.branches,
-		actual.branches - SLACK,
-	);
-	config.combined.functions = Math.max(
-		config.combined.functions,
-		actual.functions - SLACK,
-	);
-	config.combined.lines = Math.max(
-		config.combined.lines,
-		actual.lines - SLACK,
-	);
+	const next = {
+		branches: Math.max(config.combined.branches, actual.branches - SLACK),
+		functions: Math.max(
+			config.combined.functions,
+			actual.functions - SLACK,
+		),
+		lines: Math.max(config.combined.lines, actual.lines - SLACK),
+	};
 
+	if (
+		next.branches === config.combined.branches &&
+		next.functions === config.combined.functions &&
+		next.lines === config.combined.lines
+	) {
+		// biome-ignore lint/suspicious/noConsole: script output
+		console.log("Combined coverage passed. Thresholds unchanged:", next);
+		return;
+	}
+
+	config.combined = next;
 	// biome-ignore lint/suspicious/noConsole: script output
-	console.log("Combined coverage passed. New thresholds:", config.combined);
+	console.log("Combined coverage passed. New thresholds:", next);
 	writeAtomic(configPath, `${JSON.stringify(config, null, "\t")}\n`);
 }
 

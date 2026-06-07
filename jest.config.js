@@ -1,3 +1,12 @@
+import { readFileSync } from "node:fs";
+
+const coverageThresholds = JSON.parse(
+	readFileSync(
+		new URL("./jest.coverage.config.json", import.meta.url),
+		"utf8",
+	),
+);
+
 export default {
 	preset: "ts-jest",
 	testEnvironment: "jsdom",
@@ -11,12 +20,7 @@ export default {
 		"!src/extension.ts", // Extension entry point often hard to test without vscode-test
 	],
 	coverageThreshold: {
-		global: {
-			branches: 68,
-			functions: 76,
-			lines: 78,
-			statements: 78,
-		},
+		global: coverageThresholds,
 	},
 	testPathIgnorePatterns: [
 		"/node_modules/",

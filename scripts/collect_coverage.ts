@@ -17,7 +17,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { cwd, exit } from "node:process";
+import { cwd, exit, env as processEnv } from "node:process";
 import { mergeCoverageReportFiles } from "lcov-result-merger";
 import {
 	ratchetCombinedCoverage,
@@ -61,18 +61,13 @@ function runVscodeCoverage(): void {
 	mkdirSync(rawParent, { recursive: true });
 	const rawDir = mkdtempSync(join(rawParent, "vscode-raw-"));
 	try {
-		execFileSync(
-			"env",
-			[
-				"-u",
-				"ELECTRON_RUN_AS_NODE",
-				`NODE_V8_COVERAGE=${rawDir}`,
-				"npx",
-				"tsx",
-				"test/vscode/runTest.ts",
-			],
-			{ stdio: "inherit", cwd: root },
-		);
+		const { ELECTRON_RUN_AS_NODE: _, ...env } = processEnv;
+		execFileSync("npx", ["tsx", "test/vscode/runTest.ts"], {
+			stdio: "inherit",
+			cwd: root,
+			// biome-ignore lint/style/useNamingConvention: env var name is dictated by Node/V8
+			env: { ...env, NODE_V8_COVERAGE: rawDir },
+		});
 
 		const vscodeDir = join(root, "test-output", "coverage", "vscode");
 		mkdirSync(vscodeDir, { recursive: true });
