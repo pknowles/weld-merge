@@ -440,44 +440,54 @@ metrics today:
 not NoCoverage because nobody tests them — the VS Code tests do — but because
 Stryker never sees the extension host process.
 
-### How To Get Verifiable VS Code Coverage Metrics
+### Combined Coverage Tooling (status 2026-06-07)
 
-**Attempted and partially working (2026-06-03):**
+`npm run coverage` (`scripts/collect_coverage.ts`) is the single entry point.
+It runs in order:
+1. Delete stale `test-output/jest/coverage/lcov.info`, run Jest with coverage,
+   verify the file was produced.
+2. Delete stale `test-output/coverage/vscode/lcov.info`, create a fresh temp dir
+   under `test-output/coverage/vscode-raw-<random>/` via `mkdtempSync` for raw
+   V8 JSON, run VS Code tests with `NODE_V8_COVERAGE` pointing there, run c8
+   to emit LCOV to `test-output/coverage/vscode/lcov.info`, delete the raw dir.
+3. Merge the two exact file paths via `mergeCoverageReportFiles` API into
+   `test-output/coverage/combined/lcov.info`.
+4. `ratchetJestCoverage()` — reads `test-output/jest/coverage/coverage-summary.json`, ratchets `jest.config.js`.
+5. `ratchetCombinedCoverage()` — reads combined LCOV, checks it against
+   `coverage.config.json` thresholds (hard fail if below), then ratchets upward.
 
-Running with `NODE_V8_COVERAGE=test-output/coverage/vscode npm run test:vscode`
-produces V8 coverage files, and `c8 report --include='src/**'` successfully
-reports against TypeScript source for files that the test process loads
-*directly via `tsx/cjs`*:
+`npm run test:mutate` runs Stryker then immediately calls `ratchet_mutation.ts`
+which calls `ratchetStrykerScore()`. Mutation ratcheting is never triggered by
+a coverage run.
 
-```
- treeView.ts     91%   gitUtils.ts   61%
- repoContext.ts  48%   submoduleConflict.ts  28%
-```
+**Threshold files:**
+- `jest.config.js` — Jest-only line/branch/function/statement thresholds,
+  enforced by `npx jest --coverage`. Ratcheted from `coverage-summary.json`.
+- `coverage.config.json` — combined line/branch/function thresholds, enforced
+  by `ratchetCombinedCoverage()` inside `npm run coverage`. Ratcheted upward
+  after passing.
+- `stryker.config.json` — mutation score threshold, enforced by Stryker itself.
+  Ratcheted by `npm run test:mutate`.
 
-**The critical gap:** `meldWebviewPanel.ts` (and all of `src/webview/`) does
-**not** appear in the coverage. The extension's activation path runs from
-`out/extension.js` inside a sandboxed Electron sub-process that does **not**
-inherit `NODE_V8_COVERAGE`. V8 coverage is only collected in the Mocha test
-runner process, not in the VS Code extension host.
+**Known gaps in VS Code coverage:**
+- Files loaded directly by the Mocha test process via `tsx/cjs` are covered:
+  `treeView.ts`, `gitUtils.ts`, `repoContext.ts`, `submoduleConflict.ts`
+- `meldWebviewPanel.ts` and all of `src/webview/` are **not** covered — the
+  extension runs from `out/extension.js` in a sandboxed Electron sub-process
+  that does not inherit `NODE_V8_COVERAGE`.
 
-**What this means practically:**
-- Files that tests import directly from `src/` (repoContext, treeView, etc.) —
-  coverable now with this setup.
-- Files that only execute through the extension activation + VS Code APIs
-  (meldWebviewPanel, diffPayload, etc.) — not reachable this way.
-
-**The remaining question for meldWebviewPanel.ts coverage:**
+**The coverage target: `meldWebviewPanel.ts`:**
 Option A: instrument `out/extension.js` with Istanbul before running tests
   (fragile with esbuild bundles, source map issues likely).
 Option B: accept that `test:vscode` coverage is partial and rely on code review
   + targeted integration tests to know what's exercised.
 Option C: migrate to `@vscode/test-cli` which has built-in `--coverage` support
-  — it instruments the extension before launch and may handle the process
-  boundary correctly. Worth spiking before investing more here.
+  — it instruments the extension before launch and handles the process boundary.
+  Worth spiking as the primary path to covering `meldWebviewPanel.ts`.
 
-For now, add a `test:vscode:coverage` script that gives partial (but real)
-coverage numbers for the extension-host-adjacent code, and treat
-meldWebviewPanel.ts as needing manual gap analysis until Option C is evaluated.
+Until Option C is evaluated, cover `meldWebviewPanel.ts` behavior through
+targeted VS Code integration tests (see Phase 6 checklist) and treat the
+absence of line coverage for that file as a known, documented gap — not a pass.
 
 ### Right Next Targets (by real bug risk, not mutation score)
 
@@ -506,13 +516,31 @@ that would cause silent data loss or confusing user-facing failures — are:
 
 **Do not** chase mutation scores in `meldWebviewPanel.ts` with Jest unit tests —
 the VS Code coupling is fundamental, not accidental. The right metric for that
-file is VS Code coverage via c8, not Stryker.
+file is VS Code integration test coverage, not Stryker.
 
 ## Phase 6: Quality Ratchets And Completion
 
-- [ ] Add `test:vscode:coverage` npm script using `NODE_V8_COVERAGE` + `c8`.
-- [ ] Solve the extension-host-exit-before-flush timing issue.
-- [ ] Run `test:vscode:coverage` and record baseline VS Code coverage per file.
+- [x] Add `c8` and `lcov-result-merger` to `devDependencies`.
+- [x] Add `scripts/collect_coverage.ts` — single entry point that deletes stale
+      outputs before each generation step, uses a fresh `mkdtempSync` raw dir
+      under `test-output/coverage/` for V8 JSON (cleaned in `finally`), merges
+      via `mergeCoverageReportFiles` API with exact file paths, then calls
+      ratchet functions directly (no shell-out).
+- [x] Split `ratchet_coverage.ts` into three exported functions:
+      `ratchetJestCoverage` (`coverage-summary.json` → `jest.config.js`),
+      `ratchetCombinedCoverage` (combined LCOV → `coverage.config.json`,
+      enforces thresholds before ratcheting upward),
+      `ratchetStrykerScore` (Stryker JSON → `stryker.config.json`).
+- [x] Add `coverage.config.json` — checked-in combined thresholds, seeded from
+      baseline with SLACK=1. Enforced as a hard gate by `ratchetCombinedCoverage`.
+- [x] Add `scripts/ratchet_mutation.ts` — thin entry point called only by
+      `npm run test:mutate`, so Stryker thresholds are never touched by a
+      coverage-only run.
+- [x] `npm run coverage` is the single user-facing coverage command; `pre-checkin`
+      calls it. No separate `ratchet` script exposed to users.
+- [ ] Spike `@vscode/test-cli --coverage` to determine if it covers
+      `meldWebviewPanel.ts` (the main unresolved coverage gap).
+- [ ] Record baseline combined coverage per file after the raw-dir fix.
 - [ ] Add `completeMerge` integration tests to `merge_editor.test.ts`.
 - [ ] Add `contentChanged` queue-ordering integration test.
 - [ ] Re-run full Jest: `npx jest --runInBand`.
@@ -526,9 +554,10 @@ file is VS Code coverage via c8, not Stryker.
 - [ ] Update `implementation_reference.md` with any new test files or important
       workflow changes.
 
-Done when Stryker score is above threshold for Jest-reachable code, VS Code
-coverage is measured and recorded (not necessarily perfect), `completeMerge`
-and edit-queue paths are covered, and `npm run pre-checkin` passes.
+Done when Stryker score is above threshold for Jest-reachable code, combined
+coverage is measured from clean per-run inputs and ratcheted correctly,
+`completeMerge` and edit-queue paths are covered, and `npm run pre-checkin`
+passes cleanly without depending on network-fetched tools.
 
 ## Definition Of Done For A Test Change
 

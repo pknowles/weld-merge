@@ -1,27 +1,38 @@
 /**
  * @file ratchet_coverage.ts
- * @description This script implements a "ratchet" mechanism for test quality.
- * It reads the latest Jest coverage reports and Stryker mutation reports,
- * and automatically updates the project configurations (jest.config.js and stryker.config.json)
- * with the new scores if they are higher than the current thresholds.
+ * @description Ratchets coverage and mutation thresholds upward from fresh
+ * report files. Called internally by other scripts — not a standalone user
+ * command.
  *
- * Usage:
- * 1. Run tests with coverage: `npm run test:coverage`
- * 2. Run mutation tests: `npm run test:mutate`
- * 3. Run this script: `npm run ratchet`
+ * Exports three independent ratchet functions so callers can invoke only the
+ * ones relevant to what just ran:
+ *   ratchetJestCoverage()     — Jest coverage-summary.json → jest.config.js
+ *   ratchetCombinedCoverage() — combined LCOV → coverage.config.json
+ *   ratchetStrykerScore()     — Stryker JSON  → stryker.config.json
+ *
+ * All functions throw on failure; callers are responsible for catching.
  */
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { cwd, exit } from "node:process";
+import { cwd } from "node:process";
 import { calculateMetrics } from "mutation-testing-metrics";
+import type { MutationTestResult } from "mutation-testing-report-schema";
 
-interface CoverageSummary {
+interface JestCoverageSummary {
 	total: {
 		lines: { pct: number };
 		statements: { pct: number };
 		functions: { pct: number };
 		branches: { pct: number };
+	};
+}
+
+interface CoverageConfig {
+	combined: {
+		branches: number;
+		functions: number;
+		lines: number;
 	};
 }
 
@@ -33,196 +44,230 @@ interface StrykerConfig {
 	};
 }
 
-import type { MutationTestResult } from "mutation-testing-report-schema";
-
 interface StrykerReport extends MutationTestResult {}
 
 const SLACK = 1;
 
-const REGEXES = {
+const JEST_REGEXES = {
 	branches: /branches:\s*(\d+)/,
 	functions: /functions:\s*(\d+)/,
 	lines: /lines:\s*(\d+)/,
 	statements: /statements:\s*(\d+)/,
 };
 
-/**
- * Writes a file atomically to prevent configuration corruption.
- */
-function writeAtomic(path: string, content: string) {
+const LCOV_COUNTERS: Record<string, [keyof typeof lcovAccumInit, number]> = {
+	"LF:": ["lf", 3],
+	"LH:": ["lh", 3],
+	"FNF:": ["fnf", 4],
+	"FNH:": ["fnh", 4],
+	"BRF:": ["brf", 4],
+	"BRH:": ["brh", 4],
+};
+const lcovAccumInit = { lf: 0, lh: 0, fnf: 0, fnh: 0, brf: 0, brh: 0 };
+
+function writeAtomic(path: string, content: string): void {
 	const tmpPath = `${path}.tmp`;
 	writeFileSync(tmpPath, content);
 	renameSync(tmpPath, path);
 }
 
-/**
- * Orchestrates the ratcheting process for both Jest and Stryker.
- */
-/**
- * Ratchets Jest coverage thresholds in jest.config.js.
- * @returns true if an error occurred, false otherwise.
- */
-function ratchetJestCoverage(): boolean {
-	try {
-		const coverageSummaryPath = join(
-			cwd(),
-			"test-output",
-			"jest",
-			"coverage",
-			"coverage-summary.json",
-		);
-		if (!existsSync(coverageSummaryPath)) {
-			return false;
-		}
-
-		// biome-ignore lint/suspicious/noConsole: script output
-		console.log("Ratcheting Jest coverage...");
-		const summary: CoverageSummary = JSON.parse(
-			readFileSync(coverageSummaryPath, "utf8"),
-		);
-		const total = summary.total;
-
-		const jestConfigPath = join(cwd(), "jest.config.js");
-		let jestConfig = readFileSync(jestConfigPath, "utf8");
-
-		const currentThresholds: Record<keyof typeof REGEXES, number> = {
-			branches: Number.parseInt(
-				jestConfig.match(REGEXES.branches)?.[1] ?? "0",
-				10,
-			),
-			functions: Number.parseInt(
-				jestConfig.match(REGEXES.functions)?.[1] ?? "0",
-				10,
-			),
-			lines: Number.parseInt(
-				jestConfig.match(REGEXES.lines)?.[1] ?? "0",
-				10,
-			),
-			statements: Number.parseInt(
-				jestConfig.match(REGEXES.statements)?.[1] ?? "0",
-				10,
-			),
-		};
-
-		const newThresholds = {
-			branches: Math.max(
-				currentThresholds.branches,
-				Math.floor(total.branches.pct) - SLACK,
-			),
-			functions: Math.max(
-				currentThresholds.functions,
-				Math.floor(total.functions.pct) - SLACK,
-			),
-			lines: Math.max(
-				currentThresholds.lines,
-				Math.floor(total.lines.pct) - SLACK,
-			),
-			statements: Math.max(
-				currentThresholds.statements,
-				Math.floor(total.statements.pct) - SLACK,
-			),
-		};
-
-		// biome-ignore lint/suspicious/noConsole: script output
-		console.log("New Jest Thresholds:", newThresholds);
-
-		for (const [key, regex] of Object.entries(REGEXES)) {
-			if (!regex.test(jestConfig)) {
-				throw new Error(
-					`Could not find threshold key "${key}" in jest.config.js using regex ${regex}. Please ensure the config file matches the expected format.`,
-				);
+function parseLcovTotals(lcov: string): CoverageConfig["combined"] {
+	const acc = { ...lcovAccumInit };
+	for (const line of lcov.split("\n")) {
+		for (const [prefix, [key, offset]] of Object.entries(LCOV_COUNTERS)) {
+			if (line.startsWith(prefix)) {
+				acc[key] += Number(line.slice(offset));
+				break;
 			}
-			jestConfig = jestConfig.replace(
-				regex,
-				`${key}: ${newThresholds[key as keyof typeof newThresholds]}`,
-			);
 		}
-
-		writeAtomic(jestConfigPath, jestConfig);
-		return false;
-	} catch (e: unknown) {
-		const message = e instanceof Error ? e.message : String(e);
-		// biome-ignore lint/suspicious/noConsole: script error
-		console.error("Failed to ratchet Jest:", message);
-		return true;
 	}
+	return {
+		branches: acc.brf > 0 ? Math.floor((acc.brh / acc.brf) * 100) : 0,
+		functions: acc.fnf > 0 ? Math.floor((acc.fnh / acc.fnf) * 100) : 0,
+		lines: acc.lf > 0 ? Math.floor((acc.lh / acc.lf) * 100) : 0,
+	};
 }
 
-/**
- * Ratchets Stryker mutation score in stryker.config.json.
- * @returns true if an error occurred, false otherwise.
- */
-function ratchetStrykerScore(): boolean {
-	try {
-		const mutationSummaryPath = join(
-			cwd(),
-			"test-output",
-			"stryker",
-			"reports",
-			"mutation.json",
+export function ratchetJestCoverage(): void {
+	const summaryPath = join(
+		cwd(),
+		"test-output",
+		"jest",
+		"coverage",
+		"coverage-summary.json",
+	);
+	if (!existsSync(summaryPath)) {
+		throw new Error(
+			`Jest coverage summary not found at ${summaryPath}. Run 'npm run coverage' to generate it.`,
 		);
-		if (!existsSync(mutationSummaryPath)) {
-			return false;
-		}
+	}
 
-		// biome-ignore lint/suspicious/noConsole: script output
-		console.log("Ratcheting Stryker mutation score...");
-		const data = JSON.parse(
-			readFileSync(mutationSummaryPath, "utf8"),
-		) as StrykerReport;
+	// biome-ignore lint/suspicious/noConsole: script output
+	console.log("Ratcheting Jest thresholds from Jest-only coverage...");
+	const summary: JestCoverageSummary = JSON.parse(
+		readFileSync(summaryPath, "utf8"),
+	);
+	const { total } = summary;
 
-		let score = 0;
-		if (data.files) {
-			const metricsResult = calculateMetrics(data.files);
-			score = metricsResult.metrics.mutationScore;
-		} else {
+	const jestConfigPath = join(cwd(), "jest.config.js");
+	let jestConfig = readFileSync(jestConfigPath, "utf8");
+
+	const current: Record<keyof typeof JEST_REGEXES, number> = {
+		branches: Number.parseInt(
+			jestConfig.match(JEST_REGEXES.branches)?.[1] ?? "0",
+			10,
+		),
+		functions: Number.parseInt(
+			jestConfig.match(JEST_REGEXES.functions)?.[1] ?? "0",
+			10,
+		),
+		lines: Number.parseInt(
+			jestConfig.match(JEST_REGEXES.lines)?.[1] ?? "0",
+			10,
+		),
+		statements: Number.parseInt(
+			jestConfig.match(JEST_REGEXES.statements)?.[1] ?? "0",
+			10,
+		),
+	};
+
+	const next = {
+		branches: Math.max(
+			current.branches,
+			Math.floor(total.branches.pct) - SLACK,
+		),
+		functions: Math.max(
+			current.functions,
+			Math.floor(total.functions.pct) - SLACK,
+		),
+		lines: Math.max(current.lines, Math.floor(total.lines.pct) - SLACK),
+		statements: Math.max(
+			current.statements,
+			Math.floor(total.statements.pct) - SLACK,
+		),
+	};
+
+	// biome-ignore lint/suspicious/noConsole: script output
+	console.log("New Jest thresholds:", next);
+
+	for (const [key, regex] of Object.entries(JEST_REGEXES)) {
+		if (!regex.test(jestConfig)) {
 			throw new Error(
-				"Stryker report missing 'files'. Ensure the 'json' reporter is enabled and mutants were generated.",
+				`Could not find threshold key "${key}" in jest.config.js. Ensure the config matches the expected format.`,
 			);
 		}
-
-		if (score <= 0) {
-			return false;
-		}
-
-		const strykerConfigPath = join(cwd(), "stryker.config.json");
-		const strykerConfig: StrykerConfig = JSON.parse(
-			readFileSync(strykerConfigPath, "utf8"),
+		jestConfig = jestConfig.replace(
+			regex,
+			`${key}: ${next[key as keyof typeof next]}`,
 		);
-
-		const breakScore = Math.max(
-			strykerConfig.thresholds?.break ?? 0,
-			Math.floor(score) - SLACK,
-		);
-		// biome-ignore lint/suspicious/noConsole: script output
-		console.log("New Stryker Break Threshold:", breakScore);
-
-		if (strykerConfig.thresholds) {
-			strykerConfig.thresholds.break = breakScore;
-			writeAtomic(
-				strykerConfigPath,
-				`${JSON.stringify(strykerConfig, null, "\t")}\n`,
-			);
-		}
-		return false;
-	} catch (e: unknown) {
-		const message = e instanceof Error ? e.message : String(e);
-		// biome-ignore lint/suspicious/noConsole: script error
-		console.error("Failed to ratchet Stryker:", message);
-		return true;
 	}
+
+	writeAtomic(jestConfigPath, jestConfig);
 }
 
-/**
- * Orchestrates the ratcheting process for both Jest and Stryker.
- */
-function ratchetCoverage() {
-	const jestError = ratchetJestCoverage();
-	const strykerError = ratchetStrykerScore();
-
-	if (jestError || strykerError) {
-		exit(1);
+export function ratchetCombinedCoverage(): void {
+	const lcovPath = join(
+		cwd(),
+		"test-output",
+		"coverage",
+		"combined",
+		"lcov.info",
+	);
+	if (!existsSync(lcovPath)) {
+		throw new Error(
+			`Combined coverage LCOV not found at ${lcovPath}. Run 'npm run coverage' to generate it.`,
+		);
 	}
+
+	// biome-ignore lint/suspicious/noConsole: script output
+	console.log("Checking combined coverage thresholds...");
+	const actual = parseLcovTotals(readFileSync(lcovPath, "utf8"));
+
+	const configPath = join(cwd(), "coverage.config.json");
+	const config: CoverageConfig = JSON.parse(readFileSync(configPath, "utf8"));
+
+	const failures = (Object.keys(actual) as Array<keyof typeof actual>).filter(
+		(k) => actual[k] < config.combined[k],
+	);
+
+	if (failures.length > 0) {
+		throw new Error(
+			`Combined coverage below threshold:\n${failures
+				.map(
+					(k) =>
+						`  ${k}: ${actual[k]}% < ${config.combined[k]}% required`,
+				)
+				.join("\n")}`,
+		);
+	}
+
+	config.combined.branches = Math.max(
+		config.combined.branches,
+		actual.branches - SLACK,
+	);
+	config.combined.functions = Math.max(
+		config.combined.functions,
+		actual.functions - SLACK,
+	);
+	config.combined.lines = Math.max(
+		config.combined.lines,
+		actual.lines - SLACK,
+	);
+
+	// biome-ignore lint/suspicious/noConsole: script output
+	console.log("Combined coverage passed. New thresholds:", config.combined);
+	writeAtomic(configPath, `${JSON.stringify(config, null, "\t")}\n`);
 }
 
-ratchetCoverage();
+export function ratchetStrykerScore(): void {
+	const mutationSummaryPath = join(
+		cwd(),
+		"test-output",
+		"stryker",
+		"reports",
+		"mutation.json",
+	);
+	if (!existsSync(mutationSummaryPath)) {
+		throw new Error(
+			`Stryker report not found at ${mutationSummaryPath}. Run 'npm run test:mutate' first.`,
+		);
+	}
+
+	// biome-ignore lint/suspicious/noConsole: script output
+	console.log("Ratcheting Stryker mutation score...");
+	const data = JSON.parse(
+		readFileSync(mutationSummaryPath, "utf8"),
+	) as StrykerReport;
+
+	if (!data.files) {
+		throw new Error(
+			"Stryker report missing 'files'. Ensure the 'json' reporter is enabled and mutants were generated.",
+		);
+	}
+
+	const { metrics } = calculateMetrics(data.files);
+	if (metrics.mutationScore <= 0) {
+		return;
+	}
+
+	const strykerConfigPath = join(cwd(), "stryker.config.json");
+	const strykerConfig: StrykerConfig = JSON.parse(
+		readFileSync(strykerConfigPath, "utf8"),
+	);
+
+	const breakScore = Math.max(
+		strykerConfig.thresholds?.break ?? 0,
+		Math.floor(metrics.mutationScore) - SLACK,
+	);
+
+	// biome-ignore lint/suspicious/noConsole: script output
+	console.log("New Stryker break threshold:", breakScore);
+
+	if (strykerConfig.thresholds) {
+		strykerConfig.thresholds.break = breakScore;
+		writeAtomic(
+			strykerConfigPath,
+			`${JSON.stringify(strykerConfig, null, "\t")}\n`,
+		);
+	}
+}
