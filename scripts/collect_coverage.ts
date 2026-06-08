@@ -34,6 +34,7 @@ import {
 	ratchetCombinedCoverage,
 	ratchetJestCoverage,
 } from "./ratchet_coverage.ts";
+import { WEBVIEW_COVERAGE_ENV_VAR } from "./webviewCoverageEnv.ts";
 
 const root = cwd();
 const require = createRequire(import.meta.url);
@@ -66,7 +67,6 @@ const REQUIRED_WEBVIEW_BROWSER_COVERAGE_FILE = "src/webview/ui/App.tsx";
 const WEBVIEW_ENTRY = join(root, "out", "webview", "index.js");
 const WEBVIEW_ENTRY_MAP = `${WEBVIEW_ENTRY}.map`;
 const HIT_LINES_REGEX = /^LH:(\d+)$/m;
-const WEBVIEW_COVERAGE_ENV_VAR = "WELD_WEBVIEW_COVERAGE_DIR";
 
 interface Instrumenter {
 	instrumentSync(
@@ -115,6 +115,25 @@ function runJestCoverage(): void {
 	}
 }
 
+/*
+ * Coverage intentionally uses more than one webview build.
+ *
+ * Alternatives considered:
+ * - Build only the instrumented webview: faster, but VS Code integration tests
+ *   would run against a test-only bundle instead of the production-like assets
+ *   loaded by the extension.
+ * - Build normal assets, copy them aside, instrument in place, then restore the
+ *   copy: saves one esbuild call, but adds custom file juggling for js/map/css
+ *   assets and can restore stale files after a source change.
+ * - Emit instrumented assets under a second filename/directory: cleaner
+ *   long-term, but requires test-only webview HTML/path plumbing that the
+ *   production custom editor does not currently need.
+ *
+ * Current choice: build normal assets before VS Code tests, replace only the
+ * browser bundle for Playwright coverage, and rebuild normal assets in finally.
+ * This keeps extension-host tests production-like and guarantees the checkout
+ * is not left with Istanbul counters in out/webview/index.js.
+ */
 function buildCoverageBundles(): void {
 	log("Coverage bundles");
 	execFileSync("npm", ["run", "build:webview"], {
@@ -255,6 +274,27 @@ async function runWebviewBrowserCoverage(): Promise<void> {
 	);
 }
 
+/*
+ * Browser webview coverage cannot use the same c8 path as VS Code coverage.
+ *
+ * Alternatives considered:
+ * - NODE_V8_COVERAGE/c8: captures Node/extension-host execution, not the
+ *   browser page that runs out/webview/index.js.
+ * - Playwright page.coverage.startJSCoverage(): produces V8 range coverage for
+ *   browser scripts, but still leaves source-map remapping and LCOV conversion
+ *   to custom glue and does not provide Istanbul branch/function counters.
+ * - nyc CLI: wraps these Istanbul libraries for Node-oriented workflows, but
+ *   still needs browser extraction from window.__coverage__ and careful
+ *   esbuild-bundle source-map handling.
+ * - Babel/esbuild Istanbul plugins: viable future simplification, but adds a
+ *   second transform/plugin path to vet against this TS/React/esbuild bundle.
+ *
+ * Current choice: build the same browser bundle shape the app loads, instrument
+ * that bundle with istanbul-lib-instrument, let the Playwright fixture write
+ * window.__coverage__, remap through istanbul-lib-source-maps, then emit LCOV
+ * for the shared merger. This keeps the custom code narrow and fails if the
+ * expected source file is absent or has zero hit lines.
+ */
 function buildInstrumentedWebviewBundle(): void {
 	log("Instrumented browser webview bundle");
 	execFileSync(
@@ -299,7 +339,15 @@ async function writeIstanbulLcov(
 	reportDir: string,
 ): Promise<void> {
 	const coverageMap = createCoverageMap({});
-	for (const fileName of readdirSync(rawDir)) {
+	const coverageFiles = readdirSync(rawDir, { withFileTypes: true })
+		.filter((entry) => entry.isFile())
+		.map((entry) => entry.name);
+	if (coverageFiles.length === 0) {
+		throw new Error(
+			`Browser webview coverage did not produce raw Istanbul JSON files in ${rawDir}. The Playwright fixture may not have seen ${WEBVIEW_COVERAGE_ENV_VAR}.`,
+		);
+	}
+	for (const fileName of coverageFiles) {
 		const coverageJson = JSON.parse(
 			readFileSync(join(rawDir, fileName), "utf8"),
 		) as CoverageMapData;
