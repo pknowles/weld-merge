@@ -27,7 +27,7 @@ export default {
 		"/test/benchmarking/",
 		"/test/vscode/", // vscode integration tests (not jest)
 		"/test/vscode-remote-ssh/", // manual Remote-SSH integration test (not jest)
-		"/test/e2e/", // playwrite end to end tests (not jest)
+		"/test/webview-integration/", // playwright browser webview integration tests (not jest)
 	],
 	// Keep Jest's haste-map out of @vscode/test-electron's downloaded VS Code
 	// trees. Each install ships ~70 built-in extensions whose package.json
