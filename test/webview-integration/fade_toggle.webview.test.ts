@@ -190,7 +190,7 @@ test.describe("Diff Curtain Fade Masks", () => {
 
 		// Instead of polling, fetch once quickly after setting up to catch
 		// intermediate state if the mask was incorrectly deferred
-		await page.waitForSelector(".diff-view", { state: "attached" });
+		await expect(page.locator(".diff-view")).toHaveCount(3);
 		const visible = await getVisibleMasks(page);
 		expect(visible).toEqual(["RIGHT", "NONE", "NONE"]);
 

@@ -98,26 +98,31 @@ function makeRepo(
 function installGitApi(repositories: GitApiRepository[]): () => void {
 	const mutableExtensions = extensions as unknown as MutableExtensions;
 	const originalGetExtension = mutableExtensions.getExtension;
-	mutableExtensions.getExtension = () => ({
-		isActive: true,
-		exports: {
-			enabled: true,
-			onDidChangeEnablement: () => ({ dispose: () => undefined }),
-			getAPI: () => ({
-				git: { path: "git" },
-				state: "initialized",
-				repositories,
-				onDidChangeState: () => ({ dispose: () => undefined }),
-				onDidOpenRepository: () => ({ dispose: () => undefined }),
-				onDidCloseRepository: () => ({ dispose: () => undefined }),
-				getRepository: () => null,
-				getRepositoryRoot: () => Promise.resolve(null),
-				openRepository: () => Promise.resolve(null),
-				toGitUri: (uri: Uri) => uri,
-			}),
-		},
-		activate: () => Promise.reject(new Error("not used")),
-	});
+	mutableExtensions.getExtension = (extensionId: string) => {
+		if (extensionId !== "vscode.git") {
+			return originalGetExtension.call(extensions, extensionId);
+		}
+		return {
+			isActive: true,
+			exports: {
+				enabled: true,
+				onDidChangeEnablement: () => ({ dispose: () => undefined }),
+				getAPI: () => ({
+					git: { path: "git" },
+					state: "initialized",
+					repositories,
+					onDidChangeState: () => ({ dispose: () => undefined }),
+					onDidOpenRepository: () => ({ dispose: () => undefined }),
+					onDidCloseRepository: () => ({ dispose: () => undefined }),
+					getRepository: () => null,
+					getRepositoryRoot: () => Promise.resolve(null),
+					openRepository: () => Promise.resolve(null),
+					toGitUri: (uri: Uri) => uri,
+				}),
+			},
+			activate: () => Promise.reject(new Error("not used")),
+		};
+	};
 	return () => {
 		mutableExtensions.getExtension = originalGetExtension;
 	};
