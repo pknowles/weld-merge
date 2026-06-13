@@ -38,9 +38,10 @@ Located in `src/webview/ui/`.
 ## Testing
 
 - Unit test what we can in ./test/test_*
-- Webview mocking in ./test/webview_*
-- For e2e vscode interaction, use ./test/vscode/*
-- For e2e browser interaction and benchmarks, use playwrite, e.g. in ./test/benchmarking/
+- Webview mocking in ./test/webview_* and ./test/webview/*
+- For VS Code integration tests, use ./test/vscode/*
+- For browser webview integration tests, use ./test/webview-integration/*
+- For browser benchmarks, use Playwright with ./test/benchmarking/
 - xvfb may be used if real windows MUST be displayed
 - `test/vscode/launchTelemetrySuite/launch_telemetry.test.ts` runs in its own
   VS Code extension host with two conflicted repositories already in the
@@ -66,6 +67,31 @@ Located in `src/webview/ui/`.
 
 Test coverage with jest, mutations with stryker, fuzz testing with jazzer should be kept up to date.
 
+- `scripts/collect_coverage.ts` is the `npm run coverage` entrypoint. It builds
+  the extension and webview bundles with source maps, runs Jest coverage, runs
+  VS Code integration tests and restored-tabs tests with raw V8 coverage,
+  instruments the browser webview bundle with Istanbul, runs browser webview
+  integration tests with Playwright, merges the LCOV files, and ratchets the
+  checked-in coverage thresholds. The VS Code c8 conversion must include
+  `out/extension.js`, not `src/**`: the VS Code extension host executes the
+  bundled extension, and c8 uses `out/extension.js.map` to remap that execution
+  back to files such as `src/webview/meldWebviewPanel.ts`. Browser webview
+  coverage is different: Playwright reads `window.__coverage__` from the
+  Istanbul-instrumented `out/webview/index.js`, then
+  `istanbul-lib-source-maps` remaps that coverage back to `src/webview/ui/**`.
+- Generated test/tool output should be written under the visible repo-root
+  `test-output/` directory when the owning tool allows it. Jest coverage,
+  Stryker temp/report files, Playwright artifacts, and benchmark metrics are
+  configured there; VS Code download caches and fuzz corpora/crash artifacts
+  remain tool-owned exceptions.
+- `scripts/run_stryker_guarded.ts` is the `npm run test:mutate` entrypoint. It
+  runs Stryker in the active checkout, refuses to start with unmerged index
+  entries, and fails after mutation testing if tracked Git status changed.
+- `test/runGit.ts` gates test Git commands to paths under `tmpdir()`. VS Code
+  integration helpers and the Remote-SSH runner use this guard so conflict
+  fixtures cannot accidentally run mutating Git commands in the project
+  checkout.
+
 ## Benchmarking Telemetry
 
 Granular performance telemetry is **opt-in only** and has zero production impact. It activates only when the Playwright test injects `window["__WELD_PERF_STATS__"]` before the benchmark run.
@@ -73,6 +99,7 @@ Granular performance telemetry is **opt-in only** and has zero production impact
 - **`src/matchers/diffutil.ts`** — `Differ.changeSequence()`: records total diff engine wall time per call to `diffTimes[]`.
 - **`src/webview/ui/CodePane.tsx`** — `useCodePaneLogic`: the `isMiddle`-gated `onDidChangeModelContent` listener stamps `inputStartTimeRef.current` on each user edit. The decoration `useEffect` times `ed.deltaDecorations(...)` into `highlightJsTimes[]`, then schedules a single rAF to record end-to-end latency (from model change to after Monaco's next repaint opportunity) into `fullRenderTimes[]`.
 - **`src/webview/ui/DiffCurtain.tsx`** — `useFilteredDiffs` `useMemo`: records visible-chunk computation time into `curtainRenderTimes[]`.
+- **`test/benchmarking/config.ts`** — owns benchmark paths. The HTML fixture stays in `test/benchmarking/benchmark.html`; generated benchmark metrics and CPU profiles go to `test-output/benchmarking/results/`.
 - **`test/benchmarking/ui_stress.test.ts`**: The "massive 50k document" test injects the stats gate, types 150 keystrokes with a double-rAF yield between each, then extracts avg/max for all four metrics. Also post-processes the `.cpuprofile` via exact function-name matching (`changeSequence`, `useFilteredDiffs`, `deltaDecorations`). **Verify these names against a real `.cpuprofile` run** — if they change (minification/rename), the profile metrics silently report `0`.
 
 ## Delete/Modify Conflict Restore
@@ -85,6 +112,11 @@ Granular performance telemetry is **opt-in only** and has zero production impact
 
 - `src/treeView.ts`
   - `GitFile.conflictedItem` keeps the VS Code Git API repository context attached to conflict-tree command arguments, so commands do not rediscover the repository from the URI.
+  - `parseMergeMsgConflicts()` parses the conflict block from `.git/MERGE_MSG`
+    for resolved-file recovery. It accepts Git's commented `#\tpath` entries
+    and un-commented `\tpath` entries, ignores malformed indentation, stops at
+    the first non-comment non-empty line after the conflict block begins, and
+    deduplicates paths while preserving first-seen order.
 
 - `src/gitUtils.ts`
   - `execGit()` runs Git commands and returns stdout.

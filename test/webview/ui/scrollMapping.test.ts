@@ -1,8 +1,11 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-import { describe, it, test } from "@jest/globals";
-import { mapLineAcrossChunks, mapLineAcrossPanes } from "./scrollMapping.ts";
-import type { DiffChunk } from "./types.ts";
+import { describe, expect, it, test } from "@jest/globals";
+import {
+	mapLineAcrossChunks,
+	mapLineAcrossPanes,
+} from "../../../src/webview/ui/scrollMapping.ts";
+import type { DiffChunk } from "../../../src/webview/ui/types.ts";
 
 describe("mapLineAcrossChunks (Smooth Mapping Only)", () => {
 	describe("basic functionality", () => {
@@ -255,5 +258,181 @@ describe("mapLineAcrossPanes", () => {
 				}
 			});
 		});
+	});
+});
+
+// ─── exact boundary values ────────────────────────────────────────────────────
+// Chunk [10,20] → [10,30]: srcMid=15, dstMid=20.
+// Gap before: [0,10,0,10], gapMid=(5,5).
+// Gap after:  [20,40,30,60], gapMid=(30,45).
+//
+// These kill the arithmetic mutants that monotonicity tests miss.
+
+describe("mapLineAcrossChunks exact boundary values", () => {
+	const chunk1: DiffChunk = {
+		tag: "replace",
+		startA: 10,
+		endA: 20,
+		startB: 10,
+		endB: 30,
+	};
+	const opts = {
+		chunks: [chunk1],
+		sourceIsA: true,
+		sourceMaxLines: 40,
+		targetMaxLines: 60,
+	};
+
+	it("line 0 maps to 0 (start of source and target)", () => {
+		expect(mapLineAcrossChunks(0, opts)).toBe(0);
+	});
+
+	it("chunk srcMid (15) maps exactly to dstMid (20)", () => {
+		expect(mapLineAcrossChunks(15, opts)).toBe(20);
+	});
+
+	it("line at gap midpoint before chunk (5) maps to 5", () => {
+		// Gap [0,10] → [0,10]; midGap=(5,5); line=5 is right at midGap.
+		expect(mapLineAcrossChunks(5, opts)).toBe(5);
+	});
+
+	it("line at gap midpoint after chunk maps correctly", () => {
+		// After chunk: gap [20,40] → [30,60]; gapMid=(30,45).
+		// chunkSrcMid=15; gapMid=30. line=30 should map to 45.
+		expect(mapLineAcrossChunks(30, opts)).toBe(45);
+	});
+
+	it("line just before sourceMaxLines maps close to targetMaxLines", () => {
+		const result = mapLineAcrossChunks(39.999, opts);
+		expect(result).toBeGreaterThan(59);
+		expect(result).toBeLessThan(60);
+	});
+
+	it("insert chunk: source shorter than target — line at insert point maps past it", () => {
+		// Insert at src 10: [10,10] → [10,20]. srcMid=10, dstMid=15.
+		const insertOpts = {
+			chunks: [
+				{
+					tag: "insert" as const,
+					startA: 10,
+					endA: 10,
+					startB: 10,
+					endB: 20,
+				},
+			],
+			sourceIsA: true,
+			sourceMaxLines: 20,
+			targetMaxLines: 30,
+		};
+		// srcMid=10 → dstMid=15
+		expect(mapLineAcrossChunks(10, insertOpts)).toBe(15);
+	});
+
+	it("delete chunk: source longer than target — srcMid maps to dstMid", () => {
+		// Delete at src [10,20] → dst [10,10]. srcMid=15, dstMid=10.
+		const deleteOpts = {
+			chunks: [
+				{
+					tag: "delete" as const,
+					startA: 10,
+					endA: 20,
+					startB: 10,
+					endB: 10,
+				},
+			],
+			sourceIsA: true,
+			sourceMaxLines: 30,
+			targetMaxLines: 20,
+		};
+		expect(mapLineAcrossChunks(15, deleteOpts)).toBe(10);
+	});
+
+	it("first chunk starting at 0: line 0 maps to dst chunk midpoint", () => {
+		// Chunk [0,10] → [0,20]: srcMid=5, dstMid=10. No gap before.
+		const startsAtZeroOpts = {
+			chunks: [
+				{
+					tag: "replace" as const,
+					startA: 0,
+					endA: 10,
+					startB: 0,
+					endB: 20,
+				},
+			],
+			sourceIsA: true,
+			sourceMaxLines: 10,
+			targetMaxLines: 20,
+		};
+		expect(mapLineAcrossChunks(5, startsAtZeroOpts)).toBe(10);
+	});
+
+	it("two chunks: line between them maps correctly through gap interpolation", () => {
+		// Chunk A: [0,5] → [0,5]; Chunk B: [15,20] → [15,25].
+		// Gap between: src [5,15] → dst [5,15]; gapMid=(10,10).
+		const twoChunkOpts = {
+			chunks: [
+				{
+					tag: "replace" as const,
+					startA: 0,
+					endA: 5,
+					startB: 0,
+					endB: 5,
+				},
+				{
+					tag: "replace" as const,
+					startA: 15,
+					endA: 20,
+					startB: 15,
+					endB: 25,
+				},
+			],
+			sourceIsA: true,
+			sourceMaxLines: 20,
+			targetMaxLines: 25,
+		};
+		// srcMidA=2.5 → dstMidA=2.5; gap midSrc=10 → midDst=10.
+		// Line 10 is at gapMid so maps to 10.
+		expect(mapLineAcrossChunks(10, twoChunkOpts)).toBe(10);
+	});
+});
+
+// Tests for _upperBoundMid boundary (the <= condition at the chunk midpoint).
+describe("mapLineAcrossChunks srcMid boundary behaviour", () => {
+	const chunk1: DiffChunk = {
+		tag: "replace",
+		startA: 10,
+		endA: 20,
+		startB: 10,
+		endB: 30,
+	};
+	const opts = {
+		chunks: [chunk1],
+		sourceIsA: true,
+		sourceMaxLines: 40,
+		targetMaxLines: 60,
+	};
+
+	it("line exactly at srcMid maps to dstMid", () => {
+		// srcMid=15, dstMid=20.  _upperBoundMid's <= means 15 stays in this chunk.
+		expect(mapLineAcrossChunks(15, opts)).toBe(20);
+	});
+
+	it("line just below srcMid maps below dstMid", () => {
+		expect(mapLineAcrossChunks(14.9, opts)).toBeLessThan(20);
+	});
+
+	it("line just above srcMid maps above dstMid", () => {
+		expect(mapLineAcrossChunks(15.1, opts)).toBeGreaterThan(20);
+	});
+
+	it("reversed diff (sourceIsA=false): srcMid is on B side", () => {
+		// With sourceIsA=false, source=B [10,30]: srcMid=20, dstMid=15.
+		const reversedOpts = {
+			chunks: [chunk1],
+			sourceIsA: false,
+			sourceMaxLines: 40,
+			targetMaxLines: 40,
+		};
+		expect(mapLineAcrossChunks(20, reversedOpts)).toBe(15);
 	});
 });
