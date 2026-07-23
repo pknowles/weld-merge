@@ -527,7 +527,7 @@ const runStressIteration = async (
 			);
 		});
 	}
-	await act(() => jest.advanceTimersByTime(Math.floor(Math.random() * 5)));
+	await act(() => jest.advanceTimersByTime((index * 3) % 5));
 	await runStressIteration(middleEditor, index + 1, currentVersion);
 };
 
