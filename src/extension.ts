@@ -11,6 +11,7 @@ import {
 	window,
 	workspace,
 } from "vscode";
+import { registerAgentTools } from "./agentTools.ts";
 import { fetchConflictStages } from "./conflictSnapshot.ts";
 import {
 	type ConflictState,
@@ -600,21 +601,25 @@ function collectConflictedFilesAcrossRepositories(): ConflictedFileEntry[] {
 	);
 }
 
-// Auto-merges every conflicted file in every tracked repository. Logs every
-// successful merge to the Weld output channel so a partial run still leaves a
-// record of what changed, then fails fast on the first file that cannot be
-// merged (rethrows with the failing file's name as context).
+interface AutoMergeAllResult {
+	mergedCount: number;
+	totalCount: number;
+}
+
+// Auto-merges every conflicted file in every tracked repository. Fails fast on
+// the first file that cannot be merged (rethrows with the failing file's name
+// and successful count as context). Returns merged/total counts for the caller
+// to log or display.
 async function handleAutoMergeAll(
 	conflictedFilesProvider: ConflictedFilesProvider,
-): Promise<void> {
-	const conflictedFiles = await collectConflictedFilesAcrossRepositories();
-	if (conflictedFiles.length === 0) {
-		window.showInformationMessage("No unmerged files to auto-merge.");
-		return;
+): Promise<AutoMergeAllResult> {
+	const conflictedFiles = collectConflictedFilesAcrossRepositories();
+	const totalCount = conflictedFiles.length;
+	if (totalCount === 0) {
+		return { mergedCount: 0, totalCount: 0 };
 	}
 
-	const log = getWeldLogChannel();
-	let successCount = 0;
+	let mergedCount = 0;
 	const mergeEntryBuilder =
 		(progress: { report: (value: { message?: string }) => void }) =>
 		async (entry: ConflictedFileEntry): Promise<void> => {
@@ -627,12 +632,11 @@ async function handleAutoMergeAll(
 				await performAutoMerge(repoContext, entry.change.uri);
 			} catch (error: unknown) {
 				throw new Error(
-					`Weld Auto-Merge All stopped at ${entry.change.uri} after ${successCount} successful merge(s): ${getErrorMessage(error)}`,
+					`Weld Auto-Merge All stopped at ${entry.change.uri} after ${mergedCount} successful merge(s): ${getErrorMessage(error)}`,
 					{ cause: error },
 				);
 			}
-			successCount++;
-			log.info(`Weld Auto-Merge All: merged ${entry.change.uri}`);
+			mergedCount++;
 		};
 	try {
 		await window.withProgress(
@@ -653,14 +657,15 @@ async function handleAutoMergeAll(
 			},
 		);
 	} finally {
-		if (successCount > 0) {
+		if (mergedCount > 0) {
+			getWeldLogChannel().info(
+				`Weld Auto-Merge All: merged ${mergedCount} of ${totalCount} file(s).`,
+			);
 			conflictedFilesProvider.refresh();
 		}
 	}
 
-	window.showInformationMessage(
-		`Weld Auto-Merge All: merged ${successCount} file(s).`,
-	);
+	return { mergedCount, totalCount };
 }
 
 async function handleCheckoutConflicted(
@@ -1158,9 +1163,20 @@ function registerCommands(
 				return handleActiveEditorAutoMerge(conflictedFilesProvider);
 			},
 		),
-		commands.registerCommand("meld-auto-merge.autoMergeAll", () =>
-			handleAutoMergeAll(conflictedFilesProvider),
-		),
+		commands.registerCommand("meld-auto-merge.autoMergeAll", async () => {
+			const { mergedCount, totalCount } = await handleAutoMergeAll(
+				conflictedFilesProvider,
+			);
+			if (totalCount === 0) {
+				window.showInformationMessage(
+					"No unmerged files to auto-merge.",
+				);
+				return;
+			}
+			window.showInformationMessage(
+				`Weld Auto-Merge All: merged ${mergedCount} file(s).`,
+			);
+		}),
 		commands.registerCommand(
 			"meld-auto-merge.checkoutConflicted",
 			(target: GitFile | undefined) => {
@@ -1299,6 +1315,14 @@ export function activate(context: ExtensionContext): WeldExtensionApi {
 	registerViews(context, conflictedFilesProvider);
 	registerCommands(context, conflictedFilesProvider);
 	setupGitRepoWatchers(context, conflictedFilesProvider, telemetry);
+	registerAgentTools(context, async () => {
+		const { mergedCount, totalCount } = await handleAutoMergeAll(
+			conflictedFilesProvider,
+		);
+		return totalCount === 0
+			? "No conflicted files found."
+			: `Merged ${mergedCount} of ${totalCount} file(s).`;
+	});
 	return {
 		setInitialConflictContent:
 			MeldCustomEditorProvider.setInitialConflictContent,

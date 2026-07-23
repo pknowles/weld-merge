@@ -1,13 +1,20 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
+import { execGit, repositoryRelativePath } from "./gitUtils.ts";
 import { Merger } from "./matchers/merge.ts";
-import type { ThreeWayChange } from "./matchers/threeWayDiff.ts";
+import type { DiffChunk } from "./matchers/myers.ts";
+import {
+	createThreeWayChanges,
+	type ThreeWayChange,
+} from "./matchers/threeWayDiff.ts";
 import type { ConflictedItem, GitApiRepository } from "./repoContext.ts";
 import { GitStatus } from "./repoContext.ts";
 
 const GIT_STAGE_BASE = 1;
 const GIT_STAGE_LOCAL = 2;
 const GIT_STAGE_REMOTE = 3;
+const LINE_BREAK_REGEX = /\r?\n/u;
+const INDEX_STAGE_ENTRY_REGEX = /^\d{6} [0-9a-fA-F]{40,64} ([123])\t/u;
 
 interface ConflictStages {
 	base: string;
@@ -25,6 +32,36 @@ interface ConflictSnapshot {
 	mergedContent: string;
 	changes: ThreeWayChange[];
 	conflictChangeIndexes: number[];
+}
+
+interface LineRange {
+	start: number;
+	end: number;
+}
+
+interface ConflictRegion {
+	base: LineRange;
+	local: LineRange;
+	remote: LineRange;
+	changes: {
+		local: DiffChunk;
+		remote: DiffChunk;
+	};
+}
+
+interface CurrentConflictRegion {
+	lines: string[];
+	range: LineRange;
+	changes: {
+		local: DiffChunk[];
+		remote: DiffChunk[];
+	};
+}
+
+interface ConflictIndexStages {
+	base: boolean;
+	local: boolean;
+	remote: boolean;
 }
 
 function getGitState(
@@ -49,6 +86,49 @@ async function fetchConflictStages(
 	return { base, local, remote };
 }
 
+async function fetchConflictIndexStages(
+	conflictedItem: ConflictedItem,
+): Promise<ConflictIndexStages> {
+	const { repository, uri } = conflictedItem;
+	const path = repositoryRelativePath(repository.rootUri, uri);
+	const output = await execGit(
+		["ls-files", "--stage", "--", path],
+		repository.rootUri.fsPath,
+	);
+	const stages = new Set<number>();
+	for (const line of output.split(LINE_BREAK_REGEX).filter(Boolean)) {
+		const match = INDEX_STAGE_ENTRY_REGEX.exec(line);
+		if (!match?.[1]) {
+			throw new Error(
+				`Cannot inspect conflict stages for ${uri.toString()}: malformed index entry.`,
+			);
+		}
+		const stage = Number(match[1]);
+		if (stages.has(stage)) {
+			throw new Error(
+				`Cannot inspect conflict stages for ${uri.toString()}: duplicate stage ${stage}.`,
+			);
+		}
+		stages.add(stage);
+	}
+	if (stages.size === 0) {
+		throw new Error(
+			`Cannot inspect conflict stages for ${uri.toString()}: no unmerged index entries.`,
+		);
+	}
+	const result = {
+		base: stages.has(GIT_STAGE_BASE),
+		local: stages.has(GIT_STAGE_LOCAL),
+		remote: stages.has(GIT_STAGE_REMOTE),
+	};
+	if (!(result.base || (result.local && result.remote))) {
+		throw new Error(
+			`Cannot inspect conflict stages for ${uri.toString()}: invalid unmerged index shape.`,
+		);
+	}
+	return result;
+}
+
 function createConflictSnapshot(stages: ConflictStages): ConflictSnapshot {
 	const lines = {
 		base: stages.base.split("\n"),
@@ -64,12 +144,189 @@ function createConflictSnapshot(stages: ConflictStages): ConflictSnapshot {
 	return { stages, lines, mergedContent, changes, conflictChangeIndexes };
 }
 
-export type { ConflictStages };
+function expandSideRange(
+	chunk: DiffChunk,
+	base: LineRange,
+	sideLineCount: number,
+): LineRange {
+	const range = {
+		start: chunk.startB - (chunk.startA - base.start),
+		end: chunk.endB + (base.end - chunk.endA),
+	};
+	if (
+		range.start < 0 ||
+		range.end < range.start ||
+		range.end > sideLineCount
+	) {
+		throw new Error(
+			"Conflict chunk expansion produced an invalid side range.",
+		);
+	}
+	return range;
+}
+
+function getConflictRegion(
+	snapshot: ConflictSnapshot,
+	conflictIndex: number,
+): ConflictRegion {
+	if (!Number.isSafeInteger(conflictIndex) || conflictIndex < 0) {
+		throw new Error("Conflict index must be a nonnegative safe integer.");
+	}
+	const changeIndex = snapshot.conflictChangeIndexes[conflictIndex];
+	if (changeIndex === undefined) {
+		throw new Error(
+			`Conflict index ${conflictIndex} is out of range for ${snapshot.conflictChangeIndexes.length} conflict(s).`,
+		);
+	}
+	const change = snapshot.changes[changeIndex];
+	if (!(change?.[0] && change[1])) {
+		throw new Error(
+			`Conflict index ${conflictIndex} does not contain both local and remote chunks.`,
+		);
+	}
+	const [localChange, remoteChange] = change;
+	const base = {
+		start: Math.min(localChange.startA, remoteChange.startA),
+		end: Math.max(localChange.endA, remoteChange.endA),
+	};
+	return {
+		base,
+		local: expandSideRange(localChange, base, snapshot.lines.local.length),
+		remote: expandSideRange(
+			remoteChange,
+			base,
+			snapshot.lines.remote.length,
+		),
+		changes: { local: localChange, remote: remoteChange },
+	};
+}
+
+function rangesOverlap(left: LineRange, right: LineRange): boolean {
+	if (left.start === left.end && right.start === right.end) {
+		return left.start === right.start;
+	}
+	if (left.start === left.end) {
+		return left.start >= right.start && left.start < right.end;
+	}
+	if (right.start === right.end) {
+		return right.start >= left.start && right.start < left.end;
+	}
+	return left.start < right.end && right.start < left.end;
+}
+
+function getCurrentConflictRegion(
+	snapshot: ConflictSnapshot,
+	region: ConflictRegion,
+	currentContent: string,
+): CurrentConflictRegion | null {
+	if (currentContent === snapshot.mergedContent) {
+		return null;
+	}
+	const lines = currentContent.split("\n");
+	const currentChanges = createThreeWayChanges({
+		local: snapshot.lines.local,
+		middle: lines,
+		remote: snapshot.lines.remote,
+	});
+	const local: DiffChunk[] = [];
+	const remote: DiffChunk[] = [];
+	const currentRanges: LineRange[] = [];
+	const localStageRange = {
+		start: region.changes.local.startB,
+		end: region.changes.local.endB,
+	};
+	const remoteStageRange = {
+		start: region.changes.remote.startB,
+		end: region.changes.remote.endB,
+	};
+
+	for (const [localChange, remoteChange] of currentChanges) {
+		if (
+			localChange &&
+			rangesOverlap(
+				{ start: localChange.startB, end: localChange.endB },
+				localStageRange,
+			)
+		) {
+			local.push(localChange);
+			currentRanges.push({
+				start: localChange.startA,
+				end: localChange.endA,
+			});
+		}
+		if (
+			remoteChange &&
+			rangesOverlap(
+				{ start: remoteChange.startB, end: remoteChange.endB },
+				remoteStageRange,
+			)
+		) {
+			remote.push(remoteChange);
+			currentRanges.push({
+				start: remoteChange.startA,
+				end: remoteChange.endA,
+			});
+		}
+	}
+
+	if (currentRanges.length === 0) {
+		throw new Error(
+			"Current document diff did not map the selected conflict.",
+		);
+	}
+	return {
+		lines,
+		range: {
+			start: Math.min(...currentRanges.map((range) => range.start)),
+			end: Math.max(...currentRanges.map((range) => range.end)),
+		},
+		changes: { local, remote },
+	};
+}
+
+async function isBinaryConflict(
+	conflictedItem: ConflictedItem,
+): Promise<boolean> {
+	const { repository, uri } = conflictedItem;
+	const path = repositoryRelativePath(repository.rootUri, uri);
+	const output = await execGit(
+		["diff", "--numstat", `:2:${path}`, `:3:${path}`],
+		repository.rootUri.fsPath,
+	);
+	const lines = output
+		.split(LINE_BREAK_REGEX)
+		.filter((line) => line.length > 0);
+	if (lines.length !== 1) {
+		throw new Error(
+			`Cannot classify binary conflict for ${uri.toString()}: expected one numstat line, got ${lines.length}.`,
+		);
+	}
+	const fields = lines[0]?.split("\t");
+	if (!fields || fields.length !== 3) {
+		throw new Error(
+			`Cannot classify binary conflict for ${uri.toString()}: malformed numstat output.`,
+		);
+	}
+	const [added, deleted] = fields;
+	if ((added === "-") !== (deleted === "-")) {
+		throw new Error(
+			`Cannot classify binary conflict for ${uri.toString()}: inconsistent numstat output.`,
+		);
+	}
+	return added === "-";
+}
+
+export type { ConflictRegion, ConflictSnapshot, ConflictStages, LineRange };
 export {
 	createConflictSnapshot,
+	fetchConflictIndexStages,
 	fetchConflictStages,
 	GIT_STAGE_BASE,
 	GIT_STAGE_LOCAL,
 	GIT_STAGE_REMOTE,
+	getConflictRegion,
+	getCurrentConflictRegion,
 	getGitState,
+	isBinaryConflict,
+	rangesOverlap,
 };

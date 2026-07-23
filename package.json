@@ -210,9 +210,83 @@
 					"type": "boolean",
 					"default": true,
 					"description": "Enable smooth proportional scrolling synchronization across panels."
+				},
+				"weld.agent.enable": {
+					"type": "boolean",
+					"default": false,
+					"description": "Expose Weld Merge tools to AI agents via the VS Code Language Model Tool API."
 				}
 			}
 		},
+		"languageModelTools": [
+			{
+				"name": "weld_apply_automerge_all",
+				"toolReferenceName": "weldAutomergeAll",
+				"displayName": "Weld: Auto-merge all conflicts",
+				"userDescription": "Run Weld's automatic merge logic on every conflicted file in the workspace.",
+				"modelDescription": "Runs Weld Merge's auto-merge logic on every conflicted file in the workspace. Merges files sequentially and stops on the first failure, reporting how many files were merged and how many were pending. Only available when weld.agent.enable is true.",
+				"canBeReferencedInPrompt": true,
+				"when": "config.weld.agent.enable",
+				"inputSchema": {
+					"type": "object",
+					"properties": {}
+				}
+			},
+			{
+				"name": "weld_list_conflicts",
+				"toolReferenceName": "weldListConflicts",
+				"displayName": "Weld: List conflicts",
+				"userDescription": "List active Git conflicts and their Weld conflict counts across workspace repositories.",
+				"modelDescription": "Lists active conflicted files across workspace Git repositories. Returns each repository root, repository-relative path, Weld three-way conflict count, and the conflict kind: text, binary, deletedByUs, deletedByThem, bothDeleted, or submodule. Call this before requesting details or applying an automatic merge.",
+				"canBeReferencedInPrompt": true,
+				"when": "config.weld.agent.enable",
+				"inputSchema": {
+					"type": "object",
+					"properties": {}
+				}
+			},
+			{
+				"name": "weld_get_conflict",
+				"toolReferenceName": "weldGetConflict",
+				"displayName": "Weld: Get conflict",
+				"userDescription": "Get one Weld conflict with stage text, line ranges, context, and its mapping to the current document.",
+				"modelDescription": "Returns one zero-based Weld conflict selected from weld_list_conflicts. Includes complete base/local/remote conflict regions, numbered context, Weld's exact stage chunk mappings, and the live VS Code document region when it differs from Weld's merged content. The current region is Weld's diff alignment; merge conflicts can depend on code outside the returned context, so request more context or inspect the file when necessary. Binary, delete/modify, both-deleted, and submodule conflicts return a typed explanation instead of text.",
+				"canBeReferencedInPrompt": true,
+				"when": "config.weld.agent.enable",
+				"inputSchema": {
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"repositoryRoot": {
+							"type": "string",
+							"minLength": 1,
+							"description": "Repository root URI returned by weld_list_conflicts."
+						},
+						"path": {
+							"type": "string",
+							"minLength": 1,
+							"description": "Repository-relative conflicted path returned by weld_list_conflicts."
+						},
+						"conflictIndex": {
+							"type": "integer",
+							"minimum": 0,
+							"description": "Zero-based conflict index, less than the file's conflictCount."
+						},
+						"contextLines": {
+							"type": "integer",
+							"minimum": 0,
+							"default": 5,
+							"description": "Number of surrounding lines to return above and below each region."
+						}
+					},
+					"required": [
+						"repositoryRoot",
+						"path",
+						"conflictIndex"
+					]
+				}
+			}
+		],
 		"keybindings": [
 			{
 				"command": "weldConflictedFiles.focus",
@@ -402,14 +476,14 @@
 		"esbuild": "^0.28.0",
 		"glob": "^13.0.6",
 		"husky": "^9.1.7",
-		"jest": "^30.3.0",
-		"jest-environment-jsdom": "^30.3.0",
-		"jscpd": "^4.0.9",
 		"istanbul-lib-coverage": "^3.2.2",
 		"istanbul-lib-instrument": "^6.0.3",
 		"istanbul-lib-report": "^3.0.1",
 		"istanbul-lib-source-maps": "^5.0.6",
 		"istanbul-reports": "^3.2.0",
+		"jest": "^30.3.0",
+		"jest-environment-jsdom": "^30.3.0",
+		"jscpd": "^4.0.9",
 		"knip": "^6.11.0",
 		"lcov-result-merger": "^6.0.0",
 		"lint-staged": "^16.4.0",

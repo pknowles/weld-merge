@@ -684,8 +684,7 @@ describe("extension auto-merge commands", () => {
 			{ message: "Merging file:///work/two/b.txt..." },
 		]);
 		expect(mockVscodeLogChannel().infos).toEqual([
-			"Weld Auto-Merge All: merged file:///work/one/a.txt",
-			"Weld Auto-Merge All: merged file:///work/two/b.txt",
+			"Weld Auto-Merge All: merged 2 of 2 file(s).",
 		]);
 		expect(window.showInformationMessage).toHaveBeenCalledWith(
 			"Weld Auto-Merge All: merged 2 file(s).",
@@ -705,7 +704,7 @@ describe("extension auto-merge commands", () => {
 			"Weld Auto-Merge All stopped at file:///work/two/b.txt after 1 successful merge(s)",
 		);
 		expect(mockVscodeLogChannel().infos).toEqual([
-			"Weld Auto-Merge All: merged file:///work/one/a.txt",
+			"Weld Auto-Merge All: merged 1 of 2 file(s).",
 		]);
 	});
 });

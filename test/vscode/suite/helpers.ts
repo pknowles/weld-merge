@@ -237,6 +237,76 @@ function makeConflict(repoPath: string): void {
 	assertUnmergedPaths(repoPath, ["tracked.txt"]);
 }
 
+function makeContextConflict(repoPath: string): void {
+	const fileName = "tracked.txt";
+	writeFileSync(
+		join(repoPath, fileName),
+		"before one\nbefore two\nbase\nafter one\nafter two\n",
+	);
+	runGit(["commit", "-am", "expand base context"], repoPath);
+	runGit(["checkout", "-b", "other"], repoPath);
+	writeFileSync(
+		join(repoPath, fileName),
+		"before one\nbefore two\nremote\nafter one\nafter two\n",
+	);
+	runGit(["commit", "-am", "remote context change"], repoPath);
+	runGit(["checkout", "-"], repoPath);
+	writeFileSync(
+		join(repoPath, fileName),
+		"before one\nbefore two\nlocal\nafter one\nafter two\n",
+	);
+	runGit(["commit", "-am", "local context change"], repoPath);
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits 1 for a conflict — expected
+	}
+	assertUnmergedPaths(repoPath, [fileName]);
+}
+
+// Creates a single-file conflict with two independent hunks so both
+// conflictIndex 0 and conflictIndex 1 are valid inputs to weld_get_conflict.
+// File layout (base): "A\nB\nMID\nC\nD\n"
+// Local changes B→LOCAL-B and C→LOCAL-C; remote changes B→REMOTE-B and C→REMOTE-C.
+function makeTwoHunkConflict(repoPath: string): void {
+	const fileName = "tracked.txt";
+	writeFileSync(join(repoPath, fileName), "A\nB\nMID\nC\nD\n");
+	runGit(["commit", "-am", "two-hunk base"], repoPath);
+	runGit(["checkout", "-b", "other"], repoPath);
+	writeFileSync(join(repoPath, fileName), "A\nREMOTE-B\nMID\nREMOTE-C\nD\n");
+	runGit(["commit", "-am", "remote two-hunk change"], repoPath);
+	runGit(["checkout", "-"], repoPath);
+	writeFileSync(join(repoPath, fileName), "A\nLOCAL-B\nMID\nLOCAL-C\nD\n");
+	runGit(["commit", "-am", "local two-hunk change"], repoPath);
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits 1 for a conflict — expected
+	}
+	assertUnmergedPaths(repoPath, [fileName]);
+}
+
+function makeBinaryConflict(repoPath: string): void {
+	const fileName = "conflict.bin";
+	writeFileSync(join(repoPath, fileName), "base\0content\n");
+	runGit(["add", "--", fileName], repoPath);
+	runGit(["commit", "-m", "add binary base"], repoPath);
+	runGit(["checkout", "-b", "other"], repoPath);
+	writeFileSync(join(repoPath, fileName), "remote\0content\n");
+	runGit(["add", "--", fileName], repoPath);
+	runGit(["commit", "-m", "remote binary change"], repoPath);
+	runGit(["checkout", "-"], repoPath);
+	writeFileSync(join(repoPath, fileName), "local\0content\n");
+	runGit(["add", "--", fileName], repoPath);
+	runGit(["commit", "-m", "local binary change"], repoPath);
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits 1 for a binary conflict — expected
+	}
+	assertUnmergedPaths(repoPath, [fileName]);
+}
+
 // Creates a second conflict on the same repo after makeConflict + merge --abort.
 // At that point HEAD = "local change" commit (tracked.txt = "local\n").
 // This function:
@@ -470,9 +540,11 @@ export {
 	cleanupTempFixture,
 	getConflictedItem,
 	lsFilesStages,
+	makeBinaryConflict,
 	makeBothAddedConflict,
 	makeBothDeletedConflict,
 	makeConflict,
+	makeContextConflict,
 	makeDeletedByThemConflict,
 	makeDeletedByUsConflict,
 	makeRepo,
@@ -482,6 +554,7 @@ export {
 	makeSubmoduleAndTextConflictRepo,
 	makeSubmoduleConflictFixture,
 	makeSubmoduleConflictRepo,
+	makeTwoHunkConflict,
 	openRepoInGitExtension,
 	waitForMergeChanges,
 	waitForRepoClose,

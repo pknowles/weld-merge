@@ -12,12 +12,23 @@ Entry point and Git integration.
 - **`extension.ts`**: Extension lifecycle, command registrations, and workspace event handling.
 - **`repoContext.ts`**: Resolves per-file Git repository context via `vscode.git`. Custom-editor startup uses typed acquisition helpers that activate/wait for the Git API, open the requested repository, await the repository's first status-backed state event through a shared acquisition promise, and then return fully usable objects (`ReadyRepository`/`ConflictedItem`) or throw typed errors; editor startup code does not consume nullable Git API results directly.
 - **`gitUtils.ts`**: Shared git helpers for subprocess-backed commands, validated repository-relative paths, URI-safe `.git` resolution, and conflict-state detection via `workspace.fs`.
-- **`conflictSnapshot.ts`**: Shared text-conflict boundary. It reads base/local/remote stages and builds the canonical `Merger` snapshot and conflict indexes used by the merge editor.
+- **`conflictSnapshot.ts`**: Shared text-conflict boundary used by both the merge editor and agent tools. It reads base/local/remote stages, builds the canonical `Merger` snapshot and conflict indexes, inspects unmerged index-stage shape, and asks Git's diff machinery to classify binary content.
 - **`submoduleConflict.ts`**: Submodule conflict domain boundary. Uses VS Code Git API merge changes for discovery, then path-scoped raw Git for gitlink stage/object/index plumbing that the Git API cannot expose. It also contains read-only submodule history queries for the resolver graph/search/file list. This intentionally avoids `git ls-files`.
 - **`log.ts`**: Shared `LogOutputChannel` initialization/access for extension-host diagnostics.
 - **`treeView.ts`**: Implementation of the "Conflicted Files" view in the SCM panel, including resolved-file parsing from `MERGE_MSG` through `workspace.fs`.
 - **`webview/meldWebviewPanel.ts`**: Manages the custom editor lifecycle, lifecycle of the Webview, and message passing.
 - **`webview/submoduleConflictEditor.ts`**: Readonly custom editor for submodule conflicts. The editor URI stores only repository root URI and repo-relative submodule path; every open/reload recomputes live state from Git, so no serializer or saved conflict snapshot is needed.
+- **`agentTools.ts`**: Registers VS Code Language Model Tools when
+  `weld.agent.enable` is true and serializes typed results for the LM boundary.
+- **`agentConflicts.ts`**: Shared conflict lookup and classification for
+  `weld_list_conflicts` and `weld_get_conflict`. The list tool enumerates every
+  open workspace Git repository and returns canonical Weld hunk counts. The get
+  tool returns complete base/local/remote alternatives, exact paired Weld chunk
+  ranges, numbered context, and an optional live-document region produced by
+  the same three-pane diff path as the webview. Non-text conflicts retain typed
+  binary/delete/submodule results. Agent tools run in-process in the workspace
+  extension host, are prompt-referenceable through `package.json`, and
+  intentionally do not expose MCP/stdio integration.
 
 ## Webview UI (React Frontend)
 Located in `src/webview/ui/`.
@@ -183,8 +194,9 @@ Granular performance telemetry is **opt-in only** and has zero production impact
     can restore that URI after reload, and Weld rebuilds the current snapshot
     from Git instead of saving conflict data.
   - VS Code's Git API remains the source for repository lifecycle and conflict
-    path discovery. Raw Git is isolated to `submoduleConflict.ts`. Mutating raw
-    Git is limited to gitlink stage/index operations because
+    path discovery. Submodule-specific raw Git is isolated to
+    `submoduleConflict.ts`. Mutating raw Git is limited to gitlink stage/index
+    operations because
     `repository.show(":2", path)` cannot read submodule gitlink stages and the
     Git API cannot write unmerged gitlink index entries. The resolver also uses
     read-only Git commands inside the submodule repo for graph/search/file-list
