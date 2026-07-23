@@ -49,9 +49,9 @@ interface CommitInfo {
 interface BuildDiffPayloadOptions {
 	stages?: ConflictStages;
 	// The merged pane text that the user will edit and that syncs to the file
-	// on disk. On first open this is seeded by runMerge(); on re-runs (e.g.
-	// after an external .git state change) the caller passes the live
-	// TextDocument text so diffs align with what the user currently sees.
+	// on disk. On first open this is seeded by createConflictSnapshot(); on
+	// re-runs (e.g. after an external .git state change) the caller passes the
+	// live TextDocument text so diffs align with what the user currently sees.
 	workingContent?: string;
 }
 
@@ -99,12 +99,12 @@ const getBaseCommitInfo = async (
 const runDiff = (
 	localLines: string[],
 	workingLines: string[],
-	incomingLines: string[],
+	remoteLines: string[],
 ) => {
 	const changes = createThreeWayChanges({
 		local: localLines,
 		middle: workingLines,
-		remote: incomingLines,
+		remote: remoteLines,
 	});
 	const leftDiffs = changes
 		.map((pair) => pair[0])
@@ -192,13 +192,13 @@ async function buildDiffPayload(
 		getCommitInfo(repository, "HEAD"),
 		getRemoteRef(repository),
 	]);
-	const incomingCommit =
+	const remoteCommit =
 		remoteRef === null
 			? undefined
 			: await getCommitInfo(repository, remoteRef);
 
 	const localLines = local.split("\n");
-	const incomingLines = remote.split("\n");
+	const remoteLines = remote.split("\n");
 
 	const workingContent =
 		options.workingContent ?? createConflictSnapshot(stages).mergedContent;
@@ -209,13 +209,13 @@ async function buildDiffPayload(
 	const { leftDiffs, rightDiffs } = runDiff(
 		localLines,
 		workingLines,
-		incomingLines,
+		remoteLines,
 	);
 
 	const contents: PayloadFiles = [
 		{ label: "Local", content: local, commit: localCommit },
 		{ label: "Merged", content: workingContent },
-		{ label: "Remote", content: remote, commit: incomingCommit },
+		{ label: "Remote", content: remote, commit: remoteCommit },
 	];
 
 	return {
