@@ -20,19 +20,22 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Uri } from "vscode";
+import {
+	type ConflictStages,
+	createConflictSnapshot,
+	fetchConflictStages,
+	GIT_STAGE_BASE,
+	GIT_STAGE_LOCAL,
+	GIT_STAGE_REMOTE,
+	getGitState,
+} from "../conflictSnapshot.ts";
 import { getGitExecutable } from "../gitPath.ts";
 import { readConflictState } from "../gitUtils.ts";
-import { Differ } from "../matchers/diffutil.ts";
-import { Merger } from "../matchers/merge.ts";
 import { MyersSequenceMatcher } from "../matchers/myers.ts";
+import { createThreeWayChanges } from "../matchers/threeWayDiff.ts";
 import type { ConflictedItem, GitApiRepository } from "../repoContext.ts";
-import { GitStatus } from "../repoContext.ts";
 import type { ConflictLabels } from "./conflictLabels.ts";
 import type { DiffChunk, PayloadFiles, WebviewPayload } from "./ui/types.ts";
-
-const GIT_STAGE_BASE = 1;
-const GIT_STAGE_LOCAL = 2;
-const GIT_STAGE_REMOTE = 3;
 
 interface CommitInfo {
 	hash: string;
@@ -43,12 +46,6 @@ interface CommitInfo {
 	body: string;
 }
 
-interface ConflictStages {
-	base: string;
-	local: string;
-	incoming: string;
-}
-
 interface BuildDiffPayloadOptions {
 	stages?: ConflictStages;
 	// The merged pane text that the user will edit and that syncs to the file
@@ -57,12 +54,6 @@ interface BuildDiffPayloadOptions {
 	// TextDocument text so diffs align with what the user currently sees.
 	workingContent?: string;
 }
-
-const getGitState = async (
-	repository: GitApiRepository,
-	file: Uri,
-	stage: number,
-): Promise<string> => repository.show(`:${stage}`, file.fsPath);
 
 const getCommitInfo = async (
 	repository: GitApiRepository,
@@ -105,63 +96,25 @@ const getBaseCommitInfo = async (
 	return await getCommitInfo(repository, mergeBaseHash);
 };
 
-const runMerge = (
-	localLines: string[],
-	baseLines: string[],
-	incomingLines: string[],
-): string => {
-	// Step 1: Run the Merger to produce merged text with (??) conflict markers
-	// This matches Meld's _merge_files() in filediff.py
-	const merger = new Merger();
-	const sequences = [localLines, baseLines, incomingLines];
-	merger.initialize(sequences, sequences);
-	return merger.merge3Files(true);
-};
-
 const runDiff = (
 	localLines: string[],
 	workingLines: string[],
 	incomingLines: string[],
 ) => {
-	// Step 2: Initialize the Differ with [Local, Merged, Incoming]
-	// This matches Meld's _diff_files() in filediff.py, which runs AFTER
-	// _merge_files() has placed the merged text in the middle buffer.
-	// set_sequences_iter computes diffs as matcher(sequences[1], sequences[i*2])
-	// so the Differ diffs Merged(a) vs Local(b) and Merged(a) vs Incoming(b).
-	// The three-way _auto_merge logic naturally produces 'conflict' tags.
-	const differ = new Differ();
-	const diffSequences = [localLines, workingLines, incomingLines];
-	differ.setSequences(diffSequences);
-
-	// Extract from _merge_cache, not differ.diffs.
-	// differ.diffs is raw Myers output (replace/insert/delete/equal only).
-	// conflict tags only exist in _mergeCache, produced by _mergeDiffs/_autoMerge.
-	// This matches what Meld's pair_changes() method yields for rendering.
-	// _mergeCache[i] = [chunk_for_diffs0 | null, chunk_for_diffs1 | null]
-	// These chunks have a=Merged(pane1), b=Outer(Local or Incoming).
-	const leftDiffs = differ._mergeCache
+	const changes = createThreeWayChanges({
+		local: localLines,
+		middle: workingLines,
+		remote: incomingLines,
+	});
+	const leftDiffs = changes
 		.map((pair) => pair[0])
 		.filter((c): c is DiffChunk => c !== null);
-	const rightDiffs = differ._mergeCache
+	const rightDiffs = changes
 		.map((pair) => pair[1])
 		.filter((c): c is DiffChunk => c !== null);
 
 	return { leftDiffs, rightDiffs };
 };
-
-async function fetchConflictStages(
-	repoContext: ConflictedItem,
-): Promise<ConflictStages> {
-	const { repository, uri } = repoContext;
-	const isBothAdded =
-		repoContext.mergeChange?.status === GitStatus.BOTH_ADDED;
-	const [base, local, incoming] = await Promise.all([
-		isBothAdded ? "" : getGitState(repository, uri, GIT_STAGE_BASE),
-		getGitState(repository, uri, GIT_STAGE_LOCAL),
-		getGitState(repository, uri, GIT_STAGE_REMOTE),
-	]);
-	return { base, local, incoming };
-}
 
 async function buildInitialConflictedState(
 	repoUri: Uri,
@@ -185,7 +138,7 @@ async function buildInitialConflictedState(
 	try {
 		await writeFile(localPath, stages.local);
 		await writeFile(basePath, stages.base);
-		await writeFile(remotePath, stages.incoming);
+		await writeFile(remotePath, stages.remote);
 
 		return await new Promise<string>((resolve, reject) => {
 			execFile(
@@ -233,7 +186,7 @@ async function buildDiffPayload(
 ): Promise<WebviewPayload["data"]> {
 	const { repository } = repoContext;
 	const stages = options.stages ?? (await fetchConflictStages(repoContext));
-	const { base, local, incoming } = stages;
+	const { local, remote } = stages;
 
 	const [localCommit, remoteRef] = await Promise.all([
 		getCommitInfo(repository, "HEAD"),
@@ -245,12 +198,10 @@ async function buildDiffPayload(
 			: await getCommitInfo(repository, remoteRef);
 
 	const localLines = local.split("\n");
-	const baseLines = base.split("\n");
-	const incomingLines = incoming.split("\n");
+	const incomingLines = remote.split("\n");
 
 	const workingContent =
-		options.workingContent ??
-		runMerge(localLines, baseLines, incomingLines);
+		options.workingContent ?? createConflictSnapshot(stages).mergedContent;
 	// Diffs are computed against the exact working-pane content we will render.
 	// This keeps hunk actions/highlights aligned with what the user sees.
 	const workingLines = workingContent.split("\n");
@@ -264,7 +215,7 @@ async function buildDiffPayload(
 	const contents: PayloadFiles = [
 		{ label: "Local", content: local, commit: localCommit },
 		{ label: "Merged", content: workingContent },
-		{ label: "Remote", content: incoming, commit: incomingCommit },
+		{ label: "Remote", content: remote, commit: incomingCommit },
 	];
 
 	return {
@@ -317,9 +268,4 @@ async function buildBaseDiffPayload(
 	};
 }
 
-export {
-	buildBaseDiffPayload,
-	buildDiffPayload,
-	buildInitialConflictedState,
-	fetchConflictStages,
-};
+export { buildBaseDiffPayload, buildDiffPayload, buildInitialConflictedState };

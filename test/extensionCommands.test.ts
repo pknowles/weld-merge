@@ -121,15 +121,27 @@ jest.mock("../src/repoContext.ts", () => ({
 	unregisterRepository: (rootUri: Uri) => mockUnregisterRepository(rootUri),
 }));
 
-jest.mock("../src/gitUtils.ts", () => ({
-	describeConflictStatusEvidence: (conflictedItem: ConflictedItem) =>
-		mockDescribeConflictStatusEvidence(conflictedItem),
-	execGit: (args: string[], cwd: string) => mockExecGit(args, cwd),
-	execGitWithInput: (args: string[], cwd: string, input: string) =>
-		mockExecGitWithInput(args, cwd, input),
-	getUnresolvedReasons: (text: string) => mockGetUnresolvedReasons(text),
-	readConflictState: (repository: GitApiRepository) =>
-		mockReadConflictState(repository),
+jest.mock("../src/gitUtils.ts", () => {
+	const actual =
+		jest.requireActual<typeof import("../src/gitUtils.ts")>(
+			"../src/gitUtils.ts",
+		);
+	return {
+		...actual,
+		describeConflictStatusEvidence: (conflictedItem: ConflictedItem) =>
+			mockDescribeConflictStatusEvidence(conflictedItem),
+		execGit: (args: string[], cwd: string) => mockExecGit(args, cwd),
+		execGitWithInput: (args: string[], cwd: string, input: string) =>
+			mockExecGitWithInput(args, cwd, input),
+		getUnresolvedReasons: (text: string) => mockGetUnresolvedReasons(text),
+		readConflictState: (repository: GitApiRepository) =>
+			mockReadConflictState(repository),
+	};
+});
+
+jest.mock("../src/conflictSnapshot.ts", () => ({
+	fetchConflictStages: (conflictedItem: ConflictedItem) =>
+		mockFetchConflictStages(conflictedItem),
 }));
 
 jest.mock("../src/webview/meldWebviewPanel.ts", () =>
@@ -203,8 +215,6 @@ jest.mock("../src/webview/diffPayload.ts", () => ({
 		stages: unknown,
 		labels: unknown,
 	) => mockBuildInitialConflictedState(rootUri, stages, labels),
-	fetchConflictStages: (conflictedItem: ConflictedItem) =>
-		mockFetchConflictStages(conflictedItem),
 }));
 
 interface FakeGitApi {

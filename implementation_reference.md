@@ -11,7 +11,8 @@ Found in `src/matchers/`. High-performance, side-effect-free TypeScript logic.
 Entry point and Git integration.
 - **`extension.ts`**: Extension lifecycle, command registrations, and workspace event handling.
 - **`repoContext.ts`**: Resolves per-file Git repository context via `vscode.git`. Custom-editor startup uses typed acquisition helpers that activate/wait for the Git API, open the requested repository, await the repository's first status-backed state event through a shared acquisition promise, and then return fully usable objects (`ReadyRepository`/`ConflictedItem`) or throw typed errors; editor startup code does not consume nullable Git API results directly.
-- **`gitUtils.ts`**: Shared git helpers for subprocess-backed commands plus URI-safe `.git` resolution and conflict-state detection via `workspace.fs`.
+- **`gitUtils.ts`**: Shared git helpers for subprocess-backed commands, validated repository-relative paths, URI-safe `.git` resolution, and conflict-state detection via `workspace.fs`.
+- **`conflictSnapshot.ts`**: Shared text-conflict boundary. It reads base/local/remote stages and builds the canonical `Merger` snapshot and conflict indexes used by the merge editor.
 - **`submoduleConflict.ts`**: Submodule conflict domain boundary. Uses VS Code Git API merge changes for discovery, then path-scoped raw Git for gitlink stage/object/index plumbing that the Git API cannot expose. It also contains read-only submodule history queries for the resolver graph/search/file list. This intentionally avoids `git ls-files`.
 - **`log.ts`**: Shared `LogOutputChannel` initialization/access for extension-host diagnostics.
 - **`treeView.ts`**: Implementation of the "Conflicted Files" view in the SCM panel, including resolved-file parsing from `MERGE_MSG` through `workspace.fs`.
@@ -107,7 +108,7 @@ Granular performance telemetry is **opt-in only** and has zero production impact
 - `src/extension.ts`
   - `restoreConflictedFile()` first uses `git checkout -m` for both-modified conflicts.
   - `restoreDeleteModifyConflict()` restores delete/modify conflicts by checking out the surviving side's content, then recreating unmerged index stages with `git update-index --index-info`.
-  - `getRepoRelativePath()` converts an absolute VS Code file URI path into the repository-relative path required by Git index plumbing.
+  - `repositoryRelativePath()` in `gitUtils.ts` converts an absolute VS Code file URI into the validated repository-relative path required by Git index plumbing.
   - Command handlers take a concrete `ConflictedItem`; command dispatchers use the `ConflictedItem` carried by tree rows when present, and only resolve from a URI for active-editor/webview entrypoints.
 
 - `src/treeView.ts`

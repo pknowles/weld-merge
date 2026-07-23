@@ -21,6 +21,7 @@ import {
 	window,
 	workspace,
 } from "vscode";
+import { fetchConflictStages } from "../conflictSnapshot.ts";
 import {
 	describeConflictStatusEvidence,
 	getUnresolvedReasons,
@@ -48,7 +49,6 @@ import {
 	buildBaseDiffPayload,
 	buildDiffPayload,
 	buildInitialConflictedState,
-	fetchConflictStages,
 } from "./diffPayload.ts";
 import {
 	classifyDocumentChange,
@@ -448,7 +448,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 				// it manually.
 				base: "",
 				local: "",
-				incoming: "",
+				remote: "",
 			}),
 		);
 

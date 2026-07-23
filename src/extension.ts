@@ -1,6 +1,5 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-import { relative, sep } from "node:path";
 import {
 	commands,
 	type Disposable,
@@ -12,6 +11,7 @@ import {
 	window,
 	workspace,
 } from "vscode";
+import { fetchConflictStages } from "./conflictSnapshot.ts";
 import {
 	type ConflictState,
 	describeConflictStatusEvidence,
@@ -19,6 +19,7 @@ import {
 	execGitWithInput,
 	getUnresolvedReasons,
 	readConflictState,
+	repositoryRelativePath,
 } from "./gitUtils.ts";
 import { getWeldLogChannel, initializeWeldLogChannel } from "./log.ts";
 import { GitTextMerger } from "./matchers/gitTextMerger.ts";
@@ -40,10 +41,7 @@ import {
 import { SubmoduleConflict } from "./submoduleConflict.ts";
 import { ConflictedFilesProvider, GitFile } from "./treeView.ts";
 import { extractConflictLabels } from "./webview/conflictLabels.ts";
-import {
-	buildInitialConflictedState,
-	fetchConflictStages,
-} from "./webview/diffPayload.ts";
+import { buildInitialConflictedState } from "./webview/diffPayload.ts";
 import { MeldCustomEditorProvider } from "./webview/meldWebviewPanel.ts";
 import { SubmoduleConflictEditorProvider } from "./webview/submoduleConflictEditor.ts";
 
@@ -480,20 +478,6 @@ function handleOpenConflictedFile(file: GitFile) {
 	window.showTextDocument(file.uri);
 }
 
-function getRepoRelativePath(rootPath: string, filePath: string): string {
-	const repoRelativePath = relative(rootPath, filePath).split(sep).join("/");
-	if (
-		repoRelativePath.length === 0 ||
-		repoRelativePath.startsWith("../") ||
-		repoRelativePath === ".." ||
-		repoRelativePath.includes("\n") ||
-		repoRelativePath.includes("\t")
-	) {
-		throw new Error(`Cannot restore ${filePath}: invalid repository path.`);
-	}
-	return repoRelativePath;
-}
-
 function parseTreeEntry(
 	output: string,
 	ref: string,
@@ -531,7 +515,7 @@ async function restoreDeleteModifyConflict(
 	const { uri, rootUri } = repoContext;
 	const filePath = uri.fsPath;
 	const cwd = rootUri.fsPath;
-	const repoRelativePath = getRepoRelativePath(cwd, filePath);
+	const repoRelativePath = repositoryRelativePath(rootUri, uri);
 	const [baseEntry, survivingEntry] = await Promise.all([
 		readTreeEntry(mergeBase, repoRelativePath, cwd, filePath),
 		readTreeEntry(survivingRef, repoRelativePath, cwd, filePath),

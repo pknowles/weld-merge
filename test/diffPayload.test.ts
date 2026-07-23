@@ -74,7 +74,7 @@ function makeConflictedItem(
 const BOTH_MODIFIED_STAGES = {
 	base: "base line\n",
 	local: "local line\n",
-	incoming: "remote line\n",
+	remote: "remote line\n",
 };
 
 // ─── payload shape ────────────────────────────────────────────────────────────
@@ -85,7 +85,7 @@ describe("buildDiffPayload payload shape", () => {
 			stages: {
 				base: "shared\n",
 				local: "local change\n",
-				incoming: "remote change\n",
+				remote: "remote change\n",
 			},
 		});
 
@@ -100,7 +100,7 @@ describe("buildDiffPayload payload shape", () => {
 			stages: {
 				base: "base\n",
 				local: "local content\n",
-				incoming: "remote content\n",
+				remote: "remote content\n",
 			},
 		});
 
@@ -110,7 +110,7 @@ describe("buildDiffPayload payload shape", () => {
 
 	it("always sets isConflicted to true", async () => {
 		const result = await buildDiffPayload(makeConflictedItem(makeRepo()), {
-			stages: { base: "b\n", local: "l\n", incoming: "r\n" },
+			stages: { base: "b\n", local: "l\n", remote: "r\n" },
 		});
 
 		expect(result.isConflicted).toBe(true);
@@ -118,7 +118,7 @@ describe("buildDiffPayload payload shape", () => {
 
 	it("diffs array has exactly two entries (left and right)", async () => {
 		const result = await buildDiffPayload(makeConflictedItem(makeRepo()), {
-			stages: { base: "b\n", local: "l\n", incoming: "r\n" },
+			stages: { base: "b\n", local: "l\n", remote: "r\n" },
 		});
 
 		expect(result.diffs).toHaveLength(2);
@@ -126,7 +126,7 @@ describe("buildDiffPayload payload shape", () => {
 
 	it("Merged file has no commit metadata", async () => {
 		const result = await buildDiffPayload(makeConflictedItem(makeRepo()), {
-			stages: { base: "b\n", local: "l\n", incoming: "r\n" },
+			stages: { base: "b\n", local: "l\n", remote: "r\n" },
 		});
 
 		expect(result.files[1].commit).toBeUndefined();
@@ -147,7 +147,7 @@ describe("buildDiffPayload payload shape", () => {
 		});
 
 		const result = await buildDiffPayload(makeConflictedItem(repo), {
-			stages: { base: "", local: "l\n", incoming: "r\n" },
+			stages: { base: "", local: "l\n", remote: "r\n" },
 		});
 
 		expect(result.files[0].commit?.hash).toBe("deadbeef");
@@ -166,7 +166,7 @@ describe("buildDiffPayload merge behaviour", () => {
 			stages: {
 				base: "original\n",
 				local: "changed\n",
-				incoming: "changed\n",
+				remote: "changed\n",
 			},
 		});
 
@@ -193,7 +193,7 @@ describe("buildDiffPayload merge behaviour", () => {
 				stages: {
 					base: "",
 					local: "same line\n",
-					incoming: "same line\n",
+					remote: "same line\n",
 				},
 			},
 		);
@@ -205,7 +205,7 @@ describe("buildDiffPayload merge behaviour", () => {
 	it("uses caller-supplied workingContent instead of auto-merging", async () => {
 		const workingContent = "user edited content\n";
 		const result = await buildDiffPayload(makeConflictedItem(makeRepo()), {
-			stages: { base: "base\n", local: "local\n", incoming: "remote\n" },
+			stages: { base: "base\n", local: "local\n", remote: "remote\n" },
 			workingContent,
 		});
 
@@ -215,7 +215,7 @@ describe("buildDiffPayload merge behaviour", () => {
 
 // ─── opcode correctness ───────────────────────────────────────────────────────
 //
-// local: "a\nX\nc\n"  incoming: "a\nb\nY\n"  base: "a\nb\nc\n"
+// local: "a\nX\nc\n"  remote: "a\nb\nY\n"  base: "a\nb\nc\n"
 // Local changed line 2 (b→X); Remote changed line 3 (c→Y).
 // Auto-merge produces "a\nX\nY\n" — a clean 3-way merge.
 // Left diffs (merged↔local): line 3 differs (Y vs c).
@@ -225,7 +225,7 @@ describe("buildDiffPayload opcode correctness", () => {
 	const cleanStages = {
 		base: "a\nb\nc\n",
 		local: "a\nX\nc\n",
-		incoming: "a\nb\nY\n",
+		remote: "a\nb\nY\n",
 	};
 
 	it("left diffs mark lines where Merged and Local content differ", async () => {
@@ -269,7 +269,7 @@ describe("buildDiffPayload opcode correctness", () => {
 
 	it("explicit workingContent causes non-empty left diffs when it differs from Local", async () => {
 		const result = await buildDiffPayload(makeConflictedItem(makeRepo()), {
-			stages: { base: "x\n", local: "x\n", incoming: "x\n" },
+			stages: { base: "x\n", local: "x\n", remote: "x\n" },
 			workingContent: "completely different\n",
 		});
 

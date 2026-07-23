@@ -1,8 +1,13 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-import { basename, relative, sep } from "node:path";
+import { basename } from "node:path";
 import { Uri } from "vscode";
-import { execGit, execGitWithInput, readConflictState } from "./gitUtils.ts";
+import {
+	execGit,
+	execGitWithInput,
+	readConflictState,
+	repositoryRelativePath,
+} from "./gitUtils.ts";
 import type { GitApiRepository } from "./repoContext.ts";
 
 const GITLINK_MODE = "160000";
@@ -122,7 +127,7 @@ class SubmoduleConflict {
 		repository: GitApiRepository,
 		submoduleUri: Uri,
 	): Promise<SubmoduleConflict> {
-		const repoRelativePath = getRepoRelativePath(
+		const repoRelativePath = repositoryRelativePath(
 			repository.rootUri,
 			submoduleUri,
 		);
@@ -154,7 +159,7 @@ class SubmoduleConflict {
 		repository: GitApiRepository,
 		submoduleUri: Uri,
 	): Promise<void> {
-		const repoRelativePath = getRepoRelativePath(
+		const repoRelativePath = repositoryRelativePath(
 			repository.rootUri,
 			submoduleUri,
 		);
@@ -247,29 +252,11 @@ class SubmoduleConflict {
 	}
 }
 
-function getRepoRelativePath(rootUri: Uri, fileUri: Uri): string {
-	const repoRelativePath = relative(rootUri.fsPath, fileUri.fsPath)
-		.split(sep)
-		.join("/");
-	if (
-		repoRelativePath.length === 0 ||
-		repoRelativePath.startsWith("../") ||
-		repoRelativePath === ".." ||
-		repoRelativePath.includes("\n") ||
-		repoRelativePath.includes("\t")
-	) {
-		throw new Error(
-			`Cannot use ${fileUri.toString()}: invalid repository path.`,
-		);
-	}
-	return repoRelativePath;
-}
-
 async function isSubmoduleGitlinkChange(
 	repository: GitApiRepository,
 	submoduleUri: Uri,
 ): Promise<boolean> {
-	const repoRelativePath = getRepoRelativePath(
+	const repoRelativePath = repositoryRelativePath(
 		repository.rootUri,
 		submoduleUri,
 	);
@@ -295,7 +282,7 @@ async function isActiveSubmoduleGitlinkConflict(
 	if (!mergeChange) {
 		return false;
 	}
-	const repoRelativePath = getRepoRelativePath(
+	const repoRelativePath = repositoryRelativePath(
 		repository.rootUri,
 		submoduleUri,
 	);
@@ -318,7 +305,7 @@ async function isKnownSubmoduleConflictPath(
 	// local gitlink, so classification cannot rely on the current index diff.
 	// MERGE_MSG gives us the original path; the active operation refs tell us
 	// whether that path was a gitlink in the conflict being resolved.
-	const repoRelativePath = getRepoRelativePath(
+	const repoRelativePath = repositoryRelativePath(
 		repository.rootUri,
 		submoduleUri,
 	);

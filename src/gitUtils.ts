@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
 import { execFile, spawn } from "node:child_process";
+import { relative, sep } from "node:path";
 import { FileType, Uri, workspace } from "vscode";
 import { getGitExecutable } from "./gitPath.ts";
 import type { ConflictedItem, GitApiRepository } from "./repoContext.ts";
@@ -57,6 +58,24 @@ const CONFLICT_STATE_FILES: Array<{
 ];
 
 const gitDirByRepoUri: Map<string, Uri> = new Map();
+
+function repositoryRelativePath(rootUri: Uri, fileUri: Uri): string {
+	const relativePath = relative(rootUri.fsPath, fileUri.fsPath)
+		.split(sep)
+		.join("/");
+	if (
+		relativePath.length === 0 ||
+		relativePath.startsWith("../") ||
+		relativePath === ".." ||
+		relativePath.includes("\n") ||
+		relativePath.includes("\t")
+	) {
+		throw new Error(
+			`Cannot use ${fileUri.toString()}: invalid repository path.`,
+		);
+	}
+	return relativePath;
+}
 
 function getParentUri(uri: Uri): Uri {
 	const path = uri.path;
@@ -274,4 +293,5 @@ export {
 	getUnresolvedReasons,
 	parseGitDirPointer,
 	readConflictState,
+	repositoryRelativePath,
 };
