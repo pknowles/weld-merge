@@ -7,8 +7,8 @@
 Expose weld-merge to VS Code Agent Mode / Copilot through VS Code Language
 Model Tools (`contributes.languageModelTools`), gated behind `weld.agent.enable`
 (default off) since some users won't want AI/agent interaction. Already
-implemented for `weld_apply_automerge_all`, `weld_list_conflicts`, and
-`weld_get_conflict`.
+implemented for `weld_apply_automerge_all`, `weld_apply_automerge`,
+`weld_list_conflicts`, and `weld_get_conflict`.
 
 No MCP integration for now. Weld's useful agent operations depend on VS Code
 extension-host APIs such as the Git API, `workspace.applyEdit`, and editor UI.
@@ -17,18 +17,25 @@ bridge back into the extension host, which adds remote-development and
 multi-instance complexity without helping the primary Copilot-in-VS-Code
 workflow.
 
+Design principle: Weld's tools are shortcuts for information/computation an
+agent could otherwise only get by running Weld's own deterministic algorithms
+(listing conflicts, reading conflict regions, running Weld's auto-merge). They
+must not become a channel for the model to write arbitrary or model-chosen
+content into files — that belongs to the editor's native file-editing tools,
+which already work fine once an agent has the conflict info Weld provides. Do
+not add a "resolve/apply this specific text" tool; if a tool would let the
+model author the replacement content (a full text override, or even a
+side-selection edit that a native edit could just as easily perform once
+`weld_get_conflict` has supplied exact line ranges and content), that's out of
+scope for weld-merge's LM tools.
+
 Remaining Language Model Tools:
-- `weld_apply_automerge` — run the existing auto-merge logic on a file; returns
-  success/failure and number of conflicts remaining in the file
 - `weld_open_3view` — open the 3-view diff editor for a file (read-only, no
   state changes); requires design work to support opening without an active
   conflict in git state (see annoyance note about re-opening the 3-view editor)
-- `weld_resolve_conflict` — apply a chosen side (local/remote/base) or provided
-  text to one conflict via `workspace.applyEdit`; completes the agent's
-  list -> get -> resolve loop
 - `prepareInvocation` confirmation messages for mutating tools (currently only
-  `weld_apply_automerge_all`) so agent mode shows a meaningful confirmation
-  instead of the generic one
+  `weld_apply_automerge_all` and `weld_apply_automerge`) so agent mode shows a
+  meaningful confirmation instead of the generic one
 
 ### Take-all Buttons
 

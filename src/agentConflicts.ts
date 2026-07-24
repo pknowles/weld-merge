@@ -35,9 +35,12 @@ type ConflictKind =
 	| "submodule";
 type NonTextConflictKind = Exclude<ConflictKind, "text">;
 
-interface ListedConflict {
+interface ConflictLocation {
 	repositoryRoot: string;
 	path: string;
+}
+
+interface ListedConflict extends ConflictLocation {
 	conflictCount: number;
 	kind: ConflictKind;
 }
@@ -46,16 +49,12 @@ interface ConflictList {
 	files: ListedConflict[];
 }
 
-interface GetConflictToolInput {
-	repositoryRoot: string;
-	path: string;
+interface GetConflictToolInput extends ConflictLocation {
 	conflictIndex: number;
 	contextLines?: number;
 }
 
-interface GetConflictRequest {
-	repositoryRoot: string;
-	path: string;
+interface GetConflictRequest extends ConflictLocation {
 	conflictIndex: number;
 	contextLines: number;
 }
@@ -263,24 +262,24 @@ async function listConflicts(): Promise<ConflictList> {
 	return { files };
 }
 
-function resolveConflictedItem(request: GetConflictRequest): ConflictedItem {
+function resolveConflictedItem(location: ConflictLocation): ConflictedItem {
 	const repository = getGitApi().repositories.find(
 		(candidate) =>
-			candidate.rootUri.toString() === request.repositoryRoot &&
+			candidate.rootUri.toString() === location.repositoryRoot &&
 			isSupportedScheme(candidate.rootUri),
 	);
 	if (!repository) {
 		throw new Error(
-			`No open Git repository matches ${request.repositoryRoot}. Call weld_list_conflicts again.`,
+			`No open Git repository matches ${location.repositoryRoot}. Call weld_list_conflicts again.`,
 		);
 	}
 	const candidateUri = Uri.joinPath(
 		repository.rootUri,
-		...request.path.split("/"),
+		...location.path.split("/"),
 	);
 	if (
 		repositoryRelativePath(repository.rootUri, candidateUri) !==
-		request.path
+		location.path
 	) {
 		throw new Error("path must be a canonical repository-relative path.");
 	}
@@ -289,7 +288,7 @@ function resolveConflictedItem(request: GetConflictRequest): ConflictedItem {
 	);
 	if (!mergeChange) {
 		throw new Error(
-			`${request.path} is not an active conflict in ${request.repositoryRoot}. Call weld_list_conflicts again.`,
+			`${location.path} is not an active conflict in ${location.repositoryRoot}. Call weld_list_conflicts again.`,
 		);
 	}
 	return createConflictedItem(repository, mergeChange);
@@ -512,6 +511,7 @@ async function getConflict(
 
 export type {
 	ConflictList,
+	ConflictLocation,
 	GetConflictResult,
 	GetConflictToolInput,
 	ListedConflict,
@@ -522,4 +522,5 @@ export {
 	getConflict,
 	listConflicts,
 	normalizeGetConflictInput,
+	resolveConflictedItem,
 };

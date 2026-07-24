@@ -233,6 +233,35 @@
 				}
 			},
 			{
+				"name": "weld_apply_automerge",
+				"toolReferenceName": "weldAutomerge",
+				"displayName": "Weld: Auto-merge file",
+				"userDescription": "Run Weld's automatic merge logic on one conflicted file.",
+				"modelDescription": "Runs Weld Merge's auto-merge logic on a single conflicted file selected from weld_list_conflicts. Writes the merged result to the live document (conflicts Weld cannot resolve are left as <<<<<<< conflict markers) and returns the number of conflicts still remaining in the file. Only available when weld.agent.enable is true.",
+				"canBeReferencedInPrompt": true,
+				"when": "config.weld.agent.enable",
+				"inputSchema": {
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"repositoryRoot": {
+							"type": "string",
+							"minLength": 1,
+							"description": "Repository root URI returned by weld_list_conflicts."
+						},
+						"path": {
+							"type": "string",
+							"minLength": 1,
+							"description": "Repository-relative conflicted path returned by weld_list_conflicts."
+						}
+					},
+					"required": [
+						"repositoryRoot",
+						"path"
+					]
+				}
+			},
+			{
 				"name": "weld_list_conflicts",
 				"toolReferenceName": "weldListConflicts",
 				"displayName": "Weld: List conflicts",

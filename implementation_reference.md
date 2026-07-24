@@ -18,8 +18,15 @@ Entry point and Git integration.
 - **`treeView.ts`**: Implementation of the "Conflicted Files" view in the SCM panel, including resolved-file parsing from `MERGE_MSG` through `workspace.fs`.
 - **`webview/meldWebviewPanel.ts`**: Manages the custom editor lifecycle, lifecycle of the Webview, and message passing.
 - **`webview/submoduleConflictEditor.ts`**: Readonly custom editor for submodule conflicts. The editor URI stores only repository root URI and repo-relative submodule path; every open/reload recomputes live state from Git, so no serializer or saved conflict snapshot is needed.
-- **`agentTools.ts`**: Registers VS Code Language Model Tools when
-  `weld.agent.enable` is true and serializes typed results for the LM boundary.
+- **`agentTools.ts`**: Registers VS Code Language Model Tools
+  (`weld_apply_automerge_all`, `weld_apply_automerge`, `weld_list_conflicts`,
+  `weld_get_conflict`) when `weld.agent.enable` is true and serializes typed
+  results for the LM boundary. These tools are read/compute shortcuts for
+  information or algorithms an agent could otherwise only reach by running
+  Weld's own logic (conflict listing, region inspection, Weld's deterministic
+  auto-merge); they intentionally do not let the model write arbitrary or
+  chosen content into files — that stays with the editor's native file-editing
+  tools once Weld has supplied the conflict data.
 - **`agentConflicts.ts`**: Shared conflict lookup and classification for
   `weld_list_conflicts` and `weld_get_conflict`. The list tool enumerates every
   open workspace Git repository and returns canonical Weld hunk counts. The get

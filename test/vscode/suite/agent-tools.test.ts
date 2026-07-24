@@ -38,6 +38,7 @@ import {
 
 const ACTIVE_CONFLICT_ERROR_REGEX = /not an active conflict/u;
 const CANONICAL_PATH_ERROR_REGEX = /canonical repository-relative path/u;
+const CONFLICT_MARKER_REGEX = /<{7} HEAD/u;
 const INVALID_REPOSITORY_PATH_REGEX = /invalid repository path/u;
 const NO_OPEN_REPOSITORY_ERROR_REGEX = /No open Git repository/u;
 const OUT_OF_RANGE_ERROR_REGEX = /out of range/u;
@@ -74,6 +75,26 @@ async function invokeGetConflict(input: object): Promise<GetConflictResult> {
 	assert.ok(parsed && typeof parsed === "object", "expected result object");
 	assert.ok("type" in parsed && typeof parsed.type === "string");
 	return parsed as GetConflictResult;
+}
+
+interface ApplyAutomergeResult {
+	repositoryRoot: string;
+	path: string;
+	remainingConflicts: number;
+}
+
+async function invokeApplyAutomerge(
+	input: object,
+): Promise<ApplyAutomergeResult> {
+	const parsed: unknown = JSON.parse(
+		await invokeTextTool("weld_apply_automerge", input),
+	);
+	assert.ok(parsed && typeof parsed === "object", "expected result object");
+	assert.ok(
+		"remainingConflicts" in parsed &&
+			typeof parsed.remainingConflicts === "number",
+	);
+	return parsed as ApplyAutomergeResult;
 }
 
 async function withListToolEnabled(test: () => Promise<void>): Promise<void> {
@@ -121,6 +142,11 @@ describe("Agent Tools: Settings (VS Code host)", () => {
 			"expected enabled Weld tool to be registered",
 		);
 		assert.equal(
+			lm.tools.some((tool) => tool.name === "weld_apply_automerge"),
+			true,
+			"expected enabled Weld single-file automerge tool to be registered",
+		);
+		assert.equal(
 			lm.tools.some((tool) => tool.name === "weld_list_conflicts"),
 			true,
 			"expected enabled Weld conflict-list tool to be registered",
@@ -163,6 +189,7 @@ describe("Agent Tools: Settings (VS Code host)", () => {
 				name: "weld_apply_automerge_all",
 				reference: "weldAutomergeAll",
 			},
+			{ name: "weld_apply_automerge", reference: "weldAutomerge" },
 			{ name: "weld_list_conflicts", reference: "weldListConflicts" },
 			{ name: "weld_get_conflict", reference: "weldGetConflict" },
 		]) {
@@ -181,6 +208,61 @@ describe("Agent Tools: Settings (VS Code host)", () => {
 			.get<boolean>("agent.enable");
 		assert.equal(enabled, false);
 	});
+});
+
+describe("Agent Tools: Single-file auto-merge", () => {
+	it("reports remaining conflicts the merge could not resolve", () =>
+		withConflictRepo(
+			"weld-agent-automerge-",
+			makeConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					const result = await invokeApplyAutomerge({
+						repositoryRoot: Uri.file(repoPath).toString(),
+						path: "tracked.txt",
+					});
+					assert.equal(result.path, "tracked.txt");
+					assert.equal(result.remainingConflicts, 1);
+
+					const document = await workspace.openTextDocument(
+						Uri.file(`${repoPath}/tracked.txt`),
+					);
+					assert.match(document.getText(), CONFLICT_MARKER_REGEX);
+				});
+			},
+		));
+
+	it("reports the count across multiple independent conflicts in one file", () =>
+		withConflictRepo(
+			"weld-agent-automerge-two-hunk-",
+			makeTwoHunkConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					const result = await invokeApplyAutomerge({
+						repositoryRoot: Uri.file(repoPath).toString(),
+						path: "tracked.txt",
+					});
+					assert.equal(result.remainingConflicts, 2);
+				});
+			},
+		));
+
+	it("rejects a path that is not an active conflict", () =>
+		withConflictRepo(
+			"weld-agent-automerge-stale-",
+			makeConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					await assert.rejects(
+						invokeApplyAutomerge({
+							repositoryRoot: Uri.file(repoPath).toString(),
+							path: "does-not-exist.txt",
+						}),
+						ACTIVE_CONFLICT_ERROR_REGEX,
+					);
+				});
+			},
+		));
 });
 
 describe("Agent Tools: Text conflict detection", () => {

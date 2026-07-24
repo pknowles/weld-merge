@@ -11,6 +11,8 @@ import {
 	window,
 	workspace,
 } from "vscode";
+import type { ConflictLocation } from "./agentConflicts.ts";
+import { resolveConflictedItem } from "./agentConflicts.ts";
 import { registerAgentTools } from "./agentTools.ts";
 import { fetchConflictStages } from "./conflictSnapshot.ts";
 import {
@@ -535,14 +537,19 @@ async function restoreDeleteModifyConflict(
 	);
 }
 
+interface AutoMergeResult {
+	remainingConflicts: number;
+}
+
 // Runs Weld's three-way merge for a single conflicted file and writes the
 // result back through a VS Code WorkspaceEdit. Throws on any failure so both
 // the single-file command and the batch "auto-merge all" flow can surface the
-// real reason instead of swallowing it.
+// real reason instead of swallowing it. Returns the number of conflicts the
+// merge could not resolve (left as <<<<<<< markers in the document).
 async function performAutoMerge(
 	conflictedItem: ConflictedItem,
 	documentUri: Uri,
-): Promise<void> {
+): Promise<AutoMergeResult> {
 	const [baseContent, localContent, remoteContent] = await Promise.all([
 		getGitFileContent(conflictedItem.repository, conflictedItem.uri, 1),
 		getGitFileContent(conflictedItem.repository, conflictedItem.uri, 2),
@@ -573,6 +580,7 @@ async function performAutoMerge(
 			`Failed to apply merged text to ${conflictedItem.uri}.`,
 		);
 	}
+	return { remainingConflicts: merger.differ.unresolved.length };
 }
 
 async function handleAutoMerge(
@@ -582,6 +590,20 @@ async function handleAutoMerge(
 ) {
 	await performAutoMerge(conflictedItem, documentUri);
 	conflictedFilesProvider.refresh();
+}
+
+// Auto-merges a single conflicted file identified by the agent tool's
+// repository-root/path location, reusing the same merge logic as the
+// single-file command and the "auto-merge all" batch. Refreshes the tree so
+// the UI reflects the change alongside the agent's own result.
+async function handleApplyAutomergeSingle(
+	location: ConflictLocation,
+	conflictedFilesProvider: ConflictedFilesProvider,
+): Promise<AutoMergeResult> {
+	const conflictedItem = resolveConflictedItem(location);
+	const result = await performAutoMerge(conflictedItem, conflictedItem.uri);
+	conflictedFilesProvider.refresh();
+	return result;
 }
 
 interface ConflictedFileEntry {
@@ -1315,14 +1337,19 @@ export function activate(context: ExtensionContext): WeldExtensionApi {
 	registerViews(context, conflictedFilesProvider);
 	registerCommands(context, conflictedFilesProvider);
 	setupGitRepoWatchers(context, conflictedFilesProvider, telemetry);
-	registerAgentTools(context, async () => {
-		const { mergedCount, totalCount } = await handleAutoMergeAll(
-			conflictedFilesProvider,
-		);
-		return totalCount === 0
-			? "No conflicted files found."
-			: `Merged ${mergedCount} of ${totalCount} file(s).`;
-	});
+	registerAgentTools(
+		context,
+		async () => {
+			const { mergedCount, totalCount } = await handleAutoMergeAll(
+				conflictedFilesProvider,
+			);
+			return totalCount === 0
+				? "No conflicted files found."
+				: `Merged ${mergedCount} of ${totalCount} file(s).`;
+		},
+		(location) =>
+			handleApplyAutomergeSingle(location, conflictedFilesProvider),
+	);
 	return {
 		setInitialConflictContent:
 			MeldCustomEditorProvider.setInitialConflictContent,

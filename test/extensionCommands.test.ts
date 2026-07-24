@@ -89,6 +89,33 @@ const mockBuildInitialConflictedState =
 	>();
 const mockFetchConflictStages =
 	jest.fn<(conflictedItem: ConflictedItem) => Promise<unknown>>();
+const mockRegisterAgentTools =
+	jest.fn<
+		(
+			context: unknown,
+			applyAutomergeAll: () => Promise<string>,
+			applyAutomergeSingle: (location: {
+				repositoryRoot: string;
+				path: string;
+			}) => Promise<{ remainingConflicts: number }>,
+		) => void
+	>();
+
+jest.mock("../src/agentTools.ts", () => ({
+	registerAgentTools: (
+		context: unknown,
+		applyAutomergeAll: () => Promise<string>,
+		applyAutomergeSingle: (location: {
+			repositoryRoot: string;
+			path: string;
+		}) => Promise<{ remainingConflicts: number }>,
+	) =>
+		mockRegisterAgentTools(
+			context,
+			applyAutomergeAll,
+			applyAutomergeSingle,
+		),
+}));
 
 jest.mock("../src/repoContext.ts", () => ({
 	...Object.fromEntries([
@@ -706,6 +733,34 @@ describe("extension auto-merge commands", () => {
 		expect(mockVscodeLogChannel().infos).toEqual([
 			"Weld Auto-Merge All: merged 1 of 2 file(s).",
 		]);
+	});
+});
+
+describe("extension agent tool registration", () => {
+	it("registers a weld_apply_automerge callback that merges one located file and reports remaining conflicts", async () => {
+		const repo = makeRepo("/work/repo", ["a.txt"]);
+		installGitApi(makeGitApi([repo]));
+		const { api } = activateWeld();
+		const refresh = jest.spyOn(api.conflictedFilesProvider, "refresh");
+		const document = documentFor(Uri.file("/work/repo/a.txt"), "old\n");
+		mockVscodeSetOpenTextDocument(() => Promise.resolve(document));
+		mockVscodeSetApplyEdit(() => Promise.resolve(true));
+
+		expect(mockRegisterAgentTools).toHaveBeenCalledTimes(1);
+		const applyAutomergeSingle = mockRegisterAgentTools.mock.calls[0]?.[2];
+		expect(applyAutomergeSingle).toBeDefined();
+
+		const result = await applyAutomergeSingle?.({
+			repositoryRoot: repo.rootUri.toString(),
+			path: "a.txt",
+		});
+
+		// base/local/remote each change the same line differently, so Weld
+		// cannot auto-resolve; the exact count is an implementation detail of
+		// the merge algorithm covered elsewhere, this test only exercises the
+		// weld_apply_automerge wiring end to end.
+		expect(result?.remainingConflicts).toBeGreaterThan(0);
+		expect(refresh).toHaveBeenCalled();
 	});
 });
 
