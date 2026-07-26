@@ -545,7 +545,11 @@ interface AutoMergeResult {
 // result back through a VS Code WorkspaceEdit. Throws on any failure so both
 // the single-file command and the batch "auto-merge all" flow can surface the
 // real reason instead of swallowing it. Returns the number of conflicts the
-// merge could not resolve (left as <<<<<<< markers in the document).
+// merge could not resolve (left as <<<<<<< markers in the document). This is
+// differ.conflicts (populated by initialize()'s three-way diff, one entry per
+// conflicting hunk), not differ.unresolved (populated by merge3FilesGit, one
+// entry per marker *line* — the same distinction agentConflicts.ts's
+// conflictCount draws via conflictChangeIndexes vs. individual DiffChunks).
 async function performAutoMerge(
 	conflictedItem: ConflictedItem,
 	documentUri: Uri,
@@ -580,7 +584,7 @@ async function performAutoMerge(
 			`Failed to apply merged text to ${conflictedItem.uri}.`,
 		);
 	}
-	return { remainingConflicts: merger.differ.unresolved.length };
+	return { remainingConflicts: merger.differ.conflicts.length };
 }
 
 async function handleAutoMerge(

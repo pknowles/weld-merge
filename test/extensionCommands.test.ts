@@ -755,11 +755,9 @@ describe("extension agent tool registration", () => {
 			path: "a.txt",
 		});
 
-		// base/local/remote each change the same line differently, so Weld
-		// cannot auto-resolve; the exact count is an implementation detail of
-		// the merge algorithm covered elsewhere, this test only exercises the
-		// weld_apply_automerge wiring end to end.
-		expect(result?.remainingConflicts).toBeGreaterThan(0);
+		// base/local/remote each change the same single line differently, so
+		// Weld cannot auto-resolve the one conflicting hunk.
+		expect(result).toEqual({ remainingConflicts: 1 });
 		expect(refresh).toHaveBeenCalled();
 	});
 });
