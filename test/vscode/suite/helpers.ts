@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { Uri } from "vscode";
+import { commands, Uri } from "vscode";
 import type {
 	ConflictedItem,
 	GitApiRepository,
@@ -19,6 +19,10 @@ const LS_FILES_STAGE_REGEX = /^\S+ \S+ (\d+)\t/;
 interface TempRepoFixture {
 	repoPath: string;
 	cleanupPath: string;
+}
+
+interface WithConflictRepoOptions {
+	closeBeforeCleanup?: boolean;
 }
 
 function assertUnmergedPaths(repoPath: string, expectedPaths: string[]): void {
@@ -264,6 +268,22 @@ function makeContextConflict(repoPath: string): void {
 	assertUnmergedPaths(repoPath, [fileName]);
 }
 
+function makeContextConflictWithMarkerStyle(
+	style: "merge" | "diff3" | "zdiff3",
+	markerLength: number,
+): (repoPath: string) => void {
+	return (repoPath) => {
+		runGit(["config", "merge.conflictStyle", style], repoPath);
+		writeFileSync(
+			join(repoPath, ".gitattributes"),
+			`tracked.txt conflict-marker-size=${markerLength}\n`,
+		);
+		runGit(["add", ".gitattributes"], repoPath);
+		runGit(["commit", "-m", "configure conflict marker length"], repoPath);
+		makeContextConflict(repoPath);
+	};
+}
+
 // Creates a single-file conflict with two independent hunks so both
 // conflictIndex 0 and conflictIndex 1 are valid inputs to weld_get_conflict.
 // File layout (base): "A\nB\nMID\nC\nD\n"
@@ -282,6 +302,87 @@ function makeTwoHunkConflict(repoPath: string): void {
 		runGit(["merge", "other"], repoPath);
 	} catch {
 		// git exits 1 for a conflict — expected
+	}
+	assertUnmergedPaths(repoPath, [fileName]);
+}
+
+// Git conflicts when Local deletes C while Remote inserts beside it; Weld's
+// three-way differ can resolve the pair without leaving a Weld conflict hunk.
+function makeWeldResolvableConflict(repoPath: string): void {
+	const fileName = "tracked.txt";
+	writeFileSync(join(repoPath, fileName), "A\nB\nC\nD\n");
+	runGit(["commit", "-am", "Weld-resolvable base"], repoPath);
+	runGit(["checkout", "-b", "other"], repoPath);
+	writeFileSync(join(repoPath, fileName), "A\nB\nC\nREMOTE\nD\n");
+	runGit(["commit", "-am", "remote inserts beside C"], repoPath);
+	runGit(["checkout", "-"], repoPath);
+	writeFileSync(join(repoPath, fileName), "A\nB\nD\n");
+	runGit(["commit", "-am", "local deletes C"], repoPath);
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits 1 for the expected marker conflict.
+	}
+	assertUnmergedPaths(repoPath, [fileName]);
+}
+
+// Creates two separated Git marker conflicts. In each, Git treats a local
+// deletion plus a remote adjacent insertion as conflicting, while Weld can
+// retain both independent edits. The unchanged separator keeps their line
+// coordinates independently observable to the agent-tool integration test.
+function makeTwoWeldResolvableConflicts(repoPath: string): void {
+	const fileName = "tracked.txt";
+	writeFileSync(
+		join(repoPath, fileName),
+		"START\nA\nB\nC\nD\nSEPARATOR\nE\nF\nG\nH\nEND\n",
+	);
+	runGit(["commit", "-am", "two Weld-resolvable base regions"], repoPath);
+	runGit(["checkout", "-b", "other"], repoPath);
+	writeFileSync(
+		join(repoPath, fileName),
+		"START\nA\nB\nC\nREMOTE-ONE\nD\nSEPARATOR\nE\nF\nG\nREMOTE-TWO\nH\nEND\n",
+	);
+	runGit(["commit", "-am", "remote inserts beside both deletions"], repoPath);
+	runGit(["checkout", "-"], repoPath);
+	writeFileSync(
+		join(repoPath, fileName),
+		"START\nA\nB\nD\nSEPARATOR\nE\nF\nH\nEND\n",
+	);
+	runGit(["commit", "-am", "local deletes both adjacent lines"], repoPath);
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits 1 for the expected marker conflicts.
+	}
+	assertUnmergedPaths(repoPath, [fileName]);
+}
+
+function makeLargeConflict(repoPath: string): void {
+	const fileName = "tracked.txt";
+	const base = Array.from(
+		{ length: 40 },
+		(_, index) => `base ${String(index + 1).padStart(2, "0")}`,
+	).join("\n");
+	const local = Array.from(
+		{ length: 40 },
+		(_, index) => `local ${String(index + 1).padStart(2, "0")}`,
+	).join("\n");
+	const remote = Array.from(
+		{ length: 40 },
+		(_, index) => `remote ${String(index + 1).padStart(2, "0")}`,
+	).join("\n");
+	writeFileSync(join(repoPath, fileName), `${base}\n`);
+	runGit(["commit", "-am", "large conflict base"], repoPath);
+	runGit(["checkout", "-b", "other"], repoPath);
+	writeFileSync(join(repoPath, fileName), `${remote}\n`);
+	runGit(["commit", "-am", "large remote replacement"], repoPath);
+	runGit(["checkout", "-"], repoPath);
+	writeFileSync(join(repoPath, fileName), `${local}\n`);
+	runGit(["commit", "-am", "large local replacement"], repoPath);
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits 1 for the expected marker conflict.
 	}
 	assertUnmergedPaths(repoPath, [fileName]);
 }
@@ -480,6 +581,7 @@ async function withConflictRepo(
 	prefix: string,
 	makeConflictFn: (repoPath: string) => void,
 	testFn: (repoPath: string, repo: GitApiRepository) => Promise<void>,
+	options: WithConflictRepoOptions = {},
 ): Promise<void> {
 	const repoPath = await makeRepo(prefix);
 	makeConflictFn(repoPath);
@@ -493,8 +595,17 @@ async function withConflictRepo(
 		await testFn(repoPath, repo);
 	} finally {
 		const closePromise = waitForRepoClose(repoPath);
-		await rm(repoPath, { recursive: true, force: true });
-		await closePromise;
+		if (options.closeBeforeCleanup) {
+			// An auto-merge edits the worktree and causes the Git extension to
+			// schedule refresh work. Close its repository before deletion so that
+			// work cannot start git with a removed working directory.
+			await commands.executeCommand("git.close", repo);
+			await closePromise;
+			await rm(repoPath, { recursive: true, force: true });
+		} else {
+			await rm(repoPath, { recursive: true, force: true });
+			await closePromise;
+		}
 	}
 }
 
@@ -545,8 +656,10 @@ export {
 	makeBothDeletedConflict,
 	makeConflict,
 	makeContextConflict,
+	makeContextConflictWithMarkerStyle,
 	makeDeletedByThemConflict,
 	makeDeletedByUsConflict,
+	makeLargeConflict,
 	makeRepo,
 	makeRepoFile,
 	makeRepoFixture,
@@ -555,6 +668,8 @@ export {
 	makeSubmoduleConflictFixture,
 	makeSubmoduleConflictRepo,
 	makeTwoHunkConflict,
+	makeTwoWeldResolvableConflicts,
+	makeWeldResolvableConflict,
 	openRepoInGitExtension,
 	waitForMergeChanges,
 	waitForRepoClose,

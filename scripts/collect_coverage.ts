@@ -106,7 +106,9 @@ function log(label: string): void {
 function runJestCoverage(): void {
 	log("Jest coverage");
 	rmSync(JEST_LCOV, { force: true });
-	execFileSync("npx", ["jest", "--coverage"], {
+	// Jest cannot see extension-host or browser coverage. The combined ratchet
+	// below enforces the release threshold only after all producers are merged.
+	execFileSync("npx", ["jest", "--coverage", "--coverageThreshold={}"], {
 		stdio: "inherit",
 		cwd: root,
 	});

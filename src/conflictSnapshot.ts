@@ -1,12 +1,18 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-import { execGit, repositoryRelativePath } from "./gitUtils.ts";
+import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { getGitExecutable } from "./gitPath.ts";
+import {
+	execGit,
+	readConflictState,
+	repositoryRelativePath,
+} from "./gitUtils.ts";
 import { Merger } from "./matchers/merge.ts";
 import type { DiffChunk } from "./matchers/myers.ts";
-import {
-	createThreeWayChanges,
-	type ThreeWayChange,
-} from "./matchers/threeWayDiff.ts";
+import type { ThreeWayChange } from "./matchers/threeWayDiff.ts";
 import type { ConflictedItem, GitApiRepository } from "./repoContext.ts";
 import { GitStatus } from "./repoContext.ts";
 
@@ -20,6 +26,15 @@ interface ConflictStages {
 	base: string;
 	local: string;
 	remote: string;
+}
+
+interface CommitInfo {
+	hash: string;
+	title: string;
+	authorName: string;
+	authorEmail: string;
+	date: string;
+	body: string;
 }
 
 interface ConflictSnapshot {
@@ -49,15 +64,6 @@ interface ConflictRegion {
 	};
 }
 
-interface CurrentConflictRegion {
-	lines: string[];
-	range: LineRange;
-	changes: {
-		local: DiffChunk[];
-		remote: DiffChunk[];
-	};
-}
-
 interface ConflictIndexStages {
 	base: boolean;
 	local: boolean;
@@ -70,6 +76,95 @@ function getGitState(
 	stage: number,
 ): Promise<string> {
 	return repository.show(`:${stage}`, file.fsPath);
+}
+
+async function getCommitInfo(
+	repository: GitApiRepository,
+	ref: string,
+): Promise<CommitInfo> {
+	const commit = await repository.getCommit(ref);
+	const [title = "", ...bodyLines] = commit.message.split("\n");
+	return {
+		hash: commit.hash,
+		title,
+		authorName: commit.authorName ?? "",
+		authorEmail: commit.authorEmail ?? "",
+		date: (commit.authorDate ?? new Date(0)).toISOString(),
+		body: bodyLines.join("\n"),
+	};
+}
+
+async function getRemoteRef(
+	repository: GitApiRepository,
+): Promise<string | null> {
+	const conflictState = await readConflictState(repository);
+	return conflictState?.otherRef ?? null;
+}
+
+async function getBaseCommitInfo(
+	repository: GitApiRepository,
+): Promise<CommitInfo | undefined> {
+	const remoteRef = await getRemoteRef(repository);
+	if (remoteRef === null) {
+		return;
+	}
+	const mergeBaseHash = await repository.getMergeBase("HEAD", remoteRef);
+	if (!mergeBaseHash) {
+		return;
+	}
+	return getCommitInfo(repository, mergeBaseHash);
+}
+
+async function createGitMergeFileContent(
+	cwd: string,
+	stages: ConflictStages,
+	labels: [string, string, string],
+): Promise<string> {
+	const directory = await mkdtemp(join(tmpdir(), "weld-"));
+	const localPath = join(directory, "local");
+	const basePath = join(directory, "base");
+	const remotePath = join(directory, "remote");
+	try {
+		await Promise.all([
+			writeFile(localPath, stages.local),
+			writeFile(basePath, stages.base),
+			writeFile(remotePath, stages.remote),
+		]);
+		return await new Promise<string>((resolve, reject) => {
+			execFile(
+				getGitExecutable(),
+				[
+					"merge-file",
+					"-p",
+					"-L",
+					labels[0],
+					"-L",
+					labels[1],
+					"-L",
+					labels[2],
+					localPath,
+					basePath,
+					remotePath,
+				],
+				{ cwd },
+				(error, stdout, stderr) => {
+					const exitCode =
+						(error as { code?: number } | null)?.code ?? 0;
+					if (error && exitCode >= 128) {
+						reject(
+							new Error(
+								`git merge-file failed in ${cwd}: ${stderr || error.message}`,
+							),
+						);
+						return;
+					}
+					resolve(stdout);
+				},
+			);
+		});
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
 }
 
 async function fetchConflictStages(
@@ -214,76 +309,6 @@ function rangesOverlap(left: LineRange, right: LineRange): boolean {
 	return left.start < right.end && right.start < left.end;
 }
 
-function getCurrentConflictRegion(
-	snapshot: ConflictSnapshot,
-	region: ConflictRegion,
-	currentContent: string,
-): CurrentConflictRegion | null {
-	if (currentContent === snapshot.mergedContent) {
-		return null;
-	}
-	const lines = currentContent.split("\n");
-	const currentChanges = createThreeWayChanges({
-		local: snapshot.lines.local,
-		middle: lines,
-		remote: snapshot.lines.remote,
-	});
-	const local: DiffChunk[] = [];
-	const remote: DiffChunk[] = [];
-	const currentRanges: LineRange[] = [];
-	const localStageRange = {
-		start: region.changes.local.startB,
-		end: region.changes.local.endB,
-	};
-	const remoteStageRange = {
-		start: region.changes.remote.startB,
-		end: region.changes.remote.endB,
-	};
-
-	for (const [localChange, remoteChange] of currentChanges) {
-		if (
-			localChange &&
-			rangesOverlap(
-				{ start: localChange.startB, end: localChange.endB },
-				localStageRange,
-			)
-		) {
-			local.push(localChange);
-			currentRanges.push({
-				start: localChange.startA,
-				end: localChange.endA,
-			});
-		}
-		if (
-			remoteChange &&
-			rangesOverlap(
-				{ start: remoteChange.startB, end: remoteChange.endB },
-				remoteStageRange,
-			)
-		) {
-			remote.push(remoteChange);
-			currentRanges.push({
-				start: remoteChange.startA,
-				end: remoteChange.endA,
-			});
-		}
-	}
-
-	if (currentRanges.length === 0) {
-		throw new Error(
-			"Current document diff did not map the selected conflict.",
-		);
-	}
-	return {
-		lines,
-		range: {
-			start: Math.min(...currentRanges.map((range) => range.start)),
-			end: Math.max(...currentRanges.map((range) => range.end)),
-		},
-		changes: { local, remote },
-	};
-}
-
 async function isBinaryConflict(
 	conflictedItem: ConflictedItem,
 ): Promise<boolean> {
@@ -316,17 +341,20 @@ async function isBinaryConflict(
 	return added === "-";
 }
 
-export type { ConflictRegion, ConflictSnapshot, ConflictStages, LineRange };
+export type { CommitInfo, ConflictSnapshot, ConflictStages, LineRange };
 export {
 	createConflictSnapshot,
+	createGitMergeFileContent,
 	fetchConflictIndexStages,
 	fetchConflictStages,
 	GIT_STAGE_BASE,
 	GIT_STAGE_LOCAL,
 	GIT_STAGE_REMOTE,
+	getBaseCommitInfo,
+	getCommitInfo,
 	getConflictRegion,
-	getCurrentConflictRegion,
 	getGitState,
+	getRemoteRef,
 	isBinaryConflict,
 	rangesOverlap,
 };

@@ -3,13 +3,8 @@
 import { describe, expect, it } from "@jest/globals";
 import {
 	createNonTextConflictResult,
-	createTextConflictResult,
 	normalizeGetConflictInput,
 } from "../src/agentConflicts.ts";
-import {
-	createConflictSnapshot,
-	getConflictRegion,
-} from "../src/conflictSnapshot.ts";
 
 const NONNEGATIVE_SAFE_INTEGER_REGEX = /nonnegative safe integer/u;
 
@@ -26,6 +21,8 @@ describe("normalizeGetConflictInput", () => {
 			path: "tracked.txt",
 			conflictIndex: 0,
 			contextLines: 5,
+			maxStageLines: 80,
+			maxResultItems: 80,
 		});
 	});
 
@@ -38,6 +35,16 @@ describe("normalizeGetConflictInput", () => {
 				contextLines: Number.MAX_SAFE_INTEGER,
 			}).contextLines,
 		).toBe(Number.MAX_SAFE_INTEGER);
+	});
+
+	it("accepts a tool-runtime null for an omitted conflict index", () => {
+		expect(
+			normalizeGetConflictInput({
+				repositoryRoot: "file:///repo",
+				path: "tracked.txt",
+				conflictIndex: null,
+			}),
+		).toMatchObject({ conflictIndex: null });
 	});
 
 	for (const testCase of [
@@ -67,88 +74,6 @@ describe("normalizeGetConflictInput", () => {
 	}
 });
 
-describe("createTextConflictResult", () => {
-	const request = {
-		repositoryRoot: "file:///repo",
-		path: "tracked.txt",
-		conflictIndex: 0,
-		contextLines: 1,
-	};
-	const currentDocument = {
-		uri: "file:///repo/tracked.txt",
-		version: 7,
-		isDirty: true,
-	};
-
-	it("serializes complete stage alternatives and a mapped current region", () => {
-		const snapshot = createConflictSnapshot({
-			base: "before\nbase\nafter",
-			local: "before\nlocal\nafter",
-			remote: "before\nremote\nafter",
-		});
-		const result = createTextConflictResult({
-			request,
-			snapshot,
-			region: getConflictRegion(snapshot, 0),
-			baseStagePresent: true,
-			currentDocument: {
-				...currentDocument,
-				content: "before\nresolved\nafter",
-			},
-		});
-
-		expect(result.type).toBe("text");
-		expect(result.base).toEqual({
-			present: true,
-			range: { startLine: 2, endLineExclusive: 3 },
-			lines: [{ lineNumber: 2, text: "base" }],
-			contextBefore: [{ lineNumber: 1, text: "before" }],
-			contextAfter: [{ lineNumber: 3, text: "after" }],
-		});
-		expect(result.changes.local).toEqual({
-			tag: "conflict",
-			baseRange: result.base.range,
-			stageRange: result.local.range,
-		});
-		expect(result.currentDocument).toEqual({
-			...currentDocument,
-			matchesWeldMergedContent: false,
-		});
-		expect("current" in result && result.current.lines).toEqual([
-			{ lineNumber: 2, text: "resolved" },
-		]);
-	});
-
-	it("distinguishes an absent base and omits an unchanged current region", () => {
-		const snapshot = createConflictSnapshot({
-			base: "",
-			local: "local",
-			remote: "remote",
-		});
-		const result = createTextConflictResult({
-			request,
-			snapshot,
-			region: getConflictRegion(snapshot, 0),
-			baseStagePresent: false,
-			currentDocument: {
-				...currentDocument,
-				content: snapshot.mergedContent,
-			},
-		});
-
-		expect(result.base.present).toBe(false);
-		expect(result.base.range).toEqual({
-			startLine: 1,
-			endLineExclusive: 1,
-		});
-		expect(result.base.lines).toEqual([]);
-		expect(result.base.contextBefore).toEqual([]);
-		expect(result.base.contextAfter).toEqual([]);
-		expect(result.currentDocument.matchesWeldMergedContent).toBe(true);
-		expect("current" in result).toBe(false);
-	});
-});
-
 describe("createNonTextConflictResult", () => {
 	for (const testCase of [
 		{ type: "binary", message: "Binary conflicts" },
@@ -164,6 +89,8 @@ describe("createNonTextConflictResult", () => {
 					path: "tracked.txt",
 					conflictIndex: 0,
 					contextLines: 5,
+					maxStageLines: 80,
+					maxResultItems: 80,
 				},
 				testCase.type,
 			);

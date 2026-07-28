@@ -15,36 +15,25 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { Uri } from "vscode";
 import {
 	type ConflictStages,
 	createConflictSnapshot,
+	createGitMergeFileContent,
 	fetchConflictStages,
 	GIT_STAGE_BASE,
 	GIT_STAGE_LOCAL,
 	GIT_STAGE_REMOTE,
+	getBaseCommitInfo,
+	getCommitInfo,
 	getGitState,
+	getRemoteRef,
 } from "../conflictSnapshot.ts";
-import { getGitExecutable } from "../gitPath.ts";
-import { readConflictState } from "../gitUtils.ts";
 import { MyersSequenceMatcher } from "../matchers/myers.ts";
 import { createThreeWayChanges } from "../matchers/threeWayDiff.ts";
-import type { ConflictedItem, GitApiRepository } from "../repoContext.ts";
+import type { ConflictedItem } from "../repoContext.ts";
 import type { ConflictLabels } from "./conflictLabels.ts";
 import type { DiffChunk, PayloadFiles, WebviewPayload } from "./ui/types.ts";
-
-interface CommitInfo {
-	hash: string;
-	title: string;
-	authorName: string;
-	authorEmail: string;
-	date: string;
-	body: string;
-}
 
 interface BuildDiffPayloadOptions {
 	stages?: ConflictStages;
@@ -54,47 +43,6 @@ interface BuildDiffPayloadOptions {
 	// live TextDocument text so diffs align with what the user currently sees.
 	workingContent?: string;
 }
-
-const getCommitInfo = async (
-	repository: GitApiRepository,
-	ref: string,
-): Promise<CommitInfo> => {
-	const commit = await repository.getCommit(ref);
-	const [title = "", ...bodyLines] = commit.message.split("\n");
-	return {
-		hash: commit.hash,
-		title,
-		authorName: commit.authorName ?? "",
-		authorEmail: commit.authorEmail ?? "",
-		date: (commit.authorDate ?? new Date(0)).toISOString(),
-		body: bodyLines.join("\n"),
-	};
-};
-
-// Returns null only for the genuinely expected absence case: the repo is not
-// in an active merge/cherry-pick/rebase operation. Any other failure (fs error
-// reading .git state, etc.) propagates as a thrown exception from
-// readConflictState, so callers can distinguish absent from failed.
-const getRemoteRef = async (
-	repository: GitApiRepository,
-): Promise<string | null> => {
-	const conflictState = await readConflictState(repository);
-	return conflictState?.otherRef ?? null;
-};
-
-const getBaseCommitInfo = async (
-	repository: GitApiRepository,
-): Promise<CommitInfo | undefined> => {
-	const remoteRef = await getRemoteRef(repository);
-	if (remoteRef === null) {
-		return;
-	}
-	const mergeBaseHash = await repository.getMergeBase("HEAD", remoteRef);
-	if (!mergeBaseHash) {
-		return;
-	}
-	return await getCommitInfo(repository, mergeBaseHash);
-};
 
 const runDiff = (
 	localLines: string[],
@@ -116,7 +64,7 @@ const runDiff = (
 	return { leftDiffs, rightDiffs };
 };
 
-async function buildInitialConflictedState(
+function buildInitialConflictedState(
 	repoUri: Uri,
 	stages: ConflictStages,
 	labels: ConflictLabels,
@@ -130,54 +78,11 @@ async function buildInitialConflictedState(
 	// ask before replacing it.
 	// git merge-file requires real files on disk, so this helper creates a
 	// temporary directory and always removes it in the finally block.
-	const tempDir = await mkdtemp(join(tmpdir(), "weld-"));
-	const localPath = join(tempDir, "local");
-	const basePath = join(tempDir, "base");
-	const remotePath = join(tempDir, "remote");
-
-	try {
-		await writeFile(localPath, stages.local);
-		await writeFile(basePath, stages.base);
-		await writeFile(remotePath, stages.remote);
-
-		return await new Promise<string>((resolve, reject) => {
-			execFile(
-				getGitExecutable(),
-				[
-					"merge-file",
-					"-p",
-					"-L",
-					labels.localLabel,
-					"-L",
-					labels.kind === "diff3" ? labels.baseLabel : "BASE",
-					"-L",
-					labels.remoteLabel,
-					localPath,
-					basePath,
-					remotePath,
-				],
-				{ cwd: repoUri.fsPath },
-				(err, stdout, stderr) => {
-					// git-merge-file documents: 0 = clean merge, 1..127 = conflict count,
-					// and negative values indicate errors. In Node callbacks these error
-					// codes are surfaced as unsigned exit codes (>=128), so treat >=128
-					// as real failure and keep 0..127 as valid stdout-producing results.
-					// Source: https://git-scm.com/docs/git-merge-file
-					if (err && ((err as { code?: number }).code ?? 0) >= 128) {
-						reject(
-							new Error(
-								`git merge-file failed for ${repoUri}: ${stderr || err.message}`,
-							),
-						);
-						return;
-					}
-					resolve(stdout);
-				},
-			);
-		});
-	} finally {
-		await rm(tempDir, { recursive: true, force: true });
-	}
+	return createGitMergeFileContent(repoUri.fsPath, stages, [
+		labels.localLabel,
+		labels.kind === "diff3" ? labels.baseLabel : "BASE",
+		labels.remoteLabel,
+	]);
 }
 
 async function buildDiffPayload(

@@ -4,7 +4,6 @@ import { describe, expect, it } from "@jest/globals";
 import {
 	createConflictSnapshot,
 	getConflictRegion,
-	getCurrentConflictRegion,
 	rangesOverlap,
 } from "../src/conflictSnapshot.ts";
 
@@ -195,101 +194,6 @@ describe("getConflictRegion", () => {
 		expect(() => getConflictRegion(snapshot, 1)).toThrow(
 			OUT_OF_RANGE_ERROR_REGEX,
 		);
-	});
-});
-
-describe("getCurrentConflictRegion", () => {
-	const stages = {
-		base: "A\nB\nD",
-		local: "A\nLOCAL\nD",
-		remote: "A\nREMOTE\nD",
-	};
-
-	for (const testCase of [
-		{
-			name: "local alternative through only the remote-side diff",
-			current: "A\nLOCAL\nD",
-			expectedLines: ["LOCAL"],
-			expectedLocalChanges: 0,
-			expectedRemoteChanges: 1,
-		},
-		{
-			name: "remote alternative through only the local-side diff",
-			current: "A\nREMOTE\nD",
-			expectedLines: ["REMOTE"],
-			expectedLocalChanges: 1,
-			expectedRemoteChanges: 0,
-		},
-		{
-			name: "third alternative through both side diffs",
-			current: "A\nTHIRD\nD",
-			expectedLines: ["THIRD"],
-			expectedLocalChanges: 1,
-			expectedRemoteChanges: 1,
-		},
-		{
-			name: "completely different document through both side diffs",
-			current: "UNRELATED",
-			expectedLines: ["UNRELATED"],
-			expectedLocalChanges: 1,
-			expectedRemoteChanges: 1,
-		},
-		{
-			name: "empty document through both side diffs",
-			current: "",
-			expectedLines: [""],
-			expectedLocalChanges: 1,
-			expectedRemoteChanges: 1,
-		},
-	] as const) {
-		it(`maps a ${testCase.name}`, () => {
-			const snapshot = createConflictSnapshot(stages);
-			const region = getConflictRegion(snapshot, 0);
-			const current = getCurrentConflictRegion(
-				snapshot,
-				region,
-				testCase.current,
-			);
-
-			expect(current).not.toBeNull();
-			if (!current) {
-				throw new Error("Expected a current conflict region.");
-			}
-			expect(regionLines(current.lines, current.range)).toEqual(
-				testCase.expectedLines,
-			);
-			expect(current.changes.local).toHaveLength(
-				testCase.expectedLocalChanges,
-			);
-			expect(current.changes.remote).toHaveLength(
-				testCase.expectedRemoteChanges,
-			);
-		});
-	}
-
-	it("omits current data when the document equals Weld's merged content", () => {
-		const snapshot = createConflictSnapshot(stages);
-		const region = getConflictRegion(snapshot, 0);
-
-		expect(
-			getCurrentConflictRegion(snapshot, region, snapshot.mergedContent),
-		).toBeNull();
-	});
-
-	it("maps the selected conflict after unrelated lines are inserted", () => {
-		const snapshot = createConflictSnapshot(stages);
-		const region = getConflictRegion(snapshot, 0);
-		const current = getCurrentConflictRegion(
-			snapshot,
-			region,
-			"PREFIX\nA\nLOCAL\nD",
-		);
-
-		expect(current).not.toBeNull();
-		if (!current) {
-			throw new Error("Expected a current conflict region.");
-		}
-		expect(regionLines(current.lines, current.range)).toEqual(["LOCAL"]);
 	});
 });
 

@@ -29,13 +29,20 @@ Entry point and Git integration.
   tools once Weld has supplied the conflict data.
 - **`agentConflicts.ts`**: Shared conflict lookup and classification for
   `weld_list_conflicts` and `weld_get_conflict`. The list tool enumerates every
-  open workspace Git repository and returns canonical Weld hunk counts. The get
-  tool returns complete base/local/remote alternatives, exact paired Weld chunk
-  ranges, numbered context, and an optional live-document region produced by
-  the same three-pane diff path as the webview. Non-text conflicts retain typed
-  binary/delete/submodule results. Agent tools run in-process in the workspace
-  extension host, are prompt-referenceable through `package.json`, and
-  intentionally do not expose MCP/stdio integration.
+  open workspace Git repository, returns canonical Weld hunk counts, and adds
+  concise local/incoming commit metadata. The get tool reads the current file
+  from disk, returns bounded base/local/remote stage regions; every omitted
+  requested region or context line is explicitly marked `truncated` and has a
+  raw-Git fallback, plus exact paired Weld chunk ranges, whole-file unresolved-hunk ranges,
+  literal marker ranges, and narrow Git-conflicted regions Weld can auto-merge.
+  When a Git conflict has no initial Weld conflict, omitting `conflictIndex`
+  returns a file-level summary (`conflictIndex: null`, `conflictCount: 0`) with
+  only current-file ranges, markers, and auto-merge suggestions; it never
+  fabricates a stage change or a line-zero conflict region. Non-text conflicts
+  retain typed binary/delete/submodule results. Agent tools run in-process in
+  the workspace extension host, are prompt-referenceable
+  through `package.json`, and intentionally do not expose MCP/stdio
+  integration.
 
 ## Webview UI (React Frontend)
 Located in `src/webview/ui/`.
@@ -83,6 +90,11 @@ Located in `src/webview/ui/`.
   and counts tree refreshes, Git state changes, meld state events, and
   submodule snapshot posts so restored-tab behavior cannot silently add
   repeated runtime work.
+- `test/vscode/suite/agent-tools.test.ts` exercises the agent conflict tool in
+  a real extension host, including disk-only conflict-region deletion,
+  replacement, adversarial copied-context edits, truncation, whole-file
+  replacement, variable-width merge/diff3/zdiff3 marker scans, and bounded
+  stage/current result responses for a real large conflict.
 
 Test coverage with jest, mutations with stryker, fuzz testing with jazzer should be kept up to date.
 

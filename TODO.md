@@ -37,6 +37,198 @@ Remaining Language Model Tools:
   `weld_apply_automerge_all` and `weld_apply_automerge`) so agent mode shows a
   meaningful confirmation instead of the generic one
 
+#### `weld_get_conflict` / `weld_list_conflicts` redesign (implemented)
+
+This redesign replaced the old `matchesWeldMergedContent`/live-document shape.
+The contract below records the implementation decisions and remaining test
+work; do not regress them when extending the tools.
+
+- **Read from disk, not the VS Code in-memory buffer.** A native file-edit
+  tool (the agent's own `Edit`/`Write`) acts on disk; it has no access to
+  VS Code's `TextDocument` buffer. The current code calls
+  `workspace.openTextDocument(uri).getText()`, which returns the dirty
+  in-memory buffer if the file is open unsaved — wrong source of truth. Read
+  via `workspace.fs.readFile` instead (matches the pattern already used in
+  `gitUtils.ts`/`treeView.ts`), so line ranges/content match what an edit
+  tool would actually see and change. Drop `isDirty`/`version`/
+  `matchesWeldMergedContent` entirely — there's only one source of truth now.
+- **Terminology: git vocabulary, not UI vocabulary.** No "panes." Weld's own
+  computed auto-merge result (`snapshot.mergedContent`) is an internal
+  reference value used to detect clean vs. conflicting hunks — do not name or
+  expose it as a top-level field (rejected names: `merged`, `panes`). The
+  live file on disk is called `current`.
+- **Don't duplicate content the agent can already read cheaply.** The agent
+  has full, free access to the current file's text through normal file tools.
+  `current` only needs to report *line ranges* (where each conflict/hunk
+  sits on disk right now), not duplicate the file's text.
+- **Git stage content (base/local/remote) is not cheap** for the agent to
+  fetch itself — it requires raw `git show :N:path` calls, and the model may
+  not know that convention. Provide it, but bounded: return full stage-region
+  text only up to the `maxStageLines` size budget (default small). If a region
+  or its requested context exceeds the budget, mark the stage response
+  `truncated` and return a `rawGitAccess` block with the exact stage number
+  and equivalent `git show` command for base/local/remote, so the model can
+  fetch the omitted content itself only when it actually needs to.
+  Small conflicts arrive complete in one call; large ones don't blow up the
+  response.
+- **Two tiers of conflict information, not one:**
+  - **Initial conflicts** (base-anchored, from git stages — what's in
+    `conflictChangeIndexes` today): base/local/remote regions for each real
+    conflict, unchanged in spirit from today.
+  - **Auto-merge suggestions — narrow, not "everything non-conflict," and
+    NOT simply "both sides present."** Verified by direct experiment
+    (see scratch probes run against `createConflictSnapshot` and real
+    `git merge-file`): `snapshot.changes` entries where only one side
+    changed (`change[0]` or `change[1]` is `null`) are **not** reliably
+    "git already resolved this" — they cover two structurally
+    indistinguishable cases:
+    1. Git's own single-side merge result (already applied to disk outside
+       any markers, never worth re-reporting), **and**
+    2. The exact "Weld resolves what git couldn't" case this feature exists
+       for — e.g. local deletes a line, remote inserts a new line at the
+       same position. Confirmed with real `git merge-file`: this produces
+       a genuine conflict (exit code 1, real `<<<<<<<` markers), yet Weld's
+       differ represents it as two independent single-sided hunks
+       (`[delete, null]` then `[null, insert]`) with non-`"conflict"` tags
+       and cleanly resolves it. This has the *identical shape* in
+       `snapshot.changes` to case 1 — there is no field on `DiffChunk`/
+       `ThreeWayChange` that distinguishes them, so a
+       "both-sides-present" filter (an earlier, wrong draft of this note)
+       silently drops exactly the valuable case and keeps only the
+       useless one.
+    - **Correct signal: run real `git merge-file` once per file** (already
+      done for the initial 3-view state, see `buildInitialConflictedState`
+      in `diffPayload.ts`, including the documented exit-code-as-
+      conflict-count convention from the git docs). Any line region that
+      is inside `git merge-file`'s own `<<<<<<<`/`>>>>>>>` markers (i.e.
+      git itself could not resolve it) but is *not* in Weld's
+      `conflictChangeIndexes` is a genuine "Weld resolved what git
+      couldn't" suggestion — surface only these, regardless of whether the
+      underlying `snapshot.changes` pair is single- or both-sided. Do not
+      surface anything still tagged `"conflict"` by Weld — those are
+      exactly the `(??)` markers the user would see unresolved in the UI.
+    - No per-hunk fuzzy-matching against a possibly-edited disk file is
+      needed here (per Weld and Meld both only ever offering auto-merge
+      from a clean base) — this comparison is entirely between git's stage
+      1/2/3 content and Weld's own snapshot, independent of the live file.
+  - **`unresolvedHunks`** (disk-anchored): re-run the same three-way diff
+    (`createThreeWayChanges`) with the live disk content as the middle
+    sequence instead of the base stage, filter to hunks still tagged
+    `"conflict"`. This is what the UI's 3-way diff view shows as red/conflict
+    even after the user declines the full auto-merge replacement and edits
+    the file directly. **Do not call this "conflicts"** — git's own conflict
+    state and Weld's `(??)` markers are different concepts, and many real
+    resolutions still show hunks here without being wrong. Use
+    **`unresolved`** — reads correctly even to a small model with no
+    Weld-specific context, without implying marker syntax or git status.
+  - This is a genuine simplification: the old per-conflict
+    `getCurrentConflictRegion` null-check/overlap-filter dance goes away
+    entirely. `unresolvedHunks` is a single whole-file pass, not something
+    computed per `conflictIndex`.
+- **Separately, detect literal leftover conflict-marker text** — checked-in
+  markers, broken/half-deleted markers, or Weld's own `(??)` sentinel
+  accidentally saved. This is a plain string scan for
+  `<<<<<<<`/`|||||||`/`=======`/`>>>>>>>`/`(??)`, independent of the diff
+  machinery above (diffing content doesn't see marker syntax as special).
+  Report marker text and ranges found on disk so the model knows even if
+  Weld's own diff thinks the file is otherwise resolved.
+- **Commit metadata** (hash, title, author, date — no body by default, could
+  be long) for local HEAD and remote/incoming is shown per-file in the UI and
+  entirely absent from the tools today. Add to `weld_list_conflicts` (small,
+  fixed-size, one repo-level fetch covers every conflicted file in that
+  repo). Reuse `getCommitInfo`/`getRemoteRef`/`getBaseCommitInfo`, currently
+  private to `diffPayload.ts` — extract into `conflictSnapshot.ts` alongside
+  `getGitState`/`fetchConflictStages` (same precedent already established).
+- **Testing gaps to close, consolidated into existing real-repo fixtures**
+  (per the project's testing guidance — real git repos are expensive to set
+  up, reuse fixtures already opened for other assertions in the same test
+  rather than creating new ones):
+  - `weld_apply_automerge`/`weld_apply_automerge_all` have **zero** coverage
+    today against anything but plain text conflicts. Add cases for:
+    - both-added conflicts (no base stage at all — `getGitFileContent`
+      for stage 1 would fail; confirm this throws a clean, informative
+      error rather than crashing oddly)
+    - deleted-by-us / deleted-by-them (one side has no local or no remote
+      stage; same concern)
+    - both-deleted
+    - submodule gitlink conflicts (structurally not mergeable text at all;
+      confirm a clean typed rejection, not an attempt to merge SHAs as text)
+  - These fixtures already exist in `test/vscode/suite/helpers.ts`
+    (`makeBothAddedConflict`, `makeDeletedByUsConflict`,
+    `makeDeletedByThemConflict`, `makeBothDeletedConflict`,
+    `makeSubmoduleConflictFixture`) and are already used by
+    `weld_list_conflicts`/`weld_get_conflict` tests — extend those same
+    `describe` blocks with auto-merge assertions instead of opening new repos.
+  - New disk-vs-buffer regression test: write directly to disk via
+    `workspace.fs.writeFile` (not `workspace.applyEdit`, which only touches
+    the in-memory buffer) inside an existing conflict-repo fixture, confirm
+    `weld_get_conflict`'s `current` ranges reflect disk content, not any
+    stale/absent in-memory buffer state.
+  - **Deferred test-fixture consolidation:** one repo with one file containing every kind of
+    hunk, plus every non-text conflict kind in the same repo** — see
+    `/home/pknowles/programming/tmp-conflict` for a hand-built example
+    already covering both-added/deleted-by-us/deleted-by-them/submodule
+    conflicts plus a text file mixing multiple hunk shapes in one commit
+    graph. It does **not** currently include a git-conflicts-but-Weld-
+    resolves hunk (delete-a-line-vs-insert-adjacent-line, confirmed above to
+    produce a real `git merge-file` conflict that Weld's differ resolves
+    cleanly) — add one when building the new fixture, since that's the
+    entire point of the auto-merge-suggestions feature and it's currently
+    unrepresented anywhere. One repo, one file, every kind of conflict/hunk
+    exercised together keeps the expensive part (spinning up a real git repo
+    in the VS Code test host) to a single setup for the whole family of
+    assertions below.
+  - **Scenario coverage implemented in focused real-repo fixtures in
+    `test/vscode/suite/agent-tools.test.ts`; verify small-model-legible
+    output, not just "doesn't crash," for each:**
+    - **Covered — user deletes the entire conflict region.** The disk-anchored
+      `unresolvedHunks` re-diff should still find and range the gap (local
+      and remote both "want" content the disk doesn't have). Marker-text
+      scan finds nothing (markers are gone too) — the tool must not imply
+      "resolved" just because no markers are present; `unresolvedHunks`
+      is the mechanism that has to catch this, not the marker scan.
+    - **Covered — user replaces the entire conflict region with unrelated text.** Same
+      mechanism as above; disk content differs from both local and remote,
+      hunk stays in `unresolvedHunks`.
+    - **Covered — user replaces the region with a text block copied from just before
+      or after it (deliberately adversarial to the diff alignment).** Real
+      previously unverified risk: if the copied text matches base/local/remote
+      content at a *different* offset, the underlying Myers-based three-way
+      diff could align it to the wrong position, misreport the range, or
+      make the diff look cleaner than it is. The integration assertion verifies
+      the reported range remains at the replaced line under this adversarial
+      input.
+    - **Covered — user truncates the entire file.** `workspace.fs.readFile` still
+      succeeds (short file, not a missing one) — the risk is downstream:
+      `expandSideRange` in `conflictSnapshot.ts` already throws on
+      out-of-bounds ranges, but that guards `base`/`local`/`remote` (stage
+      content, unaffected by disk truncation). The disk-anchored
+      `unresolvedHunks`/`current` pass is new code with no existing
+      equivalent to check against — verify it degrades to a sensible
+      "conflict region no longer exists in a truncated file" result rather
+      than an uncaught range error surfaced as an opaque tool failure.
+    - **Covered — user replaces the entire file with something completely
+      different.** Same category of risk as truncation — confirm a clean
+      "nothing recognizable here" result, not a crash or a false-positive
+      partial match.
+    - **Covered — different git conflict marker styles**
+      (`merge.conflictStyle` = `merge`/`diff3`/`zdiff3`, and marker length
+      via `%L`). Only relevant to the literal marker-text scan (the
+      diff-based mechanisms never look at marker syntax at all) — the scan
+      must not assume exactly 7 `<` characters or the presence/absence of
+      the `|||||||` base line, since `zdiff3` and custom lengths change
+      both.
+    - **Covered — large chunks cap the response.** A real 40-line hunk fixture
+      asserts that a small conflict arrives complete in one call and a large
+      one truncates with correct per-stage `rawGitAccess` fallbacks.
+    - For each of the above, the concrete question to answer per scenario:
+      **would a small model still get data it can act on correctly, or would
+      it be more confused than if it had just been asked to resolve the raw
+      conflict markers by hand from the start?** A scenario that degrades to
+      a clear, honest "can't map this" is fine; a scenario that returns a
+      wrong-but-confident-looking range or diff is worse than not having the
+      tool at all, and must be caught in testing before this ships.
+
 ### Take-all Buttons
 
 Buttons to copy local or remote into merged would avoid having to copy/paste.
