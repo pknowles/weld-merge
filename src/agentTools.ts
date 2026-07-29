@@ -53,11 +53,7 @@ function registerEnabledTools(
 				);
 				return new LanguageModelToolResult([
 					new LanguageModelTextPart(
-						JSON.stringify(
-							{ ...options.input, ...result },
-							null,
-							2,
-						),
+						JSON.stringify({ ...options.input, ...result }),
 					),
 				]);
 			},
@@ -70,7 +66,7 @@ function registerEnabledTools(
 				`Weld agent tool weld_list_conflicts: listed ${result.files.length} file(s)`,
 			);
 			return new LanguageModelToolResult([
-				new LanguageModelTextPart(JSON.stringify(result, null, 2)),
+				new LanguageModelTextPart(JSON.stringify(result)),
 			]);
 		},
 	});
@@ -85,7 +81,7 @@ function registerEnabledTools(
 					`Weld agent tool weld_get_conflict: returned ${result.type} conflict ${result.conflictIndex} for ${result.path}`,
 				);
 				return new LanguageModelToolResult([
-					new LanguageModelTextPart(JSON.stringify(result, null, 2)),
+					new LanguageModelTextPart(JSON.stringify(result)),
 				]);
 			},
 		},

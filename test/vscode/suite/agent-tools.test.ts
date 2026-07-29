@@ -762,6 +762,93 @@ describe("Agent Tools: Bounded conflict results", () => {
 		));
 });
 
+describe("Agent Tools: Response size baseline", () => {
+	// Records the actual wire size (lines and characters) of weld_get_conflict
+	// and weld_list_conflicts responses across a small/medium/large fixture
+	// spread. No assertions on absolute size yet — this is a baseline to
+	// optimize against, not a regression gate. Once real numbers are known,
+	// convert the relevant rows to hard ceilings.
+	function reportSize(label: string, raw: string): void {
+		const lines = raw.split("\n").length;
+		const chars = raw.length;
+		console.log(
+			`[response-size] ${label}: ${lines} line(s), ${chars} char(s)`,
+		);
+	}
+
+	it("records weld_get_conflict size for a minimal single conflict", () =>
+		withConflictRepo(
+			"weld-agent-size-min-",
+			makeConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					const raw = await invokeTextTool("weld_get_conflict", {
+						repositoryRoot: Uri.file(repoPath).toString(),
+						path: "tracked.txt",
+						conflictIndex: 0,
+					});
+					reportSize("minimal single conflict", raw);
+				});
+			},
+		));
+
+	it("records weld_get_conflict size for a conflict with real context", () =>
+		withConflictRepo(
+			"weld-agent-size-context-",
+			makeContextConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					const raw = await invokeTextTool("weld_get_conflict", {
+						repositoryRoot: Uri.file(repoPath).toString(),
+						path: "tracked.txt",
+						conflictIndex: 0,
+					});
+					reportSize("conflict with context", raw);
+				});
+			},
+		));
+
+	it("records weld_get_conflict size for one of several conflicts in a file", () =>
+		withConflictRepo(
+			"weld-agent-size-multi-",
+			makeTwoHunkConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					const raw = await invokeTextTool("weld_get_conflict", {
+						repositoryRoot: Uri.file(repoPath).toString(),
+						path: "tracked.txt",
+						conflictIndex: 0,
+					});
+					reportSize("one of two conflicts (scoped current.*)", raw);
+				});
+			},
+		));
+
+	it("records weld_get_conflict size for a large conflict at default budgets", () =>
+		withConflictRepo(
+			"weld-agent-size-large-",
+			makeLargeConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					const raw = await invokeTextTool("weld_get_conflict", {
+						repositoryRoot: Uri.file(repoPath).toString(),
+						path: "tracked.txt",
+						conflictIndex: 0,
+					});
+					reportSize("large conflict, default budgets", raw);
+				});
+			},
+		));
+
+	it("records weld_list_conflicts size for a single-conflict repository", () =>
+		withConflictRepo("weld-agent-size-list-", makeConflict, async () => {
+			await withListToolEnabled(async () => {
+				const raw = await invokeTextTool("weld_list_conflicts", {});
+				reportSize("weld_list_conflicts, one conflicted file", raw);
+			});
+		}));
+});
+
 describe("Agent Tools: Stale conflict requests", () => {
 	it("rejects stale repository, path, and conflict index inputs", () =>
 		withConflictRepo(
