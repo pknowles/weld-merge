@@ -3,6 +3,7 @@
 import { Uri, workspace } from "vscode";
 import {
 	type CommitInfo,
+	type ConflictRegion,
 	type ConflictSnapshot,
 	createConflictSnapshot,
 	createGitMergeFileContent,
@@ -36,12 +37,14 @@ const MARKER_MIDDLE_REGEX = /^(\|+|=+)(?:\s|$)/u;
 
 type ConflictKind =
 	| "text"
+	| "bothAdded"
 	| "binary"
 	| "deletedByUs"
 	| "deletedByThem"
 	| "bothDeleted"
 	| "submodule";
-type NonTextConflictKind = Exclude<ConflictKind, "text">;
+type TextConflictKind = "text" | "bothAdded";
+type NonTextConflictKind = Exclude<ConflictKind, TextConflictKind>;
 
 interface ConflictLocation {
 	repositoryRoot: string;
@@ -137,7 +140,7 @@ interface NonTextConflictResult extends ConflictResultIdentity {
 }
 
 interface TextConflictResult extends ConflictResultIdentity {
-	type: "text";
+	type: TextConflictKind;
 	base: StageRegionContent;
 	local: StageRegionContent;
 	remote: StageRegionContent;
@@ -153,7 +156,7 @@ interface TextConflictResult extends ConflictResultIdentity {
 }
 
 interface FileConflictSummary extends ConflictResultIdentity {
-	type: "text";
+	type: TextConflictKind;
 	conflictIndex: null;
 	conflictCount: 0;
 	current: TextConflictResult["current"];
@@ -167,7 +170,11 @@ type GetConflictResult =
 	| NonTextConflictResult;
 
 type ConflictInspection =
-	| { kind: "text"; snapshot: ConflictSnapshot; baseStagePresent: boolean }
+	| {
+			kind: TextConflictKind;
+			snapshot: ConflictSnapshot;
+			baseStagePresent: boolean;
+	  }
 	| { kind: NonTextConflictKind };
 
 function normalizeGetConflictInput(
@@ -274,8 +281,12 @@ async function inspectConflict(
 	if (await isBinaryConflict(item)) {
 		return { kind: "binary" };
 	}
+	// No base index entry at all (as opposed to a base stage that simply
+	// differs from both sides) means there is no common ancestor for this
+	// path: local and remote each independently created an unrelated file
+	// at the same path, not an edit conflict on a shared file.
 	return {
-		kind: "text",
+		kind: indexStages.base ? "text" : "bothAdded",
 		baseStagePresent: indexStages.base,
 		snapshot: createConflictSnapshot(await fetchConflictStages(item)),
 	};
@@ -310,7 +321,8 @@ async function listConflicts(): Promise<ConflictList> {
 					const inspection = await inspectConflict(item);
 					return listedConflict(
 						item,
-						inspection.kind === "text"
+						inspection.kind === "text" ||
+							inspection.kind === "bothAdded"
 							? inspection.snapshot.conflictChangeIndexes.length
 							: 1,
 						inspection.kind,
@@ -484,9 +496,15 @@ function hunkRange(
 	};
 }
 
+// When `region` is given, only hunks whose stage-side (local/remote blob)
+// range overlaps this specific conflict's region are returned — otherwise
+// every unresolved hunk in the whole file comes back regardless of which
+// conflictIndex was requested, which is both wasteful and misleading (the
+// caller asked about one conflict, not the file).
 function currentHunks(
 	snapshot: ConflictSnapshot,
 	current: string,
+	region?: ConflictRegion,
 ): CurrentHunk[] {
 	return createThreeWayChanges({
 		local: snapshot.lines.local,
@@ -497,7 +515,36 @@ function currentHunks(
 			([local, remote]) =>
 				local?.tag === "conflict" || remote?.tag === "conflict",
 		)
+		.filter(
+			([local, remote]) =>
+				!region || hunkOverlapsRegion(local, remote, region),
+		)
 		.map(([local, remote]) => hunkFromChanges(local, remote));
+}
+
+function hunkOverlapsRegion(
+	local: DiffChunk | null,
+	remote: DiffChunk | null,
+	region: ConflictRegion,
+): boolean {
+	return (
+		(local !== null &&
+			rangesOverlap(
+				{ start: local.startB, end: local.endB },
+				{
+					start: region.changes.local.startB,
+					end: region.changes.local.endB,
+				},
+			)) ||
+		(remote !== null &&
+			rangesOverlap(
+				{ start: remote.startB, end: remote.endB },
+				{
+					start: region.changes.remote.startB,
+					end: region.changes.remote.endB,
+				},
+			))
+	);
 }
 
 function conflictMarkers(current: string): ConflictMarker[] {
@@ -602,6 +649,7 @@ async function fileConflictSummary(
 	request: GetConflictRequest,
 	item: ConflictedItem,
 	snapshot: ConflictSnapshot,
+	kind: TextConflictKind,
 ): Promise<FileConflictSummary> {
 	const current = new TextDecoder().decode(
 		await workspace.fs.readFile(item.uri),
@@ -616,7 +664,7 @@ async function fileConflictSummary(
 		request.maxResultItems,
 	);
 	return {
-		type: "text",
+		type: kind,
 		repositoryRoot: request.repositoryRoot,
 		path: request.path,
 		conflictIndex: null,
@@ -665,7 +713,7 @@ async function getConflict(
 ): Promise<GetConflictResult> {
 	const item = resolveConflictedItem(request);
 	const inspection = await inspectConflict(item);
-	if (inspection.kind !== "text") {
+	if (inspection.kind !== "text" && inspection.kind !== "bothAdded") {
 		if (request.conflictIndex !== 0) {
 			throw new Error(
 				`Conflict index ${request.conflictIndex} is out of range for 1 conflict.`,
@@ -679,7 +727,12 @@ async function getConflict(
 				"conflictIndex is required when initial Weld conflicts exist.",
 			);
 		}
-		return fileConflictSummary(request, item, inspection.snapshot);
+		return fileConflictSummary(
+			request,
+			item,
+			inspection.snapshot,
+			inspection.kind,
+		);
 	}
 	const region = getConflictRegion(
 		inspection.snapshot,
@@ -688,17 +741,31 @@ async function getConflict(
 	const current = new TextDecoder().decode(
 		await workspace.fs.readFile(item.uri),
 	);
-	const unresolvedHunks = bounded(
-		currentHunks(inspection.snapshot, current),
+	const scopedHunks = currentHunks(inspection.snapshot, current, region);
+	const unresolvedHunks = bounded(scopedHunks, request.maxResultItems);
+	const markers = bounded(
+		conflictMarkers(current).filter((marker) =>
+			scopedHunks.some((hunk) =>
+				rangesOverlap(
+					{
+						start: marker.range.startLine - 1,
+						end: marker.range.endLineExclusive - 1,
+					},
+					{
+						start: hunk.range.startLine - 1,
+						end: hunk.range.endLineExclusive - 1,
+					},
+				),
+			),
+		),
 		request.maxResultItems,
 	);
-	const markers = bounded(conflictMarkers(current), request.maxResultItems);
 	const suggestions = bounded(
 		await autoMergeSuggestions(item, inspection.snapshot),
 		request.maxResultItems,
 	);
 	return {
-		type: "text",
+		type: inspection.kind,
 		repositoryRoot: request.repositoryRoot,
 		path: request.path,
 		conflictIndex: request.conflictIndex,

@@ -33,16 +33,24 @@ Entry point and Git integration.
   concise local/incoming commit metadata. The get tool reads the current file
   from disk, returns bounded base/local/remote stage regions; every omitted
   requested region or context line is explicitly marked `truncated` and has a
-  raw-Git fallback, plus exact paired Weld chunk ranges, whole-file unresolved-hunk ranges,
-  literal marker ranges, and narrow Git-conflicted regions Weld can auto-merge.
-  When a Git conflict has no initial Weld conflict, omitting `conflictIndex`
-  returns a file-level summary (`conflictIndex: null`, `conflictCount: 0`) with
-  only current-file ranges, markers, and auto-merge suggestions; it never
-  fabricates a stage change or a line-zero conflict region. Non-text conflicts
-  retain typed binary/delete/submodule results. Agent tools run in-process in
-  the workspace extension host, are prompt-referenceable
-  through `package.json`, and intentionally do not expose MCP/stdio
-  integration.
+  raw-Git fallback, plus exact paired Weld chunk ranges, literal marker ranges,
+  and narrow Git-conflicted regions Weld can auto-merge. `current.unresolvedHunks`
+  and `current.conflictMarkers` are scoped to the requested `conflictIndex`
+  (filtered by stage-side overlap with that conflict's region), not the whole
+  file — a file with many conflicts must not have every one of them echoed
+  back on every single lookup. When a Git conflict has no initial Weld
+  conflict, omitting `conflictIndex` returns a whole-file summary
+  (`conflictIndex: null`, `conflictCount: 0`) with only current-file ranges,
+  markers, and auto-merge suggestions; it never fabricates a stage change or a
+  line-zero conflict region. Conflicts where local and remote each
+  independently created the file at this path (no common ancestor) report
+  `type: "bothAdded"` instead of `"text"` so a caller can distinguish "two
+  unrelated new files collided" from an edit conflict without inferring it
+  from `base.present`; the response otherwise has the same shape as a text
+  conflict. Non-text conflicts retain typed binary/delete/submodule results.
+  Agent tools run in-process in the workspace extension host, are
+  prompt-referenceable through `package.json`, and intentionally do not
+  expose MCP/stdio integration.
 
 ## Webview UI (React Frontend)
 Located in `src/webview/ui/`.

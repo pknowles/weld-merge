@@ -341,7 +341,13 @@ async function isBinaryConflict(
 	return added === "-";
 }
 
-export type { CommitInfo, ConflictSnapshot, ConflictStages, LineRange };
+export type {
+	CommitInfo,
+	ConflictRegion,
+	ConflictSnapshot,
+	ConflictStages,
+	LineRange,
+};
 export {
 	createConflictSnapshot,
 	createGitMergeFileContent,

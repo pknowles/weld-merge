@@ -33,9 +33,6 @@ Remaining Language Model Tools:
 - `weld_open_3view` — open the 3-view diff editor for a file (read-only, no
   state changes); requires design work to support opening without an active
   conflict in git state (see annoyance note about re-opening the 3-view editor)
-- `prepareInvocation` confirmation messages for mutating tools (currently only
-  `weld_apply_automerge_all` and `weld_apply_automerge`) so agent mode shows a
-  meaningful confirmation instead of the generic one
 
 #### `weld_get_conflict` / `weld_list_conflicts` redesign (implemented)
 

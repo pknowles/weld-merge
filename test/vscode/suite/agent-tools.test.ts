@@ -353,7 +353,7 @@ describe("Agent Tools: Text conflict detection", () => {
 			});
 		}));
 
-	it("classifies a both-added text conflict", () =>
+	it("classifies a both-added conflict distinctly from an edit conflict", () =>
 		withConflictRepo(
 			"weld-agent-both-added-",
 			makeBothAddedConflict,
@@ -365,21 +365,23 @@ describe("Agent Tools: Text conflict detection", () => {
 						"conflict.txt",
 					);
 					assert.equal(conflict.conflictCount, 1);
-					assert.equal(conflict.kind, "text");
+					assert.equal(conflict.kind, "bothAdded");
 					const detail = await invokeGetConflict({
 						repositoryRoot: Uri.file(repoPath).toString(),
 						path: "conflict.txt",
 						conflictIndex: 0,
 					});
-					assert.equal(detail.type, "text");
+					assert.equal(detail.type, "bothAdded");
 					if (
-						detail.type !== "text" ||
+						detail.type !== "bothAdded" ||
 						detail.conflictIndex === null
 					) {
-						throw new Error("expected both-added text conflict");
+						throw new Error("expected both-added conflict");
 					}
 					assert.equal(detail.base.present, false);
 					assert.deepEqual(detail.base.lines, []);
+					assert.ok(detail.local.present);
+					assert.ok(detail.remote.present);
 				});
 			},
 		));
@@ -942,6 +944,18 @@ describe("Agent Tools: Multi-hunk conflict indexing", () => {
 						result1.base.lines.map((l) => l.text),
 						["C"],
 					);
+					// current.unresolvedHunks/conflictMarkers must scope to the
+					// requested conflict, not dump every conflict in the file:
+					// asking about index 0 should not also return index 1's
+					// hunk and markers, and vice versa.
+					assert.equal(result0.current.unresolvedHunks.length, 1);
+					assert.equal(result1.current.unresolvedHunks.length, 1);
+					assert.notDeepEqual(
+						result0.current.unresolvedHunks[0]?.range,
+						result1.current.unresolvedHunks[0]?.range,
+					);
+					assert.equal(result0.current.conflictMarkers.length, 4);
+					assert.equal(result1.current.conflictMarkers.length, 4);
 				});
 			},
 		));
