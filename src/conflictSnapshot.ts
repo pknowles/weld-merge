@@ -11,8 +11,11 @@ import {
 	repositoryRelativePath,
 } from "./gitUtils.ts";
 import { Merger } from "./matchers/merge.ts";
-import type { DiffChunk } from "./matchers/myers.ts";
-import type { ThreeWayChange } from "./matchers/threeWayDiff.ts";
+import { type DiffChunk, MyersSequenceMatcher } from "./matchers/myers.ts";
+import {
+	createThreeWayChanges,
+	type ThreeWayChange,
+} from "./matchers/threeWayDiff.ts";
 import type { ConflictedItem, GitApiRepository } from "./repoContext.ts";
 import { GitStatus } from "./repoContext.ts";
 
@@ -68,6 +71,64 @@ interface ConflictIndexStages {
 	base: boolean;
 	local: boolean;
 	remote: boolean;
+}
+
+interface TwoWayComparison {
+	baseLines: string[];
+	targetLines: string[];
+	opcodes: DiffChunk[];
+}
+
+interface ThreeWayComparison {
+	localLines: string[];
+	middleLines: string[];
+	remoteLines: string[];
+	changes: ThreeWayChange[];
+}
+
+/**
+ * The canonical two-way line matching used by Weld's base comparison views.
+ *
+ * Consumers may select or render a bounded projection, but must not recompute
+ * matching on an independently sliced pair of inputs.
+ */
+function twoWayChanges(base: string[], target: string[]): DiffChunk[] {
+	return new MyersSequenceMatcher<string>(null, base, target).getOpcodes();
+}
+
+/** Source model for Weld's base comparison views and compact agent projections. */
+function createTwoWayComparison(
+	base: string,
+	target: string,
+): TwoWayComparison {
+	const baseLines = base.split("\n");
+	const targetLines = target.split("\n");
+	return {
+		baseLines,
+		targetLines,
+		opcodes: twoWayChanges(baseLines, targetLines),
+	};
+}
+
+/** Source model shared by the GUI three-way view and live-disk tool mapping. */
+function createThreeWayComparison(
+	local: string,
+	middle: string,
+	remote: string,
+): ThreeWayComparison {
+	const localLines = local.split("\n");
+	const middleLines = middle.split("\n");
+	const remoteLines = remote.split("\n");
+	return {
+		localLines,
+		middleLines,
+		remoteLines,
+		changes: createThreeWayChanges({
+			local: localLines,
+			middle: middleLines,
+			remote: remoteLines,
+		}),
+	};
 }
 
 function getGitState(
@@ -351,6 +412,8 @@ export type {
 export {
 	createConflictSnapshot,
 	createGitMergeFileContent,
+	createThreeWayComparison,
+	createTwoWayComparison,
 	fetchConflictIndexStages,
 	fetchConflictStages,
 	GIT_STAGE_BASE,

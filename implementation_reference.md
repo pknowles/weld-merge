@@ -13,6 +13,10 @@ Entry point and Git integration.
 - **`repoContext.ts`**: Resolves per-file Git repository context via `vscode.git`. Custom-editor startup uses typed acquisition helpers that activate/wait for the Git API, open the requested repository, await the repository's first status-backed state event through a shared acquisition promise, and then return fully usable objects (`ReadyRepository`/`ConflictedItem`) or throw typed errors; editor startup code does not consume nullable Git API results directly.
 - **`gitUtils.ts`**: Shared git helpers for subprocess-backed commands, validated repository-relative paths, URI-safe `.git` resolution, and conflict-state detection via `workspace.fs`.
 - **`conflictSnapshot.ts`**: Shared text-conflict boundary used by both the merge editor and agent tools. It reads base/local/remote stages, builds the canonical `Merger` snapshot and conflict indexes, inspects unmerged index-stage shape, and asks Git's diff machinery to classify binary content.
+  `createTwoWayComparison()` and `createThreeWayComparison()` are the
+  canonical comparison source models: the GUI's Base/three-way views and the
+  agent's compact summaries share their source lines and change chunks, while
+  each surface chooses its own presentation scope.
 - **`submoduleConflict.ts`**: Submodule conflict domain boundary. Uses VS Code Git API merge changes for discovery, then path-scoped raw Git for gitlink stage/object/index plumbing that the Git API cannot expose. It also contains read-only submodule history queries for the resolver graph/search/file list. This intentionally avoids `git ls-files`.
 - **`log.ts`**: Shared `LogOutputChannel` initialization/access for extension-host diagnostics.
 - **`treeView.ts`**: Implementation of the "Conflicted Files" view in the SCM panel, including resolved-file parsing from `MERGE_MSG` through `workspace.fs`.
@@ -31,14 +35,16 @@ Entry point and Git integration.
   `weld_list_conflicts` and `weld_get_conflict`. The list tool enumerates every
   open workspace Git repository, returns canonical Weld hunk counts, and adds
   concise local/incoming commit metadata. The get tool reads the current file
-  from disk, returns bounded base/local/remote stage regions; every omitted
-  requested region or context line is explicitly marked `truncated` and has a
-  raw-Git fallback, plus exact paired Weld chunk ranges, literal marker ranges,
-  and narrow Git-conflicted regions Weld can auto-merge. `current.unresolvedHunks`
-  and `current.conflictMarkers` are scoped to the requested `conflictIndex`
-  (filtered by stage-side overlap with that conflict's region), not the whole
-  file — a file with many conflicts must not have every one of them echoed
-  back on every single lookup. When a Git conflict has no initial Weld
+  from disk, returns bounded base→local and base→remote unified diffs rendered
+  from the GUI's shared Base-comparison opcodes (never independently re-diffed
+  windows) with
+  explicit raw-Git omission records, plus a mapped disk target and nearby
+  disk context for direct edits. The target is deliberately unavailable when
+  the stages no longer map uniquely to the live file. `current.possibleConflictHunks`
+  and `current.residualMarkers` are scoped to the requested `conflictIndex`;
+  residual Git markers and Weld `(??)` sentinels overlapping the active target
+  are excluded, so the response does not repeat its own active marker block.
+  When a Git conflict has no initial Weld
   conflict, omitting `conflictIndex` returns a whole-file summary
   (`conflictIndex: null`, `conflictCount: 0`) with only current-file ranges,
   markers, and auto-merge suggestions; it never fabricates a stage change or a
@@ -50,7 +56,8 @@ Entry point and Git integration.
   conflict. Non-text conflicts retain typed binary/delete/submodule results.
   Agent tools run in-process in the workspace extension host, are
   prompt-referenceable through `package.json`, and intentionally do not
-  expose MCP/stdio integration.
+  expose MCP/stdio integration. See `agent-tools-schema.md` for the formal
+  wire-schema spec.
 
 ## Webview UI (React Frontend)
 Located in `src/webview/ui/`.

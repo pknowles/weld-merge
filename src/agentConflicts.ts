@@ -7,6 +7,8 @@ import {
 	type ConflictSnapshot,
 	createConflictSnapshot,
 	createGitMergeFileContent,
+	createThreeWayComparison,
+	createTwoWayComparison,
 	fetchConflictIndexStages,
 	fetchConflictStages,
 	getCommitInfo,
@@ -18,7 +20,6 @@ import {
 } from "./conflictSnapshot.ts";
 import { repositoryRelativePath } from "./gitUtils.ts";
 import type { DiffChunk, DiffChunkTag } from "./matchers/myers.ts";
-import { createThreeWayChanges } from "./matchers/threeWayDiff.ts";
 import {
 	type ConflictedItem,
 	createConflictedItem,
@@ -54,9 +55,6 @@ interface ConflictLocation {
 interface CommitMetadata {
 	hash: string;
 	title: string;
-	authorName: string;
-	authorEmail: string;
-	date: string;
 }
 
 interface ListedConflict extends ConflictLocation {
@@ -83,46 +81,52 @@ interface GetConflictRequest extends ConflictLocation {
 	maxResultItems: number;
 }
 
-interface WireLineRange {
-	startLine: number;
-	endLineExclusive: number;
-}
-
-interface NumberedLine {
-	lineNumber: number;
-	text: string;
-}
-
 interface RawGitAccess {
 	stage: 1 | 2 | 3;
 	command: string;
 }
 
-interface StageRegionContent {
-	present: boolean;
-	range: WireLineRange;
-	lines: NumberedLine[];
-	contextBefore: NumberedLine[];
-	contextAfter: NumberedLine[];
-	/** True when any requested region or context content was omitted. */
-	truncated: boolean;
-	/** Present exactly when truncated is true, so callers can retrieve omissions. */
-	rawGitAccess: RawGitAccess | null;
+type DiskRange = [startLine: number, endLineExclusive: number];
+
+interface DiskHunk {
+	range: DiskRange;
+	local: DiffChunkTag | null;
+	remote: DiffChunkTag | null;
 }
 
-interface StageChange {
-	tag: DiffChunkTag;
-	baseRange: WireLineRange;
-	stageRange: WireLineRange;
+interface DiskTextRegion {
+	range: DiskRange;
+	text: string;
 }
 
-interface CurrentHunk {
-	range: WireLineRange;
-	changes: { local: DiffChunkTag | null; remote: DiffChunkTag | null };
+interface MappedDiskTarget {
+	state: "mapped";
+	range: DiskRange;
+	contextBefore?: DiskTextRegion;
+	contextAfter?: DiskTextRegion;
+	omitted?: { reason: "exceedsMaxStageLines" };
 }
 
-interface ConflictMarker {
-	range: WireLineRange;
+interface UnavailableDiskTarget {
+	state: "unavailable";
+	reason: "notFound" | "ambiguous";
+	message: string;
+}
+
+type DiskTarget = MappedDiskTarget | UnavailableDiskTarget;
+
+interface ResidualMarker {
+	range: DiskRange;
+	kind: "gitMarker" | "weldSentinel";
+}
+
+interface OmittedStageContent {
+	reason: "exceedsMaxStageLines";
+	rawGitAccess: RawGitAccess;
+}
+
+interface Suggestion {
+	range: DiskRange;
 	text: string;
 }
 
@@ -141,18 +145,21 @@ interface NonTextConflictResult extends ConflictResultIdentity {
 
 interface TextConflictResult extends ConflictResultIdentity {
 	type: TextConflictKind;
-	base: StageRegionContent;
-	local: StageRegionContent;
-	remote: StageRegionContent;
-	changes: { local: StageChange; remote: StageChange };
+	localDiff?: string;
+	remoteDiff?: string;
+	local?: string;
+	remote?: string;
+	localOmitted?: OmittedStageContent;
+	remoteOmitted?: OmittedStageContent;
 	current: {
-		unresolvedHunks: CurrentHunk[];
-		unresolvedHunksTruncated: boolean;
-		conflictMarkers: ConflictMarker[];
-		conflictMarkersTruncated: boolean;
+		target: DiskTarget;
+		possibleConflictHunks?: DiskHunk[];
+		possibleConflictHunksTruncated?: true;
+		residualMarkers?: ResidualMarker[];
+		residualMarkersTruncated?: true;
 	};
-	autoMergeSuggestions: CurrentHunk[];
-	autoMergeSuggestionsTruncated: boolean;
+	autoMergeSuggestions?: Suggestion[];
+	autoMergeSuggestionsTruncated?: true;
 }
 
 interface FileConflictSummary extends ConflictResultIdentity {
@@ -160,8 +167,8 @@ interface FileConflictSummary extends ConflictResultIdentity {
 	conflictIndex: null;
 	conflictCount: 0;
 	current: TextConflictResult["current"];
-	autoMergeSuggestions: CurrentHunk[];
-	autoMergeSuggestionsTruncated: boolean;
+	autoMergeSuggestions?: Suggestion[];
+	autoMergeSuggestionsTruncated?: true;
 }
 
 type GetConflictResult =
@@ -176,6 +183,11 @@ type ConflictInspection =
 			baseStagePresent: boolean;
 	  }
 	| { kind: NonTextConflictKind };
+
+type TextConflictInspection = Extract<
+	ConflictInspection,
+	{ kind: TextConflictKind }
+>;
 
 function normalizeGetConflictInput(
 	input: GetConflictToolInput,
@@ -223,8 +235,8 @@ function validConflictIndex(conflictIndex: number | null | undefined): boolean {
 }
 
 function commitMetadata(commit: CommitInfo): CommitMetadata {
-	const { hash, title, authorName, authorEmail, date } = commit;
-	return { hash, title, authorName, authorEmail, date };
+	const { hash, title } = commit;
+	return { hash, title };
 }
 
 async function repositoryCommits(
@@ -365,118 +377,182 @@ function resolveConflictedItem(location: ConflictLocation): ConflictedItem {
 	return createConflictedItem(repository, change);
 }
 
-function wireRange(range: LineRange): WireLineRange {
-	return { startLine: range.start + 1, endLineExclusive: range.end + 1 };
-}
-
-function numberedLines(
-	lines: string[],
-	start: number,
-	end: number,
-): NumberedLine[] {
-	return lines
-		.slice(start, end)
-		.map((text, index) => ({ lineNumber: start + index + 1, text }));
+function diskRange(range: LineRange): DiskRange {
+	return [range.start + 1, range.end + 1];
 }
 
 function shellQuote(value: string): string {
 	return `'${value.replaceAll("'", "'\\\"'\\\"'")}'`;
 }
 
-function stageContent(
-	lines: string[],
-	range: LineRange,
-	stage: 1 | 2 | 3,
-	present: boolean,
-	request: GetConflictRequest,
-): StageRegionContent {
-	if (!present) {
-		return {
-			present: false,
-			range: wireRange({ start: 0, end: 0 }),
-			lines: [],
-			contextBefore: [],
-			contextAfter: [],
-			truncated: false,
-			rawGitAccess: null,
-		};
+function rawGitAccess(stage: 2 | 3, request: GetConflictRequest): RawGitAccess {
+	return {
+		stage,
+		command: `git -C ${shellQuote(Uri.parse(request.repositoryRoot).fsPath)} show ${shellQuote(`:${stage}:${request.path}`)}`,
+	};
+}
+
+function unifiedRangeStart(start: number, count: number): number {
+	return count === 0 ? start : start + 1;
+}
+
+/**
+ * Serializes one conflict from the GUI's whole-file two-way matching result.
+ * It only selects existing chunks (plus adjacent equal context); it never
+ * re-matches independently sliced windows.
+ */
+interface ScopedDiffInput {
+	baseLines: string[];
+	stageLines: string[];
+	opcodes: DiffChunk[];
+	baseChange: LineRange;
+	stageChange: LineRange;
+	contextLines: number;
+}
+
+function renderScopedUnifiedDiff({
+	baseLines,
+	stageLines,
+	opcodes,
+	baseChange,
+	stageChange,
+	contextLines,
+}: ScopedDiffInput): string {
+	const changeIndexes = opcodes.flatMap((opcode, index) =>
+		opcode.tag !== "equal" &&
+		rangesOverlap({ start: opcode.startA, end: opcode.endA }, baseChange) &&
+		rangesOverlap({ start: opcode.startB, end: opcode.endB }, stageChange)
+			? [index]
+			: [],
+	);
+	if (changeIndexes.length === 0) {
+		throw new Error(
+			"Could not find the conflict change in the shared diff.",
+		);
 	}
-	const regionTruncated = range.end - range.start > request.maxStageLines;
-	const regionLineCount = regionTruncated ? 0 : range.end - range.start;
-	const contextBudget = Math.max(0, request.maxStageLines - regionLineCount);
-	const availableBefore = Math.min(request.contextLines, range.start);
-	const availableAfter = Math.min(
-		request.contextLines,
-		lines.length - range.end,
-	);
-	const totalContextLines = Math.min(
-		contextBudget,
-		availableBefore + availableAfter,
-	);
-	let beforeContextLines = Math.min(
-		availableBefore,
-		Math.floor(totalContextLines / 2),
-	);
-	let afterContextLines = Math.min(
-		availableAfter,
-		totalContextLines - beforeContextLines,
-	);
-	const remainingContextLines =
-		totalContextLines - beforeContextLines - afterContextLines;
-	beforeContextLines += Math.min(
-		availableBefore - beforeContextLines,
-		remainingContextLines,
-	);
-	afterContextLines += Math.min(
-		availableAfter - afterContextLines,
-		totalContextLines - beforeContextLines - afterContextLines,
-	);
-	const truncated =
-		regionTruncated ||
-		beforeContextLines < availableBefore ||
-		afterContextLines < availableAfter;
+	const firstChange = changeIndexes[0] as number;
+	const lastChange = changeIndexes.at(-1) as number;
+	const preceding = opcodes[firstChange - 1];
+	const following = opcodes[lastChange + 1];
+	const chunks: DiffChunk[] = [
+		...(preceding?.tag === "equal"
+			? [
+					{
+						...preceding,
+						startA: Math.max(
+							preceding.startA,
+							preceding.endA - contextLines,
+						),
+						startB: Math.max(
+							preceding.startB,
+							preceding.endB - contextLines,
+						),
+					},
+				]
+			: []),
+		...opcodes.slice(firstChange, lastChange + 1),
+		...(following?.tag === "equal"
+			? [
+					{
+						...following,
+						endA: Math.min(
+							following.endA,
+							following.startA + contextLines,
+						),
+						endB: Math.min(
+							following.endB,
+							following.startB + contextLines,
+						),
+					},
+				]
+			: []),
+	];
+	const first = chunks[0] as DiffChunk;
+	const last = chunks.at(-1) as DiffChunk;
+	const body: string[] = [];
+	for (const opcode of chunks) {
+		if (opcode.tag === "equal") {
+			body.push(
+				...baseLines
+					.slice(opcode.startA, opcode.endA)
+					.map((line) => ` ${line}`),
+			);
+			continue;
+		}
+		if (opcode.tag === "delete" || opcode.tag === "replace") {
+			body.push(
+				...baseLines
+					.slice(opcode.startA, opcode.endA)
+					.map((line) => `-${line}`),
+			);
+		}
+		if (opcode.tag === "insert" || opcode.tag === "replace") {
+			body.push(
+				...stageLines
+					.slice(opcode.startB, opcode.endB)
+					.map((line) => `+${line}`),
+			);
+		}
+	}
+	const baseLength = last.endA - first.startA;
+	const stageLength = last.endB - first.startB;
+	return [
+		`@@ -${unifiedRangeStart(first.startA, baseLength)},${baseLength} +${unifiedRangeStart(first.startB, stageLength)},${stageLength} @@`,
+		...body,
+	].join("\n");
+}
+
+interface BoundedDiffInput extends Omit<ScopedDiffInput, "contextLines"> {
+	stage: 2 | 3;
+	request: GetConflictRequest;
+}
+
+function boundedDiff({ stage, request, ...input }: BoundedDiffInput): {
+	diff: string | null;
+	omitted: OmittedStageContent | null;
+} {
+	const diff = renderScopedUnifiedDiff({
+		...input,
+		contextLines: request.contextLines,
+	});
+	if (diff.split("\n").length <= request.maxStageLines) {
+		return { diff, omitted: null };
+	}
 	return {
-		present: true,
-		range: wireRange(range),
-		lines: regionTruncated
-			? []
-			: numberedLines(lines, range.start, range.end),
-		contextBefore: numberedLines(
-			lines,
-			Math.max(0, range.start - beforeContextLines),
-			range.start,
-		),
-		contextAfter: numberedLines(
-			lines,
-			range.end,
-			Math.min(lines.length, range.end + afterContextLines),
-		),
-		truncated,
-		rawGitAccess: truncated
-			? {
-					stage,
-					command: `git -C ${shellQuote(Uri.parse(request.repositoryRoot).fsPath)} show ${shellQuote(`:${stage}:${request.path}`)}`,
-				}
-			: null,
+		diff: null,
+		omitted: {
+			reason: "exceedsMaxStageLines",
+			rawGitAccess: rawGitAccess(stage, request),
+		},
 	};
 }
 
-function stageChange(change: DiffChunk): StageChange {
+function boundedBothAddedText(
+	lines: string[],
+	stage: 2 | 3,
+	request: GetConflictRequest,
+): { text: string | null; omitted: OmittedStageContent | null } {
+	if (lines.length <= request.maxStageLines) {
+		return { text: lines.join("\n"), omitted: null };
+	}
 	return {
-		tag: change.tag,
-		baseRange: wireRange({ start: change.startA, end: change.endA }),
-		stageRange: wireRange({ start: change.startB, end: change.endB }),
+		text: null,
+		omitted: {
+			reason: "exceedsMaxStageLines",
+			rawGitAccess: rawGitAccess(stage, request),
+		},
 	};
 }
 
-function hunkFromChanges(
+function diskHunkFromChanges(
 	local: DiffChunk | null,
 	remote: DiffChunk | null,
-): CurrentHunk {
+): DiskHunk {
 	const range = hunkRange(local, remote);
 	return {
-		range: wireRange(range),
-		changes: { local: local?.tag ?? null, remote: remote?.tag ?? null },
+		range: diskRange(range),
+		local: local?.tag ?? null,
+		remote: remote?.tag ?? null,
 	};
 }
 
@@ -505,13 +581,13 @@ function currentHunks(
 	snapshot: ConflictSnapshot,
 	current: string,
 	region?: ConflictRegion,
-): CurrentHunk[] {
-	return createThreeWayChanges({
-		local: snapshot.lines.local,
-		middle: current.split("\n"),
-		remote: snapshot.lines.remote,
-	})
-		.filter(
+): DiskHunk[] {
+	return createThreeWayComparison(
+		snapshot.stages.local,
+		current,
+		snapshot.stages.remote,
+	)
+		.changes.filter(
 			([local, remote]) =>
 				local?.tag === "conflict" || remote?.tag === "conflict",
 		)
@@ -519,7 +595,7 @@ function currentHunks(
 			([local, remote]) =>
 				!region || hunkOverlapsRegion(local, remote, region),
 		)
-		.map(([local, remote]) => hunkFromChanges(local, remote));
+		.map(([local, remote]) => diskHunkFromChanges(local, remote));
 }
 
 function hunkOverlapsRegion(
@@ -547,38 +623,91 @@ function hunkOverlapsRegion(
 	);
 }
 
-function conflictMarkers(current: string): ConflictMarker[] {
-	const markers: ConflictMarker[] = [];
-	let inMarkerBlock = false;
+function marker(
+	range: DiskRange,
+	kind: ResidualMarker["kind"],
+): ResidualMarker {
+	return { range, kind };
+}
+
+function scanMarkers(current: string): ResidualMarker[] {
+	const markers: ResidualMarker[] = [];
+	let markerStart: number | null = null;
 	for (const [index, text] of current.split("\n").entries()) {
-		const isStart = MARKER_START_REGEX.test(text);
-		const isEnd = MARKER_END_REGEX.test(text);
-		const isMiddle = inMarkerBlock && MARKER_MIDDLE_REGEX.test(text);
-		if (
-			isStart ||
-			isMiddle ||
-			isEnd ||
-			CONFLICT_SENTINEL_REGEX.test(text)
-		) {
-			markers.push({
-				range: { startLine: index + 1, endLineExclusive: index + 2 },
-				text,
-			});
+		if (CONFLICT_SENTINEL_REGEX.test(text)) {
+			markers.push(
+				marker(
+					diskRange({ start: index, end: index + 1 }),
+					"weldSentinel",
+				),
+			);
 		}
-		if (isStart) {
-			inMarkerBlock = true;
+		if (MARKER_START_REGEX.test(text)) {
+			if (markerStart !== null) {
+				markers.push(
+					marker(
+						diskRange({ start: markerStart, end: index }),
+						"gitMarker",
+					),
+				);
+			}
+			markerStart = index;
+			continue;
 		}
-		if (isEnd) {
-			inMarkerBlock = false;
+		if (markerStart !== null && MARKER_END_REGEX.test(text)) {
+			markers.push(
+				marker(
+					diskRange({ start: markerStart, end: index + 1 }),
+					"gitMarker",
+				),
+			);
+			markerStart = null;
+			continue;
+		}
+		if (markerStart === null && MARKER_MIDDLE_REGEX.test(text)) {
+			markers.push(
+				marker(
+					diskRange({ start: index, end: index + 1 }),
+					"gitMarker",
+				),
+			);
 		}
 	}
+	if (markerStart !== null) {
+		markers.push(
+			marker(
+				diskRange({
+					start: markerStart,
+					end: current.split("\n").length,
+				}),
+				"gitMarker",
+			),
+		);
+	}
 	return markers;
+}
+
+function residualMarkers(
+	current: string,
+	target: DiskTarget,
+): ResidualMarker[] {
+	const markers = scanMarkers(current);
+	if (target.state === "unavailable") {
+		return markers;
+	}
+	return markers.filter(
+		(marker) =>
+			!rangesOverlap(
+				{ start: marker.range[0] - 1, end: marker.range[1] - 1 },
+				{ start: target.range[0] - 1, end: target.range[1] - 1 },
+			),
+	);
 }
 
 async function autoMergeSuggestions(
 	item: ConflictedItem,
 	snapshot: ConflictSnapshot,
-): Promise<CurrentHunk[]> {
+): Promise<Suggestion[]> {
 	const mergeFile = await createGitMergeFileContent(
 		item.repository.rootUri.fsPath,
 		snapshot.stages,
@@ -588,12 +717,12 @@ async function autoMergeSuggestions(
 	if (markerRanges.length === 0) {
 		return [];
 	}
-	const gitConflictBaseRanges = createThreeWayChanges({
-		local: snapshot.lines.base,
-		middle: mergeFile.split("\n"),
-		remote: snapshot.lines.base,
-	})
-		.filter(([local, remote]) =>
+	const gitConflictBaseRanges = createThreeWayComparison(
+		snapshot.stages.base,
+		mergeFile,
+		snapshot.stages.base,
+	)
+		.changes.filter(([local, remote]) =>
 			markerRanges.some((range) =>
 				rangesOverlap(hunkRange(local, remote), range),
 			),
@@ -617,7 +746,16 @@ async function autoMergeSuggestions(
 				rangesOverlap(hunkRange(local, remote), range),
 			),
 		)
-		.map(([local, remote]) => hunkFromChanges(local, remote));
+		.map(([local, remote]) => {
+			const range = hunkRange(local, remote);
+			return {
+				range: diskRange(range),
+				text: snapshot.mergedContent
+					.split("\n")
+					.slice(range.start, range.end)
+					.join("\n"),
+			};
+		});
 }
 
 function markerBodyRanges(content: string): LineRange[] {
@@ -645,6 +783,113 @@ function bounded<T>(
 	};
 }
 
+function compactCurrent(
+	target: DiskTarget,
+	hunks: { items: DiskHunk[]; truncated: boolean },
+	markers: { items: ResidualMarker[]; truncated: boolean },
+): TextConflictResult["current"] {
+	return {
+		target,
+		...(hunks.items.length === 0
+			? {}
+			: { possibleConflictHunks: hunks.items }),
+		...(hunks.truncated ? { possibleConflictHunksTruncated: true } : {}),
+		...(markers.items.length === 0
+			? {}
+			: { residualMarkers: markers.items }),
+		...(markers.truncated ? { residualMarkersTruncated: true } : {}),
+	};
+}
+
+function compactSuggestions(suggestions: {
+	items: Suggestion[];
+	truncated: boolean;
+}): Pick<
+	TextConflictResult,
+	"autoMergeSuggestions" | "autoMergeSuggestionsTruncated"
+> {
+	return {
+		...(suggestions.items.length === 0
+			? {}
+			: { autoMergeSuggestions: suggestions.items }),
+		...(suggestions.truncated
+			? { autoMergeSuggestionsTruncated: true }
+			: {}),
+	};
+}
+
+function diskTextRegion(
+	lines: string[],
+	range: LineRange,
+): DiskTextRegion | null {
+	if (range.start === range.end) {
+		return null;
+	}
+	return {
+		range: diskRange(range),
+		text: lines.slice(range.start, range.end).join("\n"),
+	};
+}
+
+function diskTarget(
+	hunks: DiskHunk[],
+	current: string,
+	request: GetConflictRequest,
+): DiskTarget {
+	if (hunks.length === 0) {
+		return {
+			state: "unavailable",
+			reason: "notFound",
+			message:
+				"The requested conflict no longer maps to a disk conflict region. Read the current file before editing.",
+		};
+	}
+	if (hunks.length > 1) {
+		return {
+			state: "unavailable",
+			reason: "ambiguous",
+			message:
+				"The requested conflict maps to multiple disk conflict regions. Read the current file before editing.",
+		};
+	}
+	const hunk = hunks[0];
+	if (!hunk) {
+		throw new Error("Expected exactly one disk conflict hunk.");
+	}
+	const lines = current.split("\n");
+	const range = { start: hunk.range[0] - 1, end: hunk.range[1] - 1 };
+	const requestedBefore = Math.min(request.contextLines, range.start);
+	const requestedAfter = Math.min(
+		request.contextLines,
+		lines.length - range.end,
+	);
+	const budget = Math.max(
+		0,
+		request.maxStageLines - (range.end - range.start),
+	);
+	let before = Math.min(requestedBefore, Math.floor(budget / 2));
+	let after = Math.min(requestedAfter, budget - before);
+	before += Math.min(requestedBefore - before, budget - before - after);
+	after += Math.min(requestedAfter - after, budget - before - after);
+	const contextBefore = diskTextRegion(lines, {
+		start: range.start - before,
+		end: range.start,
+	});
+	const contextAfter = diskTextRegion(lines, {
+		start: range.end,
+		end: range.end + after,
+	});
+	return {
+		state: "mapped",
+		range: hunk.range,
+		...(contextBefore === null ? {} : { contextBefore }),
+		...(contextAfter === null ? {} : { contextAfter }),
+		...(before < requestedBefore || after < requestedAfter
+			? { omitted: { reason: "exceedsMaxStageLines" as const } }
+			: {}),
+	};
+}
+
 async function fileConflictSummary(
 	request: GetConflictRequest,
 	item: ConflictedItem,
@@ -654,11 +899,20 @@ async function fileConflictSummary(
 	const current = new TextDecoder().decode(
 		await workspace.fs.readFile(item.uri),
 	);
-	const unresolvedHunks = bounded(
+	const possibleConflictHunks = bounded(
 		currentHunks(snapshot, current),
 		request.maxResultItems,
 	);
-	const markers = bounded(conflictMarkers(current), request.maxResultItems);
+	const target: DiskTarget = {
+		state: "unavailable",
+		reason: "notFound",
+		message:
+			"This file has no initial Weld conflict region. Read the current file before editing.",
+	};
+	const markers = bounded(
+		residualMarkers(current, target),
+		request.maxResultItems,
+	);
 	const suggestions = bounded(
 		await autoMergeSuggestions(item, snapshot),
 		request.maxResultItems,
@@ -669,14 +923,8 @@ async function fileConflictSummary(
 		path: request.path,
 		conflictIndex: null,
 		conflictCount: 0,
-		current: {
-			unresolvedHunks: unresolvedHunks.items,
-			unresolvedHunksTruncated: unresolvedHunks.truncated,
-			conflictMarkers: markers.items,
-			conflictMarkersTruncated: markers.truncated,
-		},
-		autoMergeSuggestions: suggestions.items,
-		autoMergeSuggestionsTruncated: suggestions.truncated,
+		current: compactCurrent(target, possibleConflictHunks, markers),
+		...compactSuggestions(suggestions),
 	};
 }
 
@@ -706,6 +954,159 @@ function createNonTextConflictResult(
 		conflictCount: 1,
 		message: nonTextMessage(type),
 	};
+}
+
+async function conflictContext(
+	request: GetConflictRequest,
+	item: ConflictedItem,
+	snapshot: ConflictSnapshot,
+	region: ConflictRegion,
+): Promise<
+	TextConflictResult["current"] & {
+		suggestions?: Suggestion[];
+		suggestionsTruncated?: true;
+	}
+> {
+	const current = new TextDecoder().decode(
+		await workspace.fs.readFile(item.uri),
+	);
+	const scopedHunks = currentHunks(snapshot, current, region);
+	const target = diskTarget(scopedHunks, current, request);
+	const possibleConflictHunks = bounded(scopedHunks, request.maxResultItems);
+	const markers = bounded(
+		residualMarkers(current, target),
+		request.maxResultItems,
+	);
+	const suggestions = bounded(
+		(await autoMergeSuggestions(item, snapshot)).filter((suggestion) =>
+			rangesOverlap(
+				{
+					start: suggestion.range[0] - 1,
+					end: suggestion.range[1] - 1,
+				},
+				region.base,
+			),
+		),
+		request.maxResultItems,
+	);
+	return {
+		...compactCurrent(target, possibleConflictHunks, markers),
+		...compactSuggestions(suggestions),
+	};
+}
+
+function addBothAddedContent(
+	result: TextConflictResult,
+	snapshot: ConflictSnapshot,
+	request: GetConflictRequest,
+): void {
+	const local = boundedBothAddedText(snapshot.lines.local, 2, request);
+	const remote = boundedBothAddedText(snapshot.lines.remote, 3, request);
+	if (local.text !== null) {
+		result.local = local.text;
+	}
+	if (remote.text !== null) {
+		result.remote = remote.text;
+	}
+	if (local.omitted !== null) {
+		result.localOmitted = local.omitted;
+	}
+	if (remote.omitted !== null) {
+		result.remoteOmitted = remote.omitted;
+	}
+}
+
+function addStageDiffs(
+	result: TextConflictResult,
+	snapshot: ConflictSnapshot,
+	region: ConflictRegion,
+	request: GetConflictRequest,
+): void {
+	const localComparison = createTwoWayComparison(
+		snapshot.stages.base,
+		snapshot.stages.local,
+	);
+	const remoteComparison = createTwoWayComparison(
+		snapshot.stages.base,
+		snapshot.stages.remote,
+	);
+	const local = boundedDiff({
+		baseLines: localComparison.baseLines,
+		stageLines: localComparison.targetLines,
+		opcodes: localComparison.opcodes,
+		baseChange: {
+			start: region.changes.local.startA,
+			end: region.changes.local.endA,
+		},
+		stageChange: {
+			start: region.changes.local.startB,
+			end: region.changes.local.endB,
+		},
+		stage: 2,
+		request,
+	});
+	const remote = boundedDiff({
+		baseLines: remoteComparison.baseLines,
+		stageLines: remoteComparison.targetLines,
+		opcodes: remoteComparison.opcodes,
+		baseChange: {
+			start: region.changes.remote.startA,
+			end: region.changes.remote.endA,
+		},
+		stageChange: {
+			start: region.changes.remote.startB,
+			end: region.changes.remote.endB,
+		},
+		stage: 3,
+		request,
+	});
+	if (local.diff !== null) {
+		result.localDiff = local.diff;
+	}
+	if (remote.diff !== null) {
+		result.remoteDiff = remote.diff;
+	}
+	if (local.omitted !== null) {
+		result.localOmitted = local.omitted;
+	}
+	if (remote.omitted !== null) {
+		result.remoteOmitted = remote.omitted;
+	}
+}
+
+async function textConflictResult(
+	request: GetConflictRequest,
+	item: ConflictedItem,
+	inspection: TextConflictInspection,
+	region: ConflictRegion,
+): Promise<TextConflictResult> {
+	const context = await conflictContext(
+		request,
+		item,
+		inspection.snapshot,
+		region,
+	);
+	const { suggestions, suggestionsTruncated, ...current } = context;
+	const result: TextConflictResult = {
+		type: inspection.kind,
+		repositoryRoot: request.repositoryRoot,
+		path: request.path,
+		conflictIndex: request.conflictIndex,
+		conflictCount: inspection.snapshot.conflictChangeIndexes.length,
+		current,
+		...(suggestions === undefined
+			? {}
+			: { autoMergeSuggestions: suggestions }),
+		...(suggestionsTruncated === undefined
+			? {}
+			: { autoMergeSuggestionsTruncated: suggestionsTruncated }),
+	};
+	if (inspection.kind === "bothAdded") {
+		addBothAddedContent(result, inspection.snapshot, request);
+	} else {
+		addStageDiffs(result, inspection.snapshot, region, request);
+	}
+	return result;
 }
 
 async function getConflict(
@@ -738,72 +1139,7 @@ async function getConflict(
 		inspection.snapshot,
 		request.conflictIndex,
 	);
-	const current = new TextDecoder().decode(
-		await workspace.fs.readFile(item.uri),
-	);
-	const scopedHunks = currentHunks(inspection.snapshot, current, region);
-	const unresolvedHunks = bounded(scopedHunks, request.maxResultItems);
-	const markers = bounded(
-		conflictMarkers(current).filter((marker) =>
-			scopedHunks.some((hunk) =>
-				rangesOverlap(
-					{
-						start: marker.range.startLine - 1,
-						end: marker.range.endLineExclusive - 1,
-					},
-					{
-						start: hunk.range.startLine - 1,
-						end: hunk.range.endLineExclusive - 1,
-					},
-				),
-			),
-		),
-		request.maxResultItems,
-	);
-	const suggestions = bounded(
-		await autoMergeSuggestions(item, inspection.snapshot),
-		request.maxResultItems,
-	);
-	return {
-		type: inspection.kind,
-		repositoryRoot: request.repositoryRoot,
-		path: request.path,
-		conflictIndex: request.conflictIndex,
-		conflictCount: inspection.snapshot.conflictChangeIndexes.length,
-		base: stageContent(
-			inspection.snapshot.lines.base,
-			region.base,
-			1,
-			inspection.baseStagePresent,
-			request,
-		),
-		local: stageContent(
-			inspection.snapshot.lines.local,
-			region.local,
-			2,
-			true,
-			request,
-		),
-		remote: stageContent(
-			inspection.snapshot.lines.remote,
-			region.remote,
-			3,
-			true,
-			request,
-		),
-		changes: {
-			local: stageChange(region.changes.local),
-			remote: stageChange(region.changes.remote),
-		},
-		current: {
-			unresolvedHunks: unresolvedHunks.items,
-			unresolvedHunksTruncated: unresolvedHunks.truncated,
-			conflictMarkers: markers.items,
-			conflictMarkersTruncated: markers.truncated,
-		},
-		autoMergeSuggestions: suggestions.items,
-		autoMergeSuggestionsTruncated: suggestions.truncated,
-	};
+	return textConflictResult(request, item, inspection, region);
 }
 
 export type {

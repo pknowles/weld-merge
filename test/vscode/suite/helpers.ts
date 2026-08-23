@@ -306,6 +306,26 @@ function makeTwoHunkConflict(repoPath: string): void {
 	assertUnmergedPaths(repoPath, [fileName]);
 }
 
+// Two conflicts surround a deletion both sides agree on. The shared deletion
+// must not be reported as context for either requested conflict.
+function makeAdjacentResolvedChangeConflict(repoPath: string): void {
+	const fileName = "tracked.txt";
+	writeFileSync(join(repoPath, fileName), "A\nB\nRESOLVED\nC\nD\n");
+	runGit(["commit", "-am", "adjacent resolved base"], repoPath);
+	runGit(["checkout", "-b", "other"], repoPath);
+	writeFileSync(join(repoPath, fileName), "A\nREMOTE-B\nREMOTE-C\nD\n");
+	runGit(["commit", "-am", "remote changes"], repoPath);
+	runGit(["checkout", "-"], repoPath);
+	writeFileSync(join(repoPath, fileName), "A\nLOCAL-B\nLOCAL-C\nD\n");
+	runGit(["commit", "-am", "local changes"], repoPath);
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits 1 for a conflict — expected
+	}
+	assertUnmergedPaths(repoPath, [fileName]);
+}
+
 // Git conflicts when Local deletes C while Remote inserts beside it; Weld's
 // three-way differ can resolve the pair without leaving a Weld conflict hunk.
 function makeWeldResolvableConflict(repoPath: string): void {
@@ -651,6 +671,7 @@ export {
 	cleanupTempFixture,
 	getConflictedItem,
 	lsFilesStages,
+	makeAdjacentResolvedChangeConflict,
 	makeBinaryConflict,
 	makeBothAddedConflict,
 	makeBothDeletedConflict,

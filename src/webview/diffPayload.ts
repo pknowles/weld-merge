@@ -20,6 +20,8 @@ import {
 	type ConflictStages,
 	createConflictSnapshot,
 	createGitMergeFileContent,
+	createThreeWayComparison,
+	createTwoWayComparison,
 	fetchConflictStages,
 	GIT_STAGE_BASE,
 	GIT_STAGE_LOCAL,
@@ -29,8 +31,6 @@ import {
 	getGitState,
 	getRemoteRef,
 } from "../conflictSnapshot.ts";
-import { MyersSequenceMatcher } from "../matchers/myers.ts";
-import { createThreeWayChanges } from "../matchers/threeWayDiff.ts";
 import type { ConflictedItem } from "../repoContext.ts";
 import type { ConflictLabels } from "./conflictLabels.ts";
 import type { DiffChunk, PayloadFiles, WebviewPayload } from "./ui/types.ts";
@@ -44,16 +44,8 @@ interface BuildDiffPayloadOptions {
 	workingContent?: string;
 }
 
-const runDiff = (
-	localLines: string[],
-	workingLines: string[],
-	remoteLines: string[],
-) => {
-	const changes = createThreeWayChanges({
-		local: localLines,
-		middle: workingLines,
-		remote: remoteLines,
-	});
+const runDiff = (local: string, working: string, remote: string) => {
+	const changes = createThreeWayComparison(local, working, remote).changes;
 	const leftDiffs = changes
 		.map((pair) => pair[0])
 		.filter((c): c is DiffChunk => c !== null);
@@ -102,20 +94,11 @@ async function buildDiffPayload(
 			? undefined
 			: await getCommitInfo(repository, remoteRef);
 
-	const localLines = local.split("\n");
-	const remoteLines = remote.split("\n");
-
 	const workingContent =
 		options.workingContent ?? createConflictSnapshot(stages).mergedContent;
 	// Diffs are computed against the exact working-pane content we will render.
 	// This keeps hunk actions/highlights aligned with what the user sees.
-	const workingLines = workingContent.split("\n");
-
-	const { leftDiffs, rightDiffs } = runDiff(
-		localLines,
-		workingLines,
-		remoteLines,
-	);
+	const { leftDiffs, rightDiffs } = runDiff(local, workingContent, remote);
 
 	const contents: PayloadFiles = [
 		{ label: "Local", content: local, commit: localCommit },
@@ -145,19 +128,14 @@ async function buildBaseDiffPayload(
 
 	const baseCommit = await getBaseCommitInfo(repository);
 
-	const baseLines = base.split("\n");
-	const targetLines = target.split("\n");
-
 	// We only need a 2-way diff for this.
 	// For left side (Base -> Local), a=Base, b=Local
 	// For right side (Remote <- Base), a=Remote, b=Base
-	const seqA = side === "left" ? baseLines : targetLines;
-	const seqB = side === "left" ? targetLines : baseLines;
-
-	const matcher = new MyersSequenceMatcher(null, seqA, seqB);
-	matcher.initialize();
-
-	const diffs = matcher.getDifferenceOpcodes();
+	const comparison =
+		side === "left"
+			? createTwoWayComparison(base, target)
+			: createTwoWayComparison(target, base);
+	const diffs = comparison.opcodes.filter((chunk) => chunk.tag !== "equal");
 
 	return {
 		command: "loadBaseDiff",

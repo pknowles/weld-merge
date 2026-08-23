@@ -19,7 +19,13 @@ import type {
 } from "../../../src/agentConflicts.ts";
 import { getGitApi } from "../../../src/repoContext.ts";
 import {
+	buildBaseDiffPayload,
+	buildDiffPayload,
+} from "../../../src/webview/diffPayload.ts";
+import {
 	cleanupTempFixture,
+	getConflictedItem,
+	makeAdjacentResolvedChangeConflict,
 	makeBinaryConflict,
 	makeBothAddedConflict,
 	makeBothDeletedConflict,
@@ -46,7 +52,15 @@ const CONFLICT_MARKER_REGEX = /<{7} HEAD/u;
 const INVALID_REPOSITORY_PATH_REGEX = /invalid repository path/u;
 const NO_OPEN_REPOSITORY_ERROR_REGEX = /No open Git repository/u;
 const OUT_OF_RANGE_ERROR_REGEX = /out of range/u;
-const MARKER_DELIMITER_REGEX = /^(<+|\|+|=+|>+)/u;
+const LOCAL_DIFF_HEADER_REGEX = /^@@ -/u;
+const LOCAL_BASE_DIFF_REGEX = /-base\n\+local/u;
+const REMOTE_BASE_DIFF_REGEX = /-base\n\+remote/u;
+const LOCAL_STAGE_ACCESS_REGEX = /show ':2:tracked\.txt'/u;
+const REMOTE_STAGE_ACCESS_REGEX = /show ':3:tracked\.txt'/u;
+const FIRST_HUNK_LOCAL_DIFF_REGEX = /-B\n\+LOCAL-B/u;
+const SECOND_HUNK_LOCAL_DIFF_REGEX = /-C\n\+LOCAL-C/u;
+const SECOND_HUNK_CONTENT_REGEX = /(?:^|\n)[+-]C(?:\n|$)/u;
+const RESOLVED_CONTENT_REGEX = /RESOLVED/u;
 
 async function invokeTextTool(name: string, input: object): Promise<string> {
 	const result = await lm.invokeTool(name, {
@@ -188,11 +202,12 @@ async function assertDiskEditCases(
 	if (result.type !== "text" || result.conflictIndex === null) {
 		throw new Error(`expected text conflict for ${testCase.name}`);
 	}
-	assert.equal(result.current.conflictMarkers.length, 0, testCase.name);
-	assert.deepEqual(result.current.unresolvedHunks, [
+	assert.equal(result.current.residualMarkers, undefined, testCase.name);
+	assert.deepEqual(result.current.possibleConflictHunks, [
 		{
-			range: testCase.range,
-			changes: { local: "conflict", remote: "conflict" },
+			range: [testCase.range.startLine, testCase.range.endLineExclusive],
+			local: "conflict",
+			remote: "conflict",
 		},
 	]);
 	await assertDiskEditCases(uri, repositoryRoot, remainingCases);
@@ -378,17 +393,16 @@ describe("Agent Tools: Text conflict detection", () => {
 					) {
 						throw new Error("expected both-added conflict");
 					}
-					assert.equal(detail.base.present, false);
-					assert.deepEqual(detail.base.lines, []);
-					assert.ok(detail.local.present);
-					assert.ok(detail.remote.present);
+					assert.equal(detail.local, "local version\n");
+					assert.equal(detail.remote, "remote version\n");
+					assert.ok(!("localDiff" in detail));
 				});
 			},
 		));
 });
 
 describe("Agent Tools: Conflict stage details", () => {
-	it("returns complete stage regions, exact changes, and requested context", () =>
+	it("returns two stage-coordinate diffs and disk-coordinate edit context", () =>
 		withConflictRepo(
 			"weld-agent-get-context-",
 			makeContextConflict,
@@ -407,37 +421,79 @@ describe("Agent Tools: Conflict stage details", () => {
 					) {
 						throw new Error("expected text conflict");
 					}
-					assert.deepEqual(result.base.lines, [
-						{ lineNumber: 3, text: "base" },
-					]);
-					assert.deepEqual(result.local.lines, [
-						{ lineNumber: 3, text: "local" },
-					]);
-					assert.deepEqual(result.remote.lines, [
-						{ lineNumber: 3, text: "remote" },
-					]);
-					assert.deepEqual(result.base.contextBefore, [
-						{ lineNumber: 2, text: "before two" },
-					]);
-					assert.deepEqual(result.base.contextAfter, [
-						{ lineNumber: 4, text: "after one" },
-					]);
-					assert.deepEqual(
-						result.changes.local.baseRange,
-						result.base.range,
+					assert.match(
+						result.localDiff ?? "",
+						LOCAL_DIFF_HEADER_REGEX,
 					);
-					assert.deepEqual(
-						result.changes.local.stageRange,
-						result.local.range,
+					assert.match(result.localDiff ?? "", LOCAL_BASE_DIFF_REGEX);
+					assert.match(
+						result.remoteDiff ?? "",
+						REMOTE_BASE_DIFF_REGEX,
 					);
-					assert.equal(result.base.truncated, false);
-					assert.equal(result.base.rawGitAccess, null);
-					assert.ok(result.current.conflictMarkers.length > 0);
+					assert.equal(result.current.target.state, "mapped");
+					if (result.current.target.state === "mapped") {
+						assert.equal(
+							result.current.target.contextBefore?.text,
+							"before two",
+						);
+						assert.equal(
+							result.current.target.contextAfter?.text,
+							"after one",
+						);
+					}
+					assert.equal(result.current.residualMarkers, undefined);
+					const item = getConflictedItem(repoPath, "tracked.txt");
+					const [threeWay, localBase, remoteBase] = await Promise.all(
+						[
+							buildDiffPayload(item),
+							buildBaseDiffPayload(item, item.uri, "left"),
+							buildBaseDiffPayload(item, item.uri, "right"),
+						],
+					);
+					const [localFile, mergedFile, remoteFile] = threeWay.files;
+					assert.ok(localFile && mergedFile && remoteFile);
+					assert.equal(
+						localFile.content,
+						"before one\nbefore two\nlocal\nafter one\nafter two\n",
+					);
+					assert.equal(
+						remoteFile.content,
+						"before one\nbefore two\nremote\nafter one\nafter two\n",
+					);
+					assert.ok(mergedFile.content.includes("(??)"));
+					assert.deepEqual(localBase.data.diffs, [
+						{
+							tag: "replace",
+							startA: 2,
+							endA: 3,
+							startB: 2,
+							endB: 3,
+						},
+					]);
+					assert.deepEqual(remoteBase.data.diffs, [
+						{
+							tag: "replace",
+							startA: 2,
+							endA: 3,
+							startB: 2,
+							endB: 3,
+						},
+					]);
+					assert.equal(
+						result.localDiff,
+						"@@ -2,3 +2,3 @@\n before two\n-base\n+local\n after one",
+					);
+					assert.equal(
+						result.remoteDiff,
+						"@@ -2,3 +2,3 @@\n before two\n-base\n+remote\n after one",
+					);
 				});
 			},
 		));
+});
 
-	it("marks omitted context as truncated and provides raw Git access", () =>
+describe("Agent Tools: Omitted stage details", () => {
+	it("makes omitted stage diffs explicit and actionable", () =>
 		withConflictRepo(
 			"weld-agent-context-budget-",
 			makeContextConflict,
@@ -459,17 +515,10 @@ describe("Agent Tools: Conflict stage details", () => {
 							"expected context-budget text conflict",
 						);
 					}
-					for (const [stage, content] of [
-						[1, result.base],
-						[2, result.local],
-						[3, result.remote],
-					] as const) {
-						assert.equal(content.truncated, true);
-						assert.equal(content.rawGitAccess?.stage, stage);
-						assert.equal(content.lines.length, 1);
-						assert.deepEqual(content.contextBefore, []);
-						assert.deepEqual(content.contextAfter, []);
-					}
+					assert.equal(result.localDiff, undefined);
+					assert.equal(result.remoteDiff, undefined);
+					assert.equal(result.localOmitted?.rawGitAccess.stage, 2);
+					assert.equal(result.remoteOmitted?.rawGitAccess.stage, 3);
 				});
 			},
 		));
@@ -491,7 +540,7 @@ describe("Agent Tools: Auto-merge suggestions", () => {
 					assert.equal(result.conflictCount, 0);
 					assert.ok(!("changes" in result));
 					assert.ok(!("base" in result));
-					assert.ok(result.autoMergeSuggestions.length > 0);
+					assert.ok((result.autoMergeSuggestions ?? []).length > 0);
 				});
 			},
 		));
@@ -513,8 +562,11 @@ describe("Agent Tools: Auto-merge suggestions", () => {
 					) {
 						throw new Error("expected text conflict summary");
 					}
-					assert.ok(result.autoMergeSuggestions.length > 0);
-					assert.equal(result.autoMergeSuggestionsTruncated, false);
+					assert.ok((result.autoMergeSuggestions ?? []).length > 0);
+					assert.equal(
+						result.autoMergeSuggestionsTruncated,
+						undefined,
+					);
 				});
 			},
 		));
@@ -530,27 +582,18 @@ describe("Agent Tools: Auto-merge suggestions", () => {
 						path: "tracked.txt",
 					});
 					assert.equal(result.type, "text");
-					if (result.type !== "text") {
+					if (
+						result.type !== "text" ||
+						result.conflictIndex !== null
+					) {
 						throw new Error("expected text conflict summary");
 					}
-					assert.deepEqual(result.autoMergeSuggestions, [
-						{
-							range: { startLine: 4, endLineExclusive: 5 },
-							changes: { local: "delete", remote: null },
-						},
-						{
-							range: { startLine: 5, endLineExclusive: 5 },
-							changes: { local: null, remote: "insert" },
-						},
-						{
-							range: { startLine: 9, endLineExclusive: 10 },
-							changes: { local: "delete", remote: null },
-						},
-						{
-							range: { startLine: 10, endLineExclusive: 10 },
-							changes: { local: null, remote: "insert" },
-						},
-					]);
+					assert.equal(result.autoMergeSuggestions?.length, 4);
+					for (const suggestion of result.autoMergeSuggestions ??
+						[]) {
+						assert.equal(suggestion.range.length, 2);
+						assert.equal(typeof suggestion.text, "string");
+					}
 				});
 			},
 		));
@@ -567,12 +610,15 @@ describe("Agent Tools: Auto-merge suggestions", () => {
 						maxResultItems: 0,
 					});
 					assert.equal(result.type, "text");
-					if (result.type !== "text") {
+					if (
+						result.type !== "text" ||
+						result.conflictIndex !== null
+					) {
 						throw new Error(
 							"expected bounded text conflict summary",
 						);
 					}
-					assert.deepEqual(result.autoMergeSuggestions, []);
+					assert.equal(result.autoMergeSuggestions, undefined);
 					assert.equal(result.autoMergeSuggestionsTruncated, true);
 				});
 			},
@@ -624,30 +670,8 @@ describe("Agent Tools: Conflict marker details", () => {
 								"expected marker-style text conflict",
 							);
 						}
-						const markers = result.current.conflictMarkers.map(
-							(marker) => marker.text,
-						);
-						assert.equal(
-							markers.length,
-							testCase.hasBaseMarker ? 4 : 3,
-						);
-						for (const marker of markers) {
-							const delimiter = marker.match(
-								MARKER_DELIMITER_REGEX,
-							);
-							assert.ok(
-								delimiter,
-								`expected marker delimiter: ${marker}`,
-							);
-							assert.equal(
-								delimiter[0].length,
-								testCase.markerLength,
-							);
-						}
-						assert.equal(
-							markers.some((marker) => marker.startsWith("|")),
-							testCase.hasBaseMarker,
-						);
+						assert.equal(result.current.target.state, "mapped");
+						assert.equal(result.current.residualMarkers, undefined);
 					});
 				},
 			));
@@ -676,7 +700,9 @@ describe("Agent Tools: Disk marker details", () => {
 				try {
 					await workspace.fs.writeFile(
 						uri,
-						new TextEncoder().encode("<<<<<<< disk marker"),
+						new TextEncoder().encode(
+							`${original}\n<<<<<<< disk marker`,
+						),
 					);
 					await withListToolEnabled(async () => {
 						const result = await invokeGetConflict({
@@ -691,12 +717,13 @@ describe("Agent Tools: Disk marker details", () => {
 								"expected disk-backed conflict detail",
 							);
 						}
-						assert.deepEqual(result.current.conflictMarkers, [
-							{
-								range: { startLine: 1, endLineExclusive: 2 },
-								text: "<<<<<<< disk marker",
-							},
-						]);
+						assert.equal(result.current.target.state, "mapped");
+						assert.equal(
+							(result.current.residualMarkers ?? []).some(
+								(marker) => marker.kind === "gitMarker",
+							),
+							true,
+						);
 					});
 				} finally {
 					const restore = new WorkspaceEdit();
@@ -740,43 +767,141 @@ describe("Agent Tools: Bounded conflict results", () => {
 					) {
 						throw new Error("expected bounded text conflict");
 					}
-					for (const [stage, content] of [
-						[1, result.base],
-						[2, result.local],
-						[3, result.remote],
-					] as const) {
-						assert.equal(content.truncated, true);
-						assert.deepEqual(content.lines, []);
-						assert.equal(content.rawGitAccess?.stage, stage);
-						assert.match(
-							content.rawGitAccess?.command ?? "",
-							new RegExp(`show ':${stage}:tracked\\.txt'`, "u"),
-						);
-					}
-					assert.deepEqual(result.current.unresolvedHunks, []);
-					assert.equal(result.current.unresolvedHunksTruncated, true);
-					assert.deepEqual(result.current.conflictMarkers, []);
-					assert.equal(result.current.conflictMarkersTruncated, true);
+					assert.equal(result.localDiff, undefined);
+					assert.equal(result.remoteDiff, undefined);
+					assert.match(
+						result.localOmitted?.rawGitAccess.command ?? "",
+						LOCAL_STAGE_ACCESS_REGEX,
+					);
+					assert.match(
+						result.remoteOmitted?.rawGitAccess.command ?? "",
+						REMOTE_STAGE_ACCESS_REGEX,
+					);
 				});
 			},
 		));
 });
 
-describe("Agent Tools: Response size baseline", () => {
-	// Records the actual wire size (lines and characters) of weld_get_conflict
-	// and weld_list_conflicts responses across a small/medium/large fixture
-	// spread. No assertions on absolute size yet — this is a baseline to
-	// optimize against, not a regression gate. Once real numbers are known,
-	// convert the relevant rows to hard ceilings.
-	function reportSize(label: string, raw: string): void {
-		const lines = raw.split("\n").length;
-		const chars = raw.length;
-		console.log(
-			`[response-size] ${label}: ${lines} line(s), ${chars} char(s)`,
+function normalizeWireValue(
+	value: unknown,
+	repositoryUri: string,
+	repositoryPath: string,
+): unknown {
+	if (typeof value === "string") {
+		return value
+			.replaceAll(repositoryUri, "file:///repository")
+			.replaceAll(repositoryPath, "/repository");
+	}
+	if (Array.isArray(value)) {
+		return value.map((item) =>
+			normalizeWireValue(item, repositoryUri, repositoryPath),
 		);
 	}
+	if (value && typeof value === "object") {
+		return Object.fromEntries(
+			Object.entries(value).map(([key, item]) => [
+				key,
+				normalizeWireValue(item, repositoryUri, repositoryPath),
+			]),
+		);
+	}
+	return value;
+}
 
-	it("records weld_get_conflict size for a minimal single conflict", () =>
+function normalizedWireResponse(raw: string): string {
+	const response = JSON.parse(raw) as {
+		repositoryRoot?: unknown;
+		files?: Array<{ repositoryRoot?: unknown }>;
+	};
+	const repositoryRoot =
+		typeof response.repositoryRoot === "string"
+			? response.repositoryRoot
+			: response.files?.find(
+					(file) => typeof file.repositoryRoot === "string",
+				)?.repositoryRoot;
+	if (typeof repositoryRoot !== "string") {
+		throw new Error(
+			"Expected a repositoryRoot in the response for byte normalization.",
+		);
+	}
+	return JSON.stringify(
+		normalizeWireValue(
+			response,
+			repositoryRoot,
+			Uri.parse(repositoryRoot).fsPath,
+		),
+	);
+}
+
+const USEFUL_RESPONSE_FIELDS = new Set([
+	"localDiff",
+	"remoteDiff",
+	"local",
+	"remote",
+	"text",
+	"range",
+	"state",
+	"reason",
+	"message",
+	"stage",
+	"command",
+	"path",
+	"type",
+	"kind",
+	"conflictIndex",
+	"conflictCount",
+	"state",
+]);
+
+function usefulResponseBytes(value: unknown, fieldName: string): number {
+	if (typeof value === "string") {
+		return USEFUL_RESPONSE_FIELDS.has(fieldName)
+			? new TextEncoder().encode(value).length
+			: 0;
+	}
+	if (typeof value === "number" || typeof value === "boolean") {
+		return USEFUL_RESPONSE_FIELDS.has(fieldName)
+			? new TextEncoder().encode(JSON.stringify(value)).length
+			: 0;
+	}
+	if (Array.isArray(value)) {
+		return value.reduce(
+			(total, item) => total + usefulResponseBytes(item, fieldName),
+			0,
+		);
+	}
+	if (value && typeof value === "object") {
+		return Object.entries(value).reduce(
+			(total, [entryKey, item]) =>
+				total + usefulResponseBytes(item, entryKey),
+			0,
+		);
+	}
+	return 0;
+}
+
+function assertResponseBudget(
+	raw: string,
+	maxBytes: number,
+	minUsefulResponsePercent: number,
+): void {
+	const normalized = normalizedWireResponse(raw);
+	const wireBytes = new TextEncoder().encode(normalized).length;
+	assert.ok(
+		wireBytes <= maxBytes,
+		`response was ${wireBytes} bytes; budget is ${maxBytes}`,
+	);
+	const usefulPercent =
+		(usefulResponseBytes(JSON.parse(normalized), "response") / wireBytes) *
+		100;
+	assert.ok(
+		usefulPercent >= minUsefulResponsePercent,
+		`useful response content was ${usefulPercent.toFixed(1)}%; minimum is ${minUsefulResponsePercent}%`,
+	);
+}
+
+describe("Agent Tools: Response size budgets", () => {
+	it("keeps a minimal conflict within the response budget", () =>
 		withConflictRepo(
 			"weld-agent-size-min-",
 			makeConflict,
@@ -787,12 +912,12 @@ describe("Agent Tools: Response size baseline", () => {
 						path: "tracked.txt",
 						conflictIndex: 0,
 					});
-					reportSize("minimal single conflict", raw);
+					assertResponseBudget(raw, 600, 15);
 				});
 			},
 		));
 
-	it("records weld_get_conflict size for a conflict with real context", () =>
+	it("keeps a contextual conflict within the response budget", () =>
 		withConflictRepo(
 			"weld-agent-size-context-",
 			makeContextConflict,
@@ -803,12 +928,12 @@ describe("Agent Tools: Response size baseline", () => {
 						path: "tracked.txt",
 						conflictIndex: 0,
 					});
-					reportSize("conflict with context", raw);
+					assertResponseBudget(raw, 775, 20);
 				});
 			},
 		));
 
-	it("records weld_get_conflict size for one of several conflicts in a file", () =>
+	it("keeps one of several conflicts within the response budget", () =>
 		withConflictRepo(
 			"weld-agent-size-multi-",
 			makeTwoHunkConflict,
@@ -819,12 +944,28 @@ describe("Agent Tools: Response size baseline", () => {
 						path: "tracked.txt",
 						conflictIndex: 0,
 					});
-					reportSize("one of two conflicts (scoped current.*)", raw);
+					assertResponseBudget(raw, 700, 15);
 				});
 			},
 		));
 
-	it("records weld_get_conflict size for a large conflict at default budgets", () =>
+	it("keeps a both-added conflict within the response budget", () =>
+		withConflictRepo(
+			"weld-agent-size-both-added-",
+			makeBothAddedConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					const raw = await invokeTextTool("weld_get_conflict", {
+						repositoryRoot: Uri.file(repoPath).toString(),
+						path: "conflict.txt",
+						conflictIndex: 0,
+					});
+					assertResponseBudget(raw, 600, 10);
+				});
+			},
+		));
+
+	it("keeps an omitted large conflict within the response budget", () =>
 		withConflictRepo(
 			"weld-agent-size-large-",
 			makeLargeConflict,
@@ -835,16 +976,19 @@ describe("Agent Tools: Response size baseline", () => {
 						path: "tracked.txt",
 						conflictIndex: 0,
 					});
-					reportSize("large conflict, default budgets", raw);
+					assertResponseBudget(raw, 700, 15);
 				});
 			},
 		));
 
-	it("records weld_list_conflicts size for a single-conflict repository", () =>
+	it("keeps a single-conflict listing within the response budget", () =>
 		withConflictRepo("weld-agent-size-list-", makeConflict, async () => {
 			await withListToolEnabled(async () => {
 				const raw = await invokeTextTool("weld_list_conflicts", {});
-				reportSize("weld_list_conflicts, one conflicted file", raw);
+				assert.ok(
+					new TextEncoder().encode(normalizedWireResponse(raw))
+						.length <= 300,
+				);
 			});
 		}));
 });
@@ -994,6 +1138,36 @@ describe("Agent Tools: Special conflict detection", () => {
 });
 
 describe("Agent Tools: Multi-hunk conflict indexing", () => {
+	it("matches the GUI diff when an adjacent change was already resolved", () =>
+		withConflictRepo(
+			"weld-agent-adjacent-resolved-",
+			makeAdjacentResolvedChangeConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					const result = await invokeGetConflict({
+						repositoryRoot: Uri.file(repoPath).toString(),
+						path: "tracked.txt",
+						conflictIndex: 0,
+					});
+					assert.equal(result.type, "text");
+					if (
+						result.type !== "text" ||
+						result.conflictIndex === null
+					) {
+						throw new Error("expected text conflict");
+					}
+					assert.match(
+						result.localDiff ?? "",
+						RESOLVED_CONTENT_REGEX,
+					);
+					assert.match(
+						result.remoteDiff ?? "",
+						RESOLVED_CONTENT_REGEX,
+					);
+				});
+			},
+		));
+
 	it("returns stage content for each independent conflict index", () =>
 		withConflictRepo(
 			"weld-agent-two-hunk-",
@@ -1023,26 +1197,37 @@ describe("Agent Tools: Multi-hunk conflict indexing", () => {
 					) {
 						throw new Error("expected text conflicts");
 					}
-					assert.deepEqual(
-						result0.base.lines.map((l) => l.text),
-						["B"],
+					assert.match(
+						result0.localDiff ?? "",
+						FIRST_HUNK_LOCAL_DIFF_REGEX,
 					);
-					assert.deepEqual(
-						result1.base.lines.map((l) => l.text),
-						["C"],
+					assert.match(
+						result1.localDiff ?? "",
+						SECOND_HUNK_LOCAL_DIFF_REGEX,
 					);
-					// current.unresolvedHunks/conflictMarkers must scope to the
-					// requested conflict, not dump every conflict in the file:
+					assert.doesNotMatch(
+						result0.localDiff ?? "",
+						SECOND_HUNK_CONTENT_REGEX,
+						"the first conflict must not include the second conflict's change",
+					);
+					// current target and possible hunks must scope to the requested
+					// conflict, not dump every conflict in the file:
 					// asking about index 0 should not also return index 1's
 					// hunk and markers, and vice versa.
-					assert.equal(result0.current.unresolvedHunks.length, 1);
-					assert.equal(result1.current.unresolvedHunks.length, 1);
-					assert.notDeepEqual(
-						result0.current.unresolvedHunks[0]?.range,
-						result1.current.unresolvedHunks[0]?.range,
+					assert.equal(
+						result0.current.possibleConflictHunks?.length,
+						1,
 					);
-					assert.equal(result0.current.conflictMarkers.length, 4);
-					assert.equal(result1.current.conflictMarkers.length, 4);
+					assert.equal(
+						result1.current.possibleConflictHunks?.length,
+						1,
+					);
+					assert.notDeepEqual(
+						result0.current.possibleConflictHunks[0]?.range,
+						result1.current.possibleConflictHunks[0]?.range,
+					);
+					assert.ok(result0.current.residualMarkers?.length);
+					assert.ok(result1.current.residualMarkers?.length);
 				});
 			},
 		));
