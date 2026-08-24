@@ -52,6 +52,18 @@ const CONFLICT_MARKER_REGEX = /<{7} HEAD/u;
 const INVALID_REPOSITORY_PATH_REGEX = /invalid repository path/u;
 const NO_OPEN_REPOSITORY_ERROR_REGEX = /No open Git repository/u;
 const OUT_OF_RANGE_ERROR_REGEX = /out of range/u;
+const INVALID_REPOSITORY_ROOT_ERROR_REGEX =
+	/repositoryRoot must be a non-empty URI/u;
+const INVALID_TOOL_PATH_ERROR_REGEX =
+	/path must be a non-empty repository-relative string/u;
+const INVALID_CONFLICT_INDEX_ERROR_REGEX =
+	/conflictIndex must be a nonnegative safe integer/u;
+const INVALID_CONTEXT_LINES_ERROR_REGEX =
+	/contextLines must be a nonnegative safe integer/u;
+const INVALID_MAX_STAGE_LINES_ERROR_REGEX =
+	/maxStageLines must be a nonnegative safe integer/u;
+const INVALID_MAX_RESULT_ITEMS_ERROR_REGEX =
+	/maxResultItems must be a nonnegative safe integer/u;
 const LOCAL_DIFF_HEADER_REGEX = /^@@ -/u;
 const LOCAL_BASE_DIFF_REGEX = /-base\n\+local/u;
 const REMOTE_BASE_DIFF_REGEX = /-base\n\+remote/u;
@@ -994,6 +1006,83 @@ describe("Agent Tools: Response size budgets", () => {
 });
 
 describe("Agent Tools: Stale conflict requests", () => {
+	it("fails fast for invalid conflict-detail limits and identifiers", () =>
+		withConflictRepo(
+			"weld-agent-invalid-input-",
+			makeConflict,
+			async (repoPath) => {
+				const repositoryRoot = Uri.file(repoPath).toString();
+				const valid = {
+					repositoryRoot,
+					path: "tracked.txt",
+					conflictIndex: 0,
+				};
+				await withListToolEnabled(async () => {
+					const invalidInputs = [
+						{
+							input: { ...valid, repositoryRoot: "" },
+							error: INVALID_REPOSITORY_ROOT_ERROR_REGEX,
+						},
+						{
+							input: { ...valid, repositoryRoot: null },
+							error: INVALID_REPOSITORY_ROOT_ERROR_REGEX,
+						},
+						{
+							input: { ...valid, path: "" },
+							error: INVALID_TOOL_PATH_ERROR_REGEX,
+						},
+						{
+							input: { ...valid, path: null },
+							error: INVALID_TOOL_PATH_ERROR_REGEX,
+						},
+						{
+							input: { ...valid, conflictIndex: -1 },
+							error: INVALID_CONFLICT_INDEX_ERROR_REGEX,
+						},
+						{
+							input: { ...valid, conflictIndex: 0.5 },
+							error: INVALID_CONFLICT_INDEX_ERROR_REGEX,
+						},
+						{
+							input: { ...valid, contextLines: -1 },
+							error: INVALID_CONTEXT_LINES_ERROR_REGEX,
+						},
+						{
+							input: { ...valid, contextLines: 0.5 },
+							error: INVALID_CONTEXT_LINES_ERROR_REGEX,
+						},
+						{
+							input: { ...valid, maxStageLines: -1 },
+							error: INVALID_MAX_STAGE_LINES_ERROR_REGEX,
+						},
+						{
+							input: { ...valid, maxStageLines: 0.5 },
+							error: INVALID_MAX_STAGE_LINES_ERROR_REGEX,
+						},
+						{
+							input: { ...valid, maxResultItems: -1 },
+							error: INVALID_MAX_RESULT_ITEMS_ERROR_REGEX,
+						},
+						{
+							input: { ...valid, maxResultItems: 0.5 },
+							error: INVALID_MAX_RESULT_ITEMS_ERROR_REGEX,
+						},
+					];
+					await Promise.all(
+						invalidInputs.map((testCase) =>
+							assert.rejects(
+								invokeTextTool(
+									"weld_get_conflict",
+									testCase.input,
+								),
+								testCase.error,
+							),
+						),
+					);
+				});
+			},
+		));
+
 	it("rejects stale repository, path, and conflict index inputs", () =>
 		withConflictRepo(
 			"weld-agent-get-errors-",
