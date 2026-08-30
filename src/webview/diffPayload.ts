@@ -21,7 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Uri } from "vscode";
 import { getGitExecutable } from "../gitPath.ts";
-import { readConflictState } from "../gitUtils.ts";
+import { readConflictState, readIndexStageContent } from "../gitUtils.ts";
 import { Differ } from "../matchers/diffutil.ts";
 import { Merger } from "../matchers/merge.ts";
 import { MyersSequenceMatcher } from "../matchers/myers.ts";
@@ -57,12 +57,6 @@ interface BuildDiffPayloadOptions {
 	// TextDocument text so diffs align with what the user currently sees.
 	workingContent?: string;
 }
-
-const getGitState = async (
-	repository: GitApiRepository,
-	file: Uri,
-	stage: number,
-): Promise<string> => repository.show(`:${stage}`, file.fsPath);
 
 const getCommitInfo = async (
 	repository: GitApiRepository,
@@ -156,9 +150,11 @@ async function fetchConflictStages(
 	const isBothAdded =
 		repoContext.mergeChange?.status === GitStatus.BOTH_ADDED;
 	const [base, local, incoming] = await Promise.all([
-		isBothAdded ? "" : getGitState(repository, uri, GIT_STAGE_BASE),
-		getGitState(repository, uri, GIT_STAGE_LOCAL),
-		getGitState(repository, uri, GIT_STAGE_REMOTE),
+		isBothAdded
+			? ""
+			: readIndexStageContent(repository, uri, GIT_STAGE_BASE),
+		readIndexStageContent(repository, uri, GIT_STAGE_LOCAL),
+		readIndexStageContent(repository, uri, GIT_STAGE_REMOTE),
 	]);
 	return { base, local, incoming };
 }
@@ -283,8 +279,8 @@ async function buildBaseDiffPayload(
 	// Base is stage 1, Local is 2, Remote is 3
 	const targetStage = side === "left" ? GIT_STAGE_LOCAL : GIT_STAGE_REMOTE;
 	const [base, target] = await Promise.all([
-		getGitState(repository, file, GIT_STAGE_BASE),
-		getGitState(repository, file, targetStage),
+		readIndexStageContent(repository, file, GIT_STAGE_BASE),
+		readIndexStageContent(repository, file, targetStage),
 	]);
 
 	const baseCommit = await getBaseCommitInfo(repository);

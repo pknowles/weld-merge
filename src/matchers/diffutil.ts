@@ -101,6 +101,46 @@ function consumeBlankLines(
 
 type LineCacheEntry = [number | null, number | null, number | null];
 
+// Lines split from real file content by `.split("\n")` keep their own trailing
+// "\r" on CRLF-checkout content, so rejoining them with `.join("\n")`
+// reproduces the original line endings. Marker/placeholder lines that code
+// synthesizes as bare string literals (e.g. "(??)" or "<<<<<<< HEAD") have no
+// such trailing "\r" of their own, so on a CRLF file they must borrow one from
+// a neighboring real line — otherwise the merged buffer ends up with mixed line
+// endings. Checkout conversion is uniform across a file (mixed-EOL source files
+// are out of scope), so the first line's ending settles it for the whole file —
+// no need to scan every line. Callers compute this once per merge and reuse it,
+// rather than re-deriving it per synthesized line.
+//
+// KNOWN GAP: for a genuinely empty stage (base is "" — e.g. both sides insert
+// into a new empty file), there is no line to read an ending from, and this
+// returns LF by default. This is not a lookup we failed to do; the fact does
+// not exist to be looked up. Git's checkout smudge (core.autocrlf /
+// .gitattributes text=auto) decides CRLF vs LF partly by sniffing the file's
+// own bytes, and zero bytes carry no such signal — `git cat-file --filters` on
+// an empty blob is empty either way, indistinguishable between what would have
+// been CRLF or LF output. A freshly-constructed VS Code document has the same
+// problem: its `.eol` reflects what content we hand it, so seeding it with
+// empty text gives VS Code nothing to have detected either, and it falls back
+// to the `files.eol` setting or the OS default — which is a plausible guess,
+// not "what git would have produced." Reconstructing that lost fact is
+// fundamentally impossible without duplicating git's own checkout logic (see
+// .gitattributes(5) "text=auto"). Regardless, if it was an empty file that
+// vscode opened we could at least match what vscode would do - maybe use
+// files.eol?
+//
+// Practically this is unreachable from this codebase's current callers: the
+// empty-base-region branch that hits this case only fires when both sides
+// insert into an empty base, so the merged file is never empty end-to-end, and
+// nothing here depends on the empty-base terminator being right in isolation.
+// Documented so a future caller who does need file-level EOL correctness for a
+// genuinely empty file knows this returns an unauthoritative guess, not a
+// resolved fact — and that fixing it for real would mean giving up on deriving
+// EOL from content at all in that case.
+function lineTerminator(lines: readonly string[]): string {
+	return lines[0]?.endsWith("\r") ? "\r" : "";
+}
+
 class Differ {
 	_matcher = MyersSequenceMatcher;
 	_syncMatcher = SyncPointMyersSequenceMatcher;
@@ -930,4 +970,4 @@ class Differ {
 	}
 }
 
-export { Differ };
+export { Differ, lineTerminator };

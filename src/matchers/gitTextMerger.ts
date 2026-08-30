@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import { lineTerminator } from "./diffutil.ts";
 import { Merger } from "./merge.ts";
 import type { DiffChunk } from "./myers.ts";
 
@@ -32,6 +33,9 @@ export class GitTextMerger extends Merger {
 			);
 		}
 		const [_, t1] = sequences;
+		// Inherited from Merger; computed once per merge call and reused by
+		// _handleConflict, rather than re-derived per conflict block.
+		this._lineTerminator = lineTerminator(t1);
 
 		let state = { lastLine: 0, mergedLine: 0 };
 
@@ -115,17 +119,21 @@ export class GitTextMerger extends Merger {
 		const [t0, t1, t2] = texts;
 		const minMark = Math.min(ch0.startA, ch1.startA);
 		const highMark = Math.max(ch0.endA, ch1.endA);
+		// Conflict marker lines are literals with no line ending of their own;
+		// borrow one from the surrounding content so the buffer's endings stay
+		// uniform (see lineTerminator's doc comment).
+		const eol = this._lineTerminator;
 
-		mergedText.push("<<<<<<< HEAD");
+		mergedText.push(`<<<<<<< HEAD${eol}`);
 		this._appendLines(ch0.startB, ch0.endB, t0, mergedText);
 
-		mergedText.push("||||||| BASE");
+		mergedText.push(`||||||| BASE${eol}`);
 		this._appendLines(minMark, highMark, t1, mergedText);
 
-		mergedText.push("=======");
+		mergedText.push(`=======${eol}`);
 		this._appendLines(ch1.startB, ch1.endB, t2, mergedText);
 
-		mergedText.push(">>>>>>> REMOTE");
+		mergedText.push(`>>>>>>> REMOTE${eol}`);
 
 		const conflictAddedLines =
 			ch0.endB -

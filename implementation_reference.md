@@ -150,13 +150,23 @@ Granular performance telemetry is **opt-in only** and has zero production impact
     can restore that URI after reload, and Weld rebuilds the current snapshot
     from Git instead of saving conflict data.
   - VS Code's Git API remains the source for repository lifecycle and conflict
-    path discovery. Raw Git is isolated to `submoduleConflict.ts`. Mutating raw
-    Git is limited to gitlink stage/index operations because
-    `repository.show(":2", path)` cannot read submodule gitlink stages and the
-    Git API cannot write unmerged gitlink index entries. The resolver also uses
-    read-only Git commands inside the submodule repo for graph/search/file-list
-    data because the Git API does not expose those queries for an arbitrary
-    nested repository.
+    path discovery. Raw Git is isolated to `submoduleConflict.ts` and
+    `gitUtils.ts::readIndexStageContent`. Mutating raw Git is limited to
+    gitlink stage/index operations because `repository.show(":2", path)`
+    cannot read submodule gitlink stages and the Git API cannot write
+    unmerged gitlink index entries. The resolver also uses read-only Git
+    commands inside the submodule repo for graph/search/file-list data
+    because the Git API does not expose those queries for an arbitrary
+    nested repository. `readIndexStageContent` is the other read-only
+    exception: `repository.show` returns the raw, unfiltered index blob for
+    a conflict stage, but the editor needs content filtered through
+    `core.autocrlf`/`.gitattributes`/smudge filters the way Git's checkout
+    would produce it, since that's what the on-disk conflicted file actually
+    contains (see the CRLF fix — conflict stages must match worktree line
+    endings or diffs against the document are wrong). It falls back to
+    `repository.show` only when git cannot be spawned at all, which is
+    exactly the case where the raw blob already equals the worktree form
+    (no smudge ever ran).
 
 - `src/submoduleConflict.ts`
   - `SubmoduleConflict.load()` is the single validation boundary for live

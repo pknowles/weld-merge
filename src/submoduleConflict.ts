@@ -1,8 +1,13 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-import { basename, relative, sep } from "node:path";
+import { basename } from "node:path";
 import { Uri } from "vscode";
-import { execGit, execGitWithInput, readConflictState } from "./gitUtils.ts";
+import {
+	execGit,
+	execGitWithInput,
+	getRepoRelativePath,
+	readConflictState,
+} from "./gitUtils.ts";
 import type { GitApiRepository } from "./repoContext.ts";
 
 const GITLINK_MODE = "160000";
@@ -245,24 +250,6 @@ class SubmoduleConflict {
 			...this.repoRelativePath.split("/"),
 		).fsPath;
 	}
-}
-
-function getRepoRelativePath(rootUri: Uri, fileUri: Uri): string {
-	const repoRelativePath = relative(rootUri.fsPath, fileUri.fsPath)
-		.split(sep)
-		.join("/");
-	if (
-		repoRelativePath.length === 0 ||
-		repoRelativePath.startsWith("../") ||
-		repoRelativePath === ".." ||
-		repoRelativePath.includes("\n") ||
-		repoRelativePath.includes("\t")
-	) {
-		throw new Error(
-			`Cannot use ${fileUri.toString()}: invalid repository path.`,
-		);
-	}
-	return repoRelativePath;
 }
 
 async function isSubmoduleGitlinkChange(

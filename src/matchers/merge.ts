@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import { Differ } from "./diffutil.ts";
+import { Differ, lineTerminator } from "./diffutil.ts";
 import {
 	type DiffChunk,
 	type DiffChunkTag,
@@ -356,6 +356,10 @@ class AutoMergeDiffer extends Differ {
 export class Merger extends Differ {
 	differ: AutoMergeDiffer;
 	texts: string[][] = [];
+	// Computed once per merge call (merge3Files here, merge3FilesGit in the
+	// GitTextMerger subclass) and reused per conflict block, rather than
+	// re-derived per conflict.
+	protected _lineTerminator = "";
 
 	constructor() {
 		super();
@@ -396,6 +400,7 @@ export class Merger extends Differ {
 	// TODO: this looks damn similar to merge3FilesGit in gitTextMerger.ts
 	merge3Files(markConflicts = true): string {
 		this.differ.unresolved = [];
+		this._lineTerminator = lineTerminator(this.texts[1] ?? []);
 		let lastline = 0;
 		let mergedline = 0;
 		const mergedtext: string[] = [];
@@ -488,7 +493,11 @@ export class Merger extends Differ {
 				}
 			}
 		} else {
-			mergedtext.push("(??)");
+			// The base region is empty (nothing to prefix "(??)" onto), so this
+			// line is a pure literal with no borrowed "\r" of its own; give it
+			// one matching the surrounding text so the buffer's endings stay
+			// uniform (see lineTerminator's doc comment).
+			mergedtext.push(`(??)${this._lineTerminator}`);
 			this.differ.unresolved.push(currentMergedLine);
 			currentMergedLine += 1;
 		}

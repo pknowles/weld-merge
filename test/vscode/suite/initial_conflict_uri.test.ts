@@ -197,6 +197,18 @@ describe("autoMergeAll command error propagation (VS Code host)", () => {
 					get: () => [mockRepo],
 					configurable: true,
 				});
+				// Stage content is read via `git cat-file --filters`
+				// (readIndexStageContent in gitUtils.ts), not repository.show(),
+				// on the happy path. Pointing the resolved git executable at a
+				// nonexistent binary forces a spawn-level (ENOENT) failure, which
+				// is the one case readIndexStageContent falls back to
+				// repository.show() — exercising this test's injected failure via
+				// the real fallback path instead of a path production code no
+				// longer takes.
+				Object.defineProperty(realApi, "git", {
+					value: { path: "weld-test-nonexistent-git-binary" },
+					configurable: true,
+				});
 				const origGetRepo = realApi.getRepository.bind(realApi);
 				realApi.getRepository = (uri: Uri) => {
 					getRepositoryCalls.push(uri.toString());
