@@ -1040,6 +1040,7 @@ async function getConflict(
 }
 
 export type {
+	BaseDiffInput,
 	ConflictList,
 	ConflictLocation,
 	GetConflictResult,
@@ -1052,5 +1053,6 @@ export {
 	getConflict,
 	listConflicts,
 	normalizeGetConflictInput,
+	renderBaseDiff,
 	resolveConflictedItem,
 };
