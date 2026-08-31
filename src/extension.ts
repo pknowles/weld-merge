@@ -1,6 +1,5 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-import { relative, sep } from "node:path";
 import {
 	commands,
 	type Disposable,
@@ -17,8 +16,10 @@ import {
 	describeConflictStatusEvidence,
 	execGit,
 	execGitWithInput,
+	getRepoRelativePath,
 	getUnresolvedReasons,
 	readConflictState,
+	readIndexStageContent,
 } from "./gitUtils.ts";
 import { getWeldLogChannel, initializeWeldLogChannel } from "./log.ts";
 import { GitTextMerger } from "./matchers/gitTextMerger.ts";
@@ -357,7 +358,7 @@ async function getGitFileContent(
 	stage: number,
 ): Promise<string> {
 	try {
-		return await repository.show(`:${stage}`, file.fsPath);
+		return await readIndexStageContent(repository, file, stage);
 	} catch (error: unknown) {
 		const reason = getErrorMessage(error);
 		throw new Error(
@@ -480,20 +481,6 @@ function handleOpenConflictedFile(file: GitFile) {
 	window.showTextDocument(file.uri);
 }
 
-function getRepoRelativePath(rootPath: string, filePath: string): string {
-	const repoRelativePath = relative(rootPath, filePath).split(sep).join("/");
-	if (
-		repoRelativePath.length === 0 ||
-		repoRelativePath.startsWith("../") ||
-		repoRelativePath === ".." ||
-		repoRelativePath.includes("\n") ||
-		repoRelativePath.includes("\t")
-	) {
-		throw new Error(`Cannot restore ${filePath}: invalid repository path.`);
-	}
-	return repoRelativePath;
-}
-
 function parseTreeEntry(
 	output: string,
 	ref: string,
@@ -531,7 +518,7 @@ async function restoreDeleteModifyConflict(
 	const { uri, rootUri } = repoContext;
 	const filePath = uri.fsPath;
 	const cwd = rootUri.fsPath;
-	const repoRelativePath = getRepoRelativePath(cwd, filePath);
+	const repoRelativePath = getRepoRelativePath(rootUri, uri);
 	const [baseEntry, survivingEntry] = await Promise.all([
 		readTreeEntry(mergeBase, repoRelativePath, cwd, filePath),
 		readTreeEntry(survivingRef, repoRelativePath, cwd, filePath),

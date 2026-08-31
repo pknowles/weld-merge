@@ -9,6 +9,7 @@
 node_modules
 src
 test
+out/test
 jest.config.js
 jest.fuzz.config.js
 stryker.config.json
@@ -41,3 +42,5 @@ test/benchmarking/results/
 Trace-*.json
 trace_processor
 implementation_reference.md
+images/icon.svg
+

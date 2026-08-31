@@ -127,7 +127,9 @@ The ~5 minute disposal becomes beneficial LRU cache eviction rather than a "leak
 
 ## Browser / web extension host support
 
-Three operations still spawn the `git` executable (`merge-file -p`, `checkout -m`, `rerere forget`) — see README Known Limitations. If browser support is ever wanted, redesign these against VS Code git APIs before adding heuristics or partial fallbacks.
+Four things still spawn the `git` executable (`merge-file -p`, `checkout -m`, `rerere forget`, `readIndexStageContent`'s `cat-file --filters` in `gitUtils.ts`) — see README Known Limitations. If browser support is ever wanted, redesign these against VS Code git APIs before adding heuristics or partial fallbacks.
+
+`readIndexStageContent` is the one exception that already degrades correctly without a redesign: it already falls back to `repository.show` whenever git can't be spawned (string syscall error code, e.g. `ENOENT`), and in that world raw index blobs equal the worktree form anyway because no checkout smudge ever ran. So a browser host hits that fallback automatically — no design change needed for this one, unlike the other three.
 
 ## Fix commit message titles
 

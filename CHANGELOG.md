@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.0.13] - 2026-08-30
+
+### Fixed
+- **Windows Line Endings**: Conflicted files on Windows (or any repo with `core.autocrlf`/`.gitattributes` CRLF conversion) no longer show as a single whole-file conflict, and auto-merge now applies correctly. Conflict stage content is fetched through Git's own checkout-conversion filters instead of the raw, unfiltered index blob, so it matches the on-disk file's line endings.
+
 ## [0.0.12] - 2026-05-30
 
 ### Added

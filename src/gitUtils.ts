@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
 import { execFile, spawn } from "node:child_process";
+import { relative, sep } from "node:path";
 import { FileType, Uri, workspace } from "vscode";
 import { getGitExecutable } from "./gitPath.ts";
 import type { ConflictedItem, GitApiRepository } from "./repoContext.ts";
@@ -203,13 +204,73 @@ function getErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+// Git commands take repo-relative, forward-slash paths regardless of
+// platform. node:path's `relative` owns the platform-specific fsPath
+// semantics (Windows drive letters, separators, casing); this only remaps
+// the separator and rejects paths git could misinterpret.
+function getRepoRelativePath(rootUri: Uri, fileUri: Uri): string {
+	const repoRelativePath = relative(rootUri.fsPath, fileUri.fsPath)
+		.split(sep)
+		.join("/");
+	if (
+		repoRelativePath.length === 0 ||
+		repoRelativePath.startsWith("../") ||
+		repoRelativePath === ".." ||
+		repoRelativePath.includes("\n") ||
+		repoRelativePath.includes("\t")
+	) {
+		throw new Error(
+			`Cannot use ${fileUri.toString()}: invalid repository path.`,
+		);
+	}
+	return repoRelativePath;
+}
+
+// Returns the content of an unmerged index stage exactly as Git's checkout
+// would write it to the worktree: filtered through `core.autocrlf`,
+// `.gitattributes` eol/text, and any smudge filters. This is required for
+// conflict-stage content to compare and diff correctly against the on-disk
+// document, which VS Code/Git wrote through those same filters (notably on
+// Windows, where checkout produces CRLF but index blobs are LF). The VS Code
+// Git API's `repository.show` returns the raw, unfiltered blob instead, which
+// is why this bypasses it for stage content despite the project's general
+// preference for the Git API over raw git (see implementation_reference.md).
+//
+// Falls back to `repository.show` only when git itself could not be spawned
+// (a string syscall error code such as ENOENT/EACCES from execFile) — an
+// environment lacking a git binary never ran a checkout smudge in the first
+// place, so the raw index blob already equals the worktree form there. Any
+// other failure (bad path, missing stage, dead repo) is a real git error and
+// is rethrown unmodified so callers see git's stderr; it must never fall
+// back silently, since that would reintroduce this exact CRLF bug.
+async function readIndexStageContent(
+	repository: GitApiRepository,
+	file: Uri,
+	stage: number,
+): Promise<string> {
+	const relativePath = getRepoRelativePath(repository.rootUri, file);
+	try {
+		return await execGit(
+			["cat-file", "--filters", `:${stage}:${relativePath}`],
+			repository.rootUri.fsPath,
+		);
+	} catch (error: unknown) {
+		const spawnErrorCode = (error as { cause?: { code?: unknown } })?.cause
+			?.code;
+		if (typeof spawnErrorCode === "string") {
+			return await repository.show(`:${stage}`, file.fsPath);
+		}
+		throw error;
+	}
+}
+
 async function getStageDebugLine(
 	repository: GitApiRepository,
 	file: Uri,
 	stage: number,
 ): Promise<string> {
 	try {
-		const content = await repository.show(`:${stage}`, file.fsPath);
+		const content = await readIndexStageContent(repository, file, stage);
 		return `stage ${stage}: present (${content.length} bytes)`;
 	} catch (error: unknown) {
 		return `stage ${stage}: missing (${getErrorMessage(error)})`;
@@ -272,5 +333,7 @@ export {
 	execGitWithInput,
 	getGitDirUri,
 	getUnresolvedReasons,
+	getRepoRelativePath,
 	readConflictState,
+	readIndexStageContent,
 };

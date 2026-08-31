@@ -286,8 +286,11 @@ Example `settings.json` snippet to tweak colors:
 Git worktrees are not supported, but the feature is planned.
 
 Partial support for browser / web extension host environments. Some operations
-run `git` directly (`merge-file`, `checkout -m`, `rerere forget`) which cannot
-be done in a browser-only host.
+run `git` directly (`merge-file`, `checkout -m`, `rerere forget`, reading
+conflict-stage content) which cannot be done in a browser-only host. In such a
+host, conflict-stage reads fall back to the VS Code Git API's raw index blobs,
+since a host without a git binary never runs a checkout smudge in the first
+place.
 
 ## Developer Setup
 

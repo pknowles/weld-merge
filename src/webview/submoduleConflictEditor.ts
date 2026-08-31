@@ -14,6 +14,7 @@ import {
 	type WebviewPanel,
 	window,
 } from "vscode";
+import { getRepoRelativePath } from "../gitUtils.ts";
 import { getWeldLogChannel } from "../log.ts";
 import {
 	EditorDisposedError,
@@ -101,7 +102,10 @@ class SubmoduleConflictEditorProvider
 	static uriFor(repository: GitApiRepository, submoduleUri: Uri): Uri {
 		const identity = {
 			repositoryRoot: repository.rootUri,
-			submodulePath: repositoryRelativePath(repository, submoduleUri),
+			submodulePath: getRepoRelativePath(
+				repository.rootUri,
+				submoduleUri,
+			),
 		};
 		return submoduleConflictUri(identity);
 	}
@@ -397,20 +401,6 @@ class SubmoduleConflictEditorProvider
 			</body>
 			</html>`;
 	}
-}
-
-function repositoryRelativePath(
-	repository: GitApiRepository,
-	submoduleUri: Uri,
-): string {
-	const root = repository.rootUri.fsPath;
-	const full = submoduleUri.fsPath;
-	if (full === root || !full.startsWith(`${root}/`)) {
-		throw new Error(
-			`${submoduleUri.toString()} is not inside ${repository.rootUri.toString()}.`,
-		);
-	}
-	return full.slice(root.length + 1);
 }
 
 function errorMessage(error: unknown): string {
