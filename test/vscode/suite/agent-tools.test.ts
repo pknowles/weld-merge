@@ -579,7 +579,7 @@ describe("Agent Tools: Conflict listing", () => {
 		));
 });
 
-describe("Agent Tools: Conflict block format", () => {
+describe("Agent Tools: Conflict block format (text)", () => {
 	it("renders the conflict as a located diff3 block with disk context", () =>
 		withConflictRepo(
 			"weld-agent-get-context-",
@@ -701,7 +701,7 @@ describe("Agent Tools: Optional base diffs", () => {
 		));
 });
 
-describe("Agent Tools: Conflict block format", () => {
+describe("Agent Tools: Conflict block format (bothAdded)", () => {
 	it("renders a both-added conflict without a base section", () =>
 		withConflictRepo(
 			"weld-agent-both-added-",
@@ -855,7 +855,7 @@ describe("Agent Tools: Giant conflict summaries", () => {
 		));
 });
 
-describe("Agent Tools: Current conflict details", () => {
+describe("Agent Tools: Disk-mapped conflict ranges", () => {
 	it("maps disk edits that remove or replace every conflict line", () =>
 		withConflictRepo(
 			"weld-agent-disk-edits-",
