@@ -13,6 +13,7 @@ import {
 	type ConflictLocation,
 	type GetConflictToolInput,
 	getConflict,
+	type ListConflictsToolInput,
 	listConflicts,
 	normalizeGetConflictInput,
 } from "./agentConflicts.ts";
@@ -59,17 +60,20 @@ function registerEnabledTools(
 			},
 		},
 	);
-	const listDisposable = lm.registerTool("weld_list_conflicts", {
-		async invoke() {
-			const result = await listConflicts();
-			getWeldLogChannel().info(
-				`Weld agent tool weld_list_conflicts: listed ${result.files.length} file(s)`,
-			);
-			return new LanguageModelToolResult([
-				new LanguageModelTextPart(JSON.stringify(result)),
-			]);
+	const listDisposable = lm.registerTool<ListConflictsToolInput>(
+		"weld_list_conflicts",
+		{
+			async invoke(options) {
+				const result = await listConflicts(options.input);
+				getWeldLogChannel().info(
+					`Weld agent tool weld_list_conflicts: listed ${result.files.length} file(s)`,
+				);
+				return new LanguageModelToolResult([
+					new LanguageModelTextPart(JSON.stringify(result)),
+				]);
+			},
 		},
-	});
+	);
 	const getDisposable = lm.registerTool<GetConflictToolInput>(
 		"weld_get_conflict",
 		{
@@ -78,7 +82,7 @@ function registerEnabledTools(
 					normalizeGetConflictInput(options.input),
 				);
 				getWeldLogChannel().info(
-					`Weld agent tool weld_get_conflict: returned ${result.type} conflict ${result.conflictIndex} for ${result.path}`,
+					`Weld agent tool weld_get_conflict: returned ${result.type} response for ${result.path}`,
 				);
 				return new LanguageModelToolResult([
 					new LanguageModelTextPart(JSON.stringify(result)),

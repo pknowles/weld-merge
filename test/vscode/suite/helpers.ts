@@ -284,8 +284,8 @@ function makeContextConflictWithMarkerStyle(
 	};
 }
 
-// Creates a single-file conflict with two independent hunks so both
-// conflictIndex 0 and conflictIndex 1 are valid inputs to weld_get_conflict.
+// Creates a single-file conflict with two independent hunks so conflict
+// ranges [0, 0] and [1, 1] are both valid inputs to weld_get_conflict.
 // File layout (base): "A\nB\nMID\nC\nD\n"
 // Local changes B→LOCAL-B and C→LOCAL-C; remote changes B→REMOTE-B and C→REMOTE-C.
 function makeTwoHunkConflict(repoPath: string): void {
@@ -342,37 +342,6 @@ function makeWeldResolvableConflict(repoPath: string): void {
 		runGit(["merge", "other"], repoPath);
 	} catch {
 		// git exits 1 for the expected marker conflict.
-	}
-	assertUnmergedPaths(repoPath, [fileName]);
-}
-
-// Creates two separated Git marker conflicts. In each, Git treats a local
-// deletion plus a remote adjacent insertion as conflicting, while Weld can
-// retain both independent edits. The unchanged separator keeps their line
-// coordinates independently observable to the agent-tool integration test.
-function makeTwoWeldResolvableConflicts(repoPath: string): void {
-	const fileName = "tracked.txt";
-	writeFileSync(
-		join(repoPath, fileName),
-		"START\nA\nB\nC\nD\nSEPARATOR\nE\nF\nG\nH\nEND\n",
-	);
-	runGit(["commit", "-am", "two Weld-resolvable base regions"], repoPath);
-	runGit(["checkout", "-b", "other"], repoPath);
-	writeFileSync(
-		join(repoPath, fileName),
-		"START\nA\nB\nC\nREMOTE-ONE\nD\nSEPARATOR\nE\nF\nG\nREMOTE-TWO\nH\nEND\n",
-	);
-	runGit(["commit", "-am", "remote inserts beside both deletions"], repoPath);
-	runGit(["checkout", "-"], repoPath);
-	writeFileSync(
-		join(repoPath, fileName),
-		"START\nA\nB\nD\nSEPARATOR\nE\nF\nH\nEND\n",
-	);
-	runGit(["commit", "-am", "local deletes both adjacent lines"], repoPath);
-	try {
-		runGit(["merge", "other"], repoPath);
-	} catch {
-		// git exits 1 for the expected marker conflicts.
 	}
 	assertUnmergedPaths(repoPath, [fileName]);
 }
@@ -689,7 +658,6 @@ export {
 	makeSubmoduleConflictFixture,
 	makeSubmoduleConflictRepo,
 	makeTwoHunkConflict,
-	makeTwoWeldResolvableConflicts,
 	makeWeldResolvableConflict,
 	openRepoInGitExtension,
 	waitForMergeChanges,

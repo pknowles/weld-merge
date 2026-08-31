@@ -265,21 +265,29 @@
 				"name": "weld_list_conflicts",
 				"toolReferenceName": "weldListConflicts",
 				"displayName": "Weld: List conflicts",
-				"userDescription": "List active Git conflicts, Weld hunk counts, and incoming commit metadata across workspace repositories.",
-				"modelDescription": "Lists active conflicted files across workspace Git repositories. Returns each repository root, repository-relative path, Weld three-way conflict count, conflict kind, and concise local HEAD/remote incoming commit metadata. Call this before requesting details or applying an automatic merge.",
+				"userDescription": "List active Git conflicts, Weld conflict counts, commit identifiers, and leftover conflict markers across workspace repositories.",
+				"modelDescription": "Lists active conflicted files across workspace Git repositories. Returns each repository root, repository-relative path, conflict kind, Weld conflict count (Weld auto-merge resolves some conflicts git cannot, so this can be lower than the file's git marker count), base/local/remote commit identifiers (hash, branch/tag ref when known, title), and strayMarkers: git conflict-marker syntax or Weld (??) sentinel lines found on disk with their line ranges. During an active merge those markers may belong to unresolved conflicts; after resolving, call this again to verify none remain. When all conflicts in the workspace are small, each file's rendered conflict blocks are inlined as conflicts so no follow-up call is needed. Typical workflow: list, weld_apply_automerge each file, weld_get_conflict for what remains, edit the file directly, list again to verify.",
 				"canBeReferencedInPrompt": true,
 				"when": "config.weld.agent.enable",
 				"inputSchema": {
 					"type": "object",
-					"properties": {}
+					"additionalProperties": false,
+					"properties": {
+						"inlineConflictLines": {
+							"type": "integer",
+							"minimum": 0,
+							"default": 40,
+							"description": "Inline each file's conflict blocks into the listing when the total rendered line count across the workspace is at or below this budget."
+						}
+					}
 				}
 			},
 			{
 				"name": "weld_get_conflict",
 				"toolReferenceName": "weldGetConflict",
 				"displayName": "Weld: Get conflict",
-				"userDescription": "Get one Weld conflict with bounded Git-stage text and disk-anchored unresolved hunk ranges.",
-				"modelDescription": "Returns one zero-based initial Weld conflict selected from weld_list_conflicts. Omit conflictIndex only when the file has zero initial Weld conflicts to retrieve its file-level unresolved ranges, literal markers, and auto-merge suggestions; that file-level response deliberately omits stage regions and changes because no initial Weld region exists. Stage regions include numbered context and exact mappings; large regions are omitted with a raw git show command for the required stage. Current-file ranges (unresolvedHunks, conflictMarkers) are scoped to the requested conflict, not the whole file. Current file data is read from disk because native file tools already read current text. type is \"bothAdded\" instead of \"text\" when local and remote each independently created the file at this path with no common ancestor (base.present is always false); it still returns full local/remote text like a text conflict. Binary, delete/modify, both-deleted, and submodule conflicts return a typed explanation instead of text.",
+				"userDescription": "Get a file's Weld conflicts as located diff3-style blocks with surrounding disk context.",
+				"modelDescription": "Returns a conflicted file's remaining Weld conflicts as ready-to-resolve text blocks. Each block is a generated diff3-style conflict (<<<<<<< LOCAL / ||||||| BASE / ======= / >>>>>>> REMOTE) built from the Git stages, wrapped in real context lines from the file on disk. The opening marker states the one-based inclusive disk line range the resolution replaces (e.g. 'replaces lines 12-18'); range repeats it machine-readably as [startLine, endLineExclusive]. Resolve by editing the file directly at that range; there is no editing tool. When the file on disk has diverged from Weld's auto-merge result near a conflict, autoMergeView shows the same alternatives with the expected auto-merged surroundings (no file location). When a conflict cannot be mapped to the disk file, note says so instead of range; read the file before editing. Oversized sections are elided in the middle with their line numbers stated ('... N lines elided (local X-Y) ...'). type is 'bothAdded' when both sides created the file with no common ancestor; its blocks have no BASE section. Binary, delete/modify, both-deleted, and submodule conflicts return a typed explanation instead. Set includeBaseDiffs for a harder conflict to also get localDiff/remoteDiff: standard unified diffs of Base against Local and against Remote (the same 'compare with base' data the UI's buttons show), which can make what each side actually changed clearer than reading two full sections side by side; omitted by default since the block's alternatives already convey the change for most conflicts.",
 				"canBeReferencedInPrompt": true,
 				"when": "config.weld.agent.enable",
 				"inputSchema": {
@@ -296,28 +304,32 @@
 							"minLength": 1,
 							"description": "Repository-relative conflicted path returned by weld_list_conflicts."
 						},
-						"conflictIndex": {
-							"type": "integer",
-							"minimum": 0,
-							"description": "Zero-based conflict index, less than the file's conflictCount."
+						"conflicts": {
+							"type": "array",
+							"items": {
+								"type": "integer",
+								"minimum": 0
+							},
+							"minItems": 2,
+							"maxItems": 2,
+							"description": "Zero-based inclusive [first, last] conflict range. Omit to return every conflict in the file; a single conflict is [n, n]."
 						},
 						"contextLines": {
 							"type": "integer",
 							"minimum": 0,
 							"default": 5,
-							"description": "Number of surrounding lines to return above and below each region."
+							"description": "Number of surrounding disk lines included above and below each conflict block."
 						},
-						"maxStageLines": {
+						"maxSectionLines": {
 							"type": "integer",
 							"minimum": 0,
-							"default": 80,
-							"description": "Maximum number of lines returned for each Git stage region and its surrounding context. If any requested stage content is omitted, the response is marked truncated and provides rawGitAccess."
+							"default": 40,
+							"description": "Maximum lines per LOCAL/BASE/REMOTE section before its interior is elided with an explicit line-number note."
 						},
-						"maxResultItems": {
-							"type": "integer",
-							"minimum": 0,
-							"default": 80,
-							"description": "Maximum number of unresolved hunks, literal markers, or auto-merge suggestions returned in each collection."
+						"includeBaseDiffs": {
+							"type": "boolean",
+							"default": false,
+							"description": "Also return localDiff and remoteDiff: standard unified diffs of Base against Local and against Remote, scoped to each conflict, like the UI's compare-with-base buttons."
 						}
 					},
 					"required": [

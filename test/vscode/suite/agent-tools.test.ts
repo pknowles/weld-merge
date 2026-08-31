@@ -38,7 +38,6 @@ import {
 	makeRepo,
 	makeSubmoduleConflictFixture,
 	makeTwoHunkConflict,
-	makeTwoWeldResolvableConflicts,
 	makeWeldResolvableConflict,
 	openRepoInGitExtension,
 	waitForMergeChanges,
@@ -56,23 +55,12 @@ const INVALID_REPOSITORY_ROOT_ERROR_REGEX =
 	/repositoryRoot must be a non-empty URI/u;
 const INVALID_TOOL_PATH_ERROR_REGEX =
 	/path must be a non-empty repository-relative string/u;
-const INVALID_CONFLICT_INDEX_ERROR_REGEX =
-	/conflictIndex must be a nonnegative safe integer/u;
+const INVALID_CONFLICT_RANGE_ERROR_REGEX = /first, last/u;
 const INVALID_CONTEXT_LINES_ERROR_REGEX =
 	/contextLines must be a nonnegative safe integer/u;
-const INVALID_MAX_STAGE_LINES_ERROR_REGEX =
-	/maxStageLines must be a nonnegative safe integer/u;
-const INVALID_MAX_RESULT_ITEMS_ERROR_REGEX =
-	/maxResultItems must be a nonnegative safe integer/u;
-const LOCAL_DIFF_HEADER_REGEX = /^@@ -/u;
-const LOCAL_BASE_DIFF_REGEX = /-base\n\+local/u;
-const REMOTE_BASE_DIFF_REGEX = /-base\n\+remote/u;
-const LOCAL_STAGE_ACCESS_REGEX = /show ':2:tracked\.txt'/u;
-const REMOTE_STAGE_ACCESS_REGEX = /show ':3:tracked\.txt'/u;
-const FIRST_HUNK_LOCAL_DIFF_REGEX = /-B\n\+LOCAL-B/u;
-const SECOND_HUNK_LOCAL_DIFF_REGEX = /-C\n\+LOCAL-C/u;
-const SECOND_HUNK_CONTENT_REGEX = /(?:^|\n)[+-]C(?:\n|$)/u;
-const RESOLVED_CONTENT_REGEX = /RESOLVED/u;
+const INVALID_MAX_SECTION_LINES_ERROR_REGEX =
+	/maxSectionLines must be a nonnegative safe integer/u;
+const WELD_SENTINEL = "(??)";
 
 async function invokeTextTool(name: string, input: object): Promise<string> {
 	const result = await lm.invokeTool(name, {
@@ -86,12 +74,16 @@ async function invokeTextTool(name: string, input: object): Promise<string> {
 	assert.equal(textParts.length, 1, "expected one text result");
 	const textPart = textParts[0];
 	assert.ok(textPart, "expected text result");
+	assert.ok(
+		!textPart.value.includes(WELD_SENTINEL),
+		"responses must never contain the Weld (??) sentinel",
+	);
 	return textPart.value;
 }
 
-async function invokeListConflicts(): Promise<ConflictList> {
+async function invokeListConflicts(input: object = {}): Promise<ConflictList> {
 	const parsed: unknown = JSON.parse(
-		await invokeTextTool("weld_list_conflicts", {}),
+		await invokeTextTool("weld_list_conflicts", input),
 	);
 	assert.ok(parsed && typeof parsed === "object", "expected result object");
 	assert.ok("files" in parsed, "expected files property");
@@ -106,6 +98,16 @@ async function invokeGetConflict(input: object): Promise<GetConflictResult> {
 	assert.ok(parsed && typeof parsed === "object", "expected result object");
 	assert.ok("type" in parsed && typeof parsed.type === "string");
 	return parsed as GetConflictResult;
+}
+
+// Narrows to the text/bothAdded result shape and fails loudly otherwise.
+function expectTextResult(
+	result: GetConflictResult,
+): Extract<GetConflictResult, { conflicts: unknown }> {
+	if (result.type !== "text" && result.type !== "bothAdded") {
+		throw new Error(`expected a text conflict result, got ${result.type}`);
+	}
+	return result;
 }
 
 interface ApplyAutomergeResult {
@@ -158,37 +160,61 @@ function findConflict(
 	return conflict;
 }
 
+// Splits a rendered block into its parts so tests can assert exactly where
+// content is allowed to appear. Context is everything outside the markers.
+function splitBlock(text: string): {
+	before: string[];
+	local: string[];
+	base: string[];
+	remote: string[];
+	after: string[];
+} {
+	const lines = text.split("\n");
+	const start = lines.findIndex((line) => line.startsWith("<<<<<<< LOCAL"));
+	const middle = lines.indexOf("=======");
+	const end = lines.indexOf(">>>>>>> REMOTE");
+	assert.ok(start >= 0 && middle > start && end > middle, text);
+	const baseMarker = lines.indexOf("||||||| BASE");
+	return {
+		before: lines.slice(0, start),
+		local: lines.slice(start + 1, baseMarker === -1 ? middle : baseMarker),
+		base: baseMarker === -1 ? [] : lines.slice(baseMarker + 1, middle),
+		remote: lines.slice(middle + 1, end),
+		after: lines.slice(end + 1),
+	};
+}
+
 interface DiskEditCase {
 	name: string;
 	content: string;
-	range: { startLine: number; endLineExclusive: number };
+	range: [number, number];
 }
 
 const DISK_EDIT_CASES: readonly DiskEditCase[] = [
 	{
 		name: "deletes the conflict region",
 		content: "before one\nbefore two\nafter one\nafter two\n",
-		range: { startLine: 3, endLineExclusive: 3 },
+		range: [3, 3],
 	},
 	{
 		name: "replaces the conflict region with unrelated text",
 		content: "before one\nbefore two\nunrelated\nafter one\nafter two\n",
-		range: { startLine: 3, endLineExclusive: 4 },
+		range: [3, 4],
 	},
 	{
 		name: "replaces it with copied surrounding text",
 		content: "before one\nbefore two\nbefore two\nafter one\nafter two\n",
-		range: { startLine: 3, endLineExclusive: 4 },
+		range: [3, 4],
 	},
 	{
 		name: "truncates the entire file",
 		content: "",
-		range: { startLine: 1, endLineExclusive: 1 },
+		range: [1, 1],
 	},
 	{
 		name: "replaces the entire file",
 		content: "nothing recognizably related\n",
-		range: { startLine: 1, endLineExclusive: 2 },
+		range: [1, 2],
 	},
 ];
 
@@ -205,23 +231,29 @@ async function assertDiskEditCases(
 		uri,
 		new TextEncoder().encode(testCase.content),
 	);
-	const result = await invokeGetConflict({
-		repositoryRoot,
-		path: "tracked.txt",
-		conflictIndex: 0,
-	});
-	assert.equal(result.type, "text", testCase.name);
-	if (result.type !== "text" || result.conflictIndex === null) {
-		throw new Error(`expected text conflict for ${testCase.name}`);
+	const result = expectTextResult(
+		await invokeGetConflict({
+			repositoryRoot,
+			path: "tracked.txt",
+			conflicts: [0, 0],
+		}),
+	);
+	const block = result.conflicts[0];
+	assert.ok(block, testCase.name);
+	assert.deepEqual(block.range, testCase.range, testCase.name);
+	if (testCase.range[0] === testCase.range[1]) {
+		assert.ok(
+			block.text.includes(`inserts before line ${testCase.range[0]}`),
+			testCase.name,
+		);
+	} else {
+		assert.ok(
+			block.text.includes(
+				`replaces lines ${testCase.range[0]}-${testCase.range[1] - 1}`,
+			),
+			testCase.name,
+		);
 	}
-	assert.equal(result.current.residualMarkers, undefined, testCase.name);
-	assert.deepEqual(result.current.possibleConflictHunks, [
-		{
-			range: [testCase.range.startLine, testCase.range.endLineExclusive],
-			local: "conflict",
-			remote: "conflict",
-		},
-	]);
 	await assertDiskEditCases(uri, repositoryRoot, remainingCases);
 }
 
@@ -366,8 +398,8 @@ describe("Agent Tools: Single-file auto-merge", () => {
 		));
 });
 
-describe("Agent Tools: Text conflict detection", () => {
-	it("lists a text conflict with its three-way hunk count", () =>
+describe("Agent Tools: Conflict listing", () => {
+	it("lists a text conflict with commit identifiers and disk markers", () =>
 		withConflictRepo("weld-agent-text-", makeConflict, async (repoPath) => {
 			await withListToolEnabled(async () => {
 				const conflict = findConflict(
@@ -377,93 +409,138 @@ describe("Agent Tools: Text conflict detection", () => {
 				);
 				assert.equal(conflict.conflictCount, 1);
 				assert.equal(conflict.kind, "text");
+				assert.equal(conflict.commits.local.title, "local change");
+				assert.ok(conflict.commits.local.hash.length > 0);
+				assert.ok((conflict.commits.local.ref ?? "").length > 0);
+				assert.equal(conflict.commits.remote?.title, "remote change");
+				assert.equal(conflict.commits.remote?.ref, "other");
+				assert.equal(conflict.commits.base?.title, "init");
+				// The merge's own markers are on disk and reported; after
+				// resolution any remaining entry is stray.
+				assert.equal(
+					conflict.strayMarkers?.some(
+						(marker) => marker.kind === "gitMarker",
+					),
+					true,
+				);
 			});
 		}));
 
-	it("classifies a both-added conflict distinctly from an edit conflict", () =>
+	it("inlines small conflicts with the listing", () =>
 		withConflictRepo(
-			"weld-agent-both-added-",
-			makeBothAddedConflict,
+			"weld-agent-inline-",
+			makeConflict,
 			async (repoPath) => {
 				await withListToolEnabled(async () => {
 					const conflict = findConflict(
 						await invokeListConflicts(),
 						Uri.file(repoPath),
-						"conflict.txt",
+						"tracked.txt",
 					);
-					assert.equal(conflict.conflictCount, 1);
-					assert.equal(conflict.kind, "bothAdded");
-					const detail = await invokeGetConflict({
-						repositoryRoot: Uri.file(repoPath).toString(),
-						path: "conflict.txt",
-						conflictIndex: 0,
-					});
-					assert.equal(detail.type, "bothAdded");
-					if (
-						detail.type !== "bothAdded" ||
-						detail.conflictIndex === null
-					) {
-						throw new Error("expected both-added conflict");
-					}
-					assert.equal(detail.local, "local version\n");
-					assert.equal(detail.remote, "remote version\n");
-					assert.ok(!("localDiff" in detail));
+					assert.equal(conflict.conflicts?.length, 1);
+					const block = conflict.conflicts?.[0];
+					assert.ok(block, "expected one inline conflict block");
+					assert.ok(block.range, "expected a mapped disk range");
+					assert.ok(
+						block.text.includes(
+							`replaces lines ${block.range[0]}-${block.range[1] - 1}`,
+						),
+					);
+
+					const budgeted = findConflict(
+						await invokeListConflicts({ inlineConflictLines: 1 }),
+						Uri.file(repoPath),
+						"tracked.txt",
+					);
+					assert.equal(budgeted.conflicts, undefined);
+				});
+			},
+		));
+
+	it("lists a Weld-resolvable Git conflict with zero conflicts to decide", () =>
+		withConflictRepo(
+			"weld-agent-resolvable-",
+			makeWeldResolvableConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					const conflict = findConflict(
+						await invokeListConflicts(),
+						Uri.file(repoPath),
+						"tracked.txt",
+					);
+					assert.equal(conflict.kind, "text");
+					assert.equal(conflict.conflictCount, 0);
+					assert.equal(conflict.conflicts, undefined);
+					// Git's markers are still on disk until auto-merge runs.
+					assert.equal(
+						conflict.strayMarkers?.some(
+							(marker) => marker.kind === "gitMarker",
+						),
+						true,
+					);
+
+					const detail = expectTextResult(
+						await invokeGetConflict({
+							repositoryRoot: Uri.file(repoPath).toString(),
+							path: "tracked.txt",
+						}),
+					);
+					assert.equal(detail.conflictCount, 0);
+					assert.deepEqual(detail.conflicts, []);
 				});
 			},
 		));
 });
 
-describe("Agent Tools: Conflict stage details", () => {
-	it("returns two stage-coordinate diffs and disk-coordinate edit context", () =>
+describe("Agent Tools: Conflict block format", () => {
+	it("renders the conflict as a located diff3 block with disk context", () =>
 		withConflictRepo(
 			"weld-agent-get-context-",
 			makeContextConflict,
 			async (repoPath) => {
 				await withListToolEnabled(async () => {
-					const result = await invokeGetConflict({
-						repositoryRoot: Uri.file(repoPath).toString(),
-						path: "tracked.txt",
-						conflictIndex: 0,
-						contextLines: 1,
-					});
-					assert.equal(result.type, "text");
-					if (
-						result.type !== "text" ||
-						result.conflictIndex === null
-					) {
-						throw new Error("expected text conflict");
-					}
-					assert.match(
-						result.localDiff ?? "",
-						LOCAL_DIFF_HEADER_REGEX,
+					const result = expectTextResult(
+						await invokeGetConflict({
+							repositoryRoot: Uri.file(repoPath).toString(),
+							path: "tracked.txt",
+							conflicts: [0, 0],
+							contextLines: 1,
+						}),
 					);
-					assert.match(result.localDiff ?? "", LOCAL_BASE_DIFF_REGEX);
-					assert.match(
-						result.remoteDiff ?? "",
-						REMOTE_BASE_DIFF_REGEX,
+					assert.equal(result.conflictCount, 1);
+					const block = result.conflicts[0];
+					assert.ok(block, "expected one conflict block");
+					assert.equal(block.index, 0);
+					assert.equal(block.autoMergeView, undefined);
+					assert.equal(block.note, undefined);
+
+					// The generated alternatives and disk context come from
+					// the Git stages and the real file on disk, not a
+					// hand-computed line count: the local marker-conflict
+					// style (merge/diff3/zdiff3, whatever this environment's
+					// git.conflictStyle produces) changes how many lines the
+					// disk block occupies, so `range` must never be a
+					// hardcoded literal here.
+					assert.ok(block.range, "expected a mapped disk range");
+					const parts = splitBlock(block.text);
+					assert.deepEqual(parts.before, ["before two"]);
+					assert.deepEqual(parts.local, ["local"]);
+					assert.deepEqual(parts.base, ["base"]);
+					assert.deepEqual(parts.remote, ["remote"]);
+					assert.deepEqual(parts.after, ["after one"]);
+					assert.ok(
+						block.text.includes(
+							`replaces lines ${block.range[0]}-${block.range[1] - 1}`,
+						),
 					);
-					assert.equal(result.current.target.state, "mapped");
-					if (result.current.target.state === "mapped") {
-						assert.equal(
-							result.current.target.contextBefore?.text,
-							"before two",
-						);
-						assert.equal(
-							result.current.target.contextAfter?.text,
-							"after one",
-						);
-					}
-					assert.equal(result.current.residualMarkers, undefined);
-					const item = getConflictedItem(repoPath, "tracked.txt");
-					const [threeWay, localBase, remoteBase] = await Promise.all(
-						[
-							buildDiffPayload(item),
-							buildBaseDiffPayload(item, item.uri, "left"),
-							buildBaseDiffPayload(item, item.uri, "right"),
-						],
+
+					// GUI parity: the block's alternatives are the same stage
+					// content the merge editor's panes show.
+					const payload = await buildDiffPayload(
+						getConflictedItem(repoPath, "tracked.txt"),
 					);
-					const [localFile, mergedFile, remoteFile] = threeWay.files;
-					assert.ok(localFile && mergedFile && remoteFile);
+					const [localFile, , remoteFile] = payload.files;
+					assert.ok(localFile && remoteFile);
 					assert.equal(
 						localFile.content,
 						"before one\nbefore two\nlocal\nafter one\nafter two\n",
@@ -472,7 +549,48 @@ describe("Agent Tools: Conflict stage details", () => {
 						remoteFile.content,
 						"before one\nbefore two\nremote\nafter one\nafter two\n",
 					);
-					assert.ok(mergedFile.content.includes("(??)"));
+					assert.equal(block.localDiff, undefined);
+					assert.equal(block.remoteDiff, undefined);
+				});
+			},
+		));
+});
+
+describe("Agent Tools: Optional base diffs", () => {
+	it("adds base diffs only when requested, matching the UI's base panels", () =>
+		withConflictRepo(
+			"weld-agent-base-diffs-",
+			makeContextConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					const repositoryRoot = Uri.file(repoPath).toString();
+					const item = getConflictedItem(repoPath, "tracked.txt");
+					const [localBase, remoteBase] = await Promise.all([
+						buildBaseDiffPayload(item, item.uri, "left"),
+						buildBaseDiffPayload(item, item.uri, "right"),
+					]);
+
+					const result = expectTextResult(
+						await invokeGetConflict({
+							repositoryRoot,
+							path: "tracked.txt",
+							conflicts: [0, 0],
+							contextLines: 1,
+							includeBaseDiffs: true,
+						}),
+					);
+					const block = result.conflicts[0];
+					assert.ok(block, "expected one conflict block");
+					assert.equal(
+						block.localDiff,
+						"@@ -2,3 +2,3 @@\n before two\n-base\n+local\n after one",
+					);
+					assert.equal(
+						block.remoteDiff,
+						"@@ -2,3 +2,3 @@\n before two\n-base\n+remote\n after one",
+					);
+					// GUI parity: the same replace opcode the UI's compare-with-base
+					// panels compute for this file.
 					assert.deepEqual(localBase.data.diffs, [
 						{
 							tag: "replace",
@@ -491,154 +609,167 @@ describe("Agent Tools: Conflict stage details", () => {
 							endB: 3,
 						},
 					]);
-					assert.equal(
-						result.localDiff,
-						"@@ -2,3 +2,3 @@\n before two\n-base\n+local\n after one",
-					);
-					assert.equal(
-						result.remoteDiff,
-						"@@ -2,3 +2,3 @@\n before two\n-base\n+remote\n after one",
-					);
 				});
 			},
 		));
 });
 
-describe("Agent Tools: Omitted stage details", () => {
-	it("makes omitted stage diffs explicit and actionable", () =>
+describe("Agent Tools: Conflict block format", () => {
+	it("renders a both-added conflict without a base section", () =>
 		withConflictRepo(
-			"weld-agent-context-budget-",
+			"weld-agent-both-added-",
+			makeBothAddedConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					const conflict = findConflict(
+						await invokeListConflicts(),
+						Uri.file(repoPath),
+						"conflict.txt",
+					);
+					assert.equal(conflict.kind, "bothAdded");
+					const detail = expectTextResult(
+						await invokeGetConflict({
+							repositoryRoot: Uri.file(repoPath).toString(),
+							path: "conflict.txt",
+							conflicts: [0, 0],
+						}),
+					);
+					assert.equal(detail.type, "bothAdded");
+					const block = detail.conflicts[0];
+					assert.ok(block, "expected one conflict block");
+					const parts = splitBlock(block.text);
+					assert.deepEqual(parts.local, ["local version"]);
+					assert.deepEqual(parts.remote, ["remote version"]);
+					assert.ok(!block.text.includes("|||||||"));
+				});
+			},
+		));
+});
+
+describe("Agent Tools: Diverged disk state", () => {
+	it("shows the auto-merge view only when the disk context differs", () =>
+		withConflictRepo(
+			"weld-agent-diverged-",
 			makeContextConflict,
 			async (repoPath) => {
+				const uri = Uri.file(`${repoPath}/tracked.txt`);
+				// Edits "after two" — well outside the conflict's own hunk —
+				// so it lands in the disk context, not swallowed into the
+				// mapped conflict region itself.
+				await workspace.fs.writeFile(
+					uri,
+					new TextEncoder().encode(
+						[
+							"before one",
+							"before two",
+							"<<<<<<< HEAD",
+							"local",
+							"=======",
+							"remote",
+							">>>>>>> other",
+							"after one",
+							"EDITED",
+							"",
+						].join("\n"),
+					),
+				);
 				await withListToolEnabled(async () => {
-					const result = await invokeGetConflict({
-						repositoryRoot: Uri.file(repoPath).toString(),
-						path: "tracked.txt",
-						conflictIndex: 0,
-						contextLines: 5,
-						maxStageLines: 1,
-					});
-					assert.equal(result.type, "text");
-					if (
-						result.type !== "text" ||
-						result.conflictIndex === null
-					) {
-						throw new Error(
-							"expected context-budget text conflict",
-						);
-					}
-					assert.equal(result.localDiff, undefined);
-					assert.equal(result.remoteDiff, undefined);
-					assert.equal(result.localOmitted?.rawGitAccess.stage, 2);
-					assert.equal(result.remoteOmitted?.rawGitAccess.stage, 3);
+					const result = expectTextResult(
+						await invokeGetConflict({
+							repositoryRoot: Uri.file(repoPath).toString(),
+							path: "tracked.txt",
+							conflicts: [0, 0],
+							contextLines: 2,
+						}),
+					);
+					const block = result.conflicts[0];
+					assert.ok(block, "expected one conflict block");
+					assert.ok(
+						block.text.includes("EDITED"),
+						`DIAGNOSTIC range=${JSON.stringify(block.range)} note=${block.note} text=${JSON.stringify(block.text)}`,
+					);
+					assert.ok(
+						block.autoMergeView,
+						"expected an auto-merge view",
+					);
+					assert.ok(block.autoMergeView.includes("after two"));
+					assert.ok(!block.autoMergeView.includes("EDITED"));
+					assert.ok(
+						!block.autoMergeView.includes("replaces lines"),
+						"the auto-merge view has no file location",
+					);
 				});
 			},
 		));
 });
 
-describe("Agent Tools: Auto-merge suggestions", () => {
-	it("returns a file-level summary without fabricating a Weld region", () =>
-		withConflictRepo(
-			"weld-agent-summary-",
-			makeWeldResolvableConflict,
-			async (repoPath) => {
-				await withListToolEnabled(async () => {
-					const result = await invokeGetConflict({
-						repositoryRoot: Uri.file(repoPath).toString(),
-						path: "tracked.txt",
+describe("Agent Tools: Marker styles", () => {
+	for (const testCase of [
+		{ style: "merge", markerLength: 4 },
+		{ style: "diff3", markerLength: 9 },
+		{ style: "zdiff3", markerLength: 10 },
+	] as const) {
+		it(`maps Git's ${testCase.style} markers at length ${testCase.markerLength}`, () =>
+			withConflictRepo(
+				`weld-agent-${testCase.style}-markers-`,
+				makeContextConflictWithMarkerStyle(
+					testCase.style,
+					testCase.markerLength,
+				),
+				async (repoPath) => {
+					await withListToolEnabled(async () => {
+						const result = expectTextResult(
+							await invokeGetConflict({
+								repositoryRoot: Uri.file(repoPath).toString(),
+								path: "tracked.txt",
+								conflicts: [0, 0],
+							}),
+						);
+						const block = result.conflicts[0];
+						assert.ok(block, "expected one conflict block");
+						assert.ok(block.range, "expected a mapped disk range");
+						assert.ok(block.text.includes("replaces lines"));
 					});
-					assert.equal(result.type, "text");
-					assert.equal(result.conflictIndex, null);
-					assert.equal(result.conflictCount, 0);
-					assert.ok(!("changes" in result));
-					assert.ok(!("base" in result));
-					assert.ok((result.autoMergeSuggestions ?? []).length > 0);
-				});
-			},
-		));
+				},
+			));
+	}
+});
 
-	it("reports a Git conflict that Weld can resolve", () =>
+describe("Agent Tools: Giant conflict summaries", () => {
+	it("elides section interiors with clear line numbers", () =>
 		withConflictRepo(
-			"weld-agent-suggestion-",
-			makeWeldResolvableConflict,
+			"weld-agent-large-",
+			makeLargeConflict,
 			async (repoPath) => {
 				await withListToolEnabled(async () => {
-					const result = await invokeGetConflict({
-						repositoryRoot: Uri.file(repoPath).toString(),
-						path: "tracked.txt",
-					});
-					assert.equal(result.type, "text");
-					if (
-						result.type !== "text" ||
-						result.conflictIndex !== null
-					) {
-						throw new Error("expected text conflict summary");
-					}
-					assert.ok((result.autoMergeSuggestions ?? []).length > 0);
-					assert.equal(
-						result.autoMergeSuggestionsTruncated,
-						undefined,
+					const result = expectTextResult(
+						await invokeGetConflict({
+							repositoryRoot: Uri.file(repoPath).toString(),
+							path: "tracked.txt",
+							conflicts: [0, 0],
+							maxSectionLines: 4,
+						}),
 					);
-				});
-			},
-		));
-
-	it("reports the exact ranges for two separated Weld-resolvable regions", () =>
-		withConflictRepo(
-			"weld-agent-two-suggestions-",
-			makeTwoWeldResolvableConflicts,
-			async (repoPath) => {
-				await withListToolEnabled(async () => {
-					const result = await invokeGetConflict({
-						repositoryRoot: Uri.file(repoPath).toString(),
-						path: "tracked.txt",
-					});
-					assert.equal(result.type, "text");
-					if (
-						result.type !== "text" ||
-						result.conflictIndex !== null
-					) {
-						throw new Error("expected text conflict summary");
-					}
-					assert.equal(result.autoMergeSuggestions?.length, 4);
-					for (const suggestion of result.autoMergeSuggestions ??
-						[]) {
-						assert.equal(suggestion.range.length, 2);
-						assert.equal(typeof suggestion.text, "string");
-					}
-				});
-			},
-		));
-
-	it("marks omitted auto-merge suggestions as truncated", () =>
-		withConflictRepo(
-			"weld-agent-suggestion-bound-",
-			makeWeldResolvableConflict,
-			async (repoPath) => {
-				await withListToolEnabled(async () => {
-					const result = await invokeGetConflict({
-						repositoryRoot: Uri.file(repoPath).toString(),
-						path: "tracked.txt",
-						maxResultItems: 0,
-					});
-					assert.equal(result.type, "text");
-					if (
-						result.type !== "text" ||
-						result.conflictIndex !== null
-					) {
-						throw new Error(
-							"expected bounded text conflict summary",
+					const block = result.conflicts[0];
+					assert.ok(block, "expected one conflict block");
+					for (const side of ["local", "base", "remote"] as const) {
+						assert.ok(
+							block.text.includes(
+								`... 36 lines elided (${side} 3-38) ...`,
+							),
+							`expected ${side} elision in:\n${block.text}`,
 						);
 					}
-					assert.equal(result.autoMergeSuggestions, undefined);
-					assert.equal(result.autoMergeSuggestionsTruncated, true);
+					assert.ok(block.text.includes("local 01"));
+					assert.ok(block.text.includes("local 40"));
+					assert.ok(!block.text.includes("local 03"));
 				});
 			},
 		));
 });
 
 describe("Agent Tools: Current conflict details", () => {
-	it("reports disk edits that remove or replace every conflict line", () =>
+	it("maps disk edits that remove or replace every conflict line", () =>
 		withConflictRepo(
 			"weld-agent-disk-edits-",
 			makeContextConflict,
@@ -654,44 +785,8 @@ describe("Agent Tools: Current conflict details", () => {
 				});
 			},
 		));
-});
 
-describe("Agent Tools: Conflict marker details", () => {
-	for (const testCase of [
-		{ style: "merge", markerLength: 4, hasBaseMarker: false },
-		{ style: "diff3", markerLength: 9, hasBaseMarker: true },
-		{ style: "zdiff3", markerLength: 10, hasBaseMarker: true },
-	] as const) {
-		it(`recognizes Git's ${testCase.style} markers at length ${testCase.markerLength}`, () =>
-			withConflictRepo(
-				`weld-agent-${testCase.style}-markers-`,
-				makeContextConflictWithMarkerStyle(
-					testCase.style,
-					testCase.markerLength,
-				),
-				async (repoPath) => {
-					await withListToolEnabled(async () => {
-						const result = await invokeGetConflict({
-							repositoryRoot: Uri.file(repoPath).toString(),
-							path: "tracked.txt",
-							conflictIndex: 0,
-						});
-						assert.equal(result.type, "text");
-						if (result.type !== "text") {
-							throw new Error(
-								"expected marker-style text conflict",
-							);
-						}
-						assert.equal(result.current.target.state, "mapped");
-						assert.equal(result.current.residualMarkers, undefined);
-					});
-				},
-			));
-	}
-});
-
-describe("Agent Tools: Disk marker details", () => {
-	it("reads marker ranges from disk rather than a dirty in-memory document", () =>
+	it("reads disk rather than a dirty in-memory document", () =>
 		withConflictRepo(
 			"weld-agent-get-live-",
 			makeContextConflict,
@@ -713,28 +808,36 @@ describe("Agent Tools: Disk marker details", () => {
 					await workspace.fs.writeFile(
 						uri,
 						new TextEncoder().encode(
-							`${original}\n<<<<<<< disk marker`,
+							`${original}\n<<<<<<< stray marker`,
 						),
 					);
 					await withListToolEnabled(async () => {
-						const result = await invokeGetConflict({
-							repositoryRoot: Uri.file(repoPath).toString(),
-							path: "tracked.txt",
-							conflictIndex: 0,
-							contextLines: Number.MAX_SAFE_INTEGER,
-						});
-						assert.equal(result.type, "text");
-						if (result.type !== "text") {
-							throw new Error(
-								"expected disk-backed conflict detail",
-							);
-						}
-						assert.equal(result.current.target.state, "mapped");
+						const result = expectTextResult(
+							await invokeGetConflict({
+								repositoryRoot: Uri.file(repoPath).toString(),
+								path: "tracked.txt",
+								conflicts: [0, 0],
+							}),
+						);
+						const block = result.conflicts[0];
+						assert.ok(block?.range, "expected a mapped disk range");
+						const listed = findConflict(
+							await invokeListConflicts(),
+							Uri.file(repoPath),
+							"tracked.txt",
+						);
+						const lastLine =
+							`${original}\n<<<<<<< stray marker`.split(
+								"\n",
+							).length;
 						assert.equal(
-							(result.current.residualMarkers ?? []).some(
-								(marker) => marker.kind === "gitMarker",
+							listed.strayMarkers?.some(
+								(marker) =>
+									marker.kind === "gitMarker" &&
+									marker.range[0] === lastLine,
 							),
 							true,
+							"expected the appended stray marker to be reported",
 						);
 					});
 				} finally {
@@ -758,36 +861,107 @@ describe("Agent Tools: Disk marker details", () => {
 		));
 });
 
-describe("Agent Tools: Bounded conflict results", () => {
-	it("caps large stage regions and result collections with raw Git access", () =>
+describe("Agent Tools: Multi-conflict selection", () => {
+	it("does not leak an adjacent change both sides already resolved", () =>
 		withConflictRepo(
-			"weld-agent-large-",
-			makeLargeConflict,
+			"weld-agent-adjacent-resolved-",
+			makeAdjacentResolvedChangeConflict,
 			async (repoPath) => {
 				await withListToolEnabled(async () => {
-					const result = await invokeGetConflict({
-						repositoryRoot: Uri.file(repoPath).toString(),
-						path: "tracked.txt",
-						conflictIndex: 0,
-						maxStageLines: 3,
-						maxResultItems: 0,
-					});
-					assert.equal(result.type, "text");
-					if (
-						result.type !== "text" ||
-						result.conflictIndex === null
-					) {
-						throw new Error("expected bounded text conflict");
-					}
-					assert.equal(result.localDiff, undefined);
-					assert.equal(result.remoteDiff, undefined);
-					assert.match(
-						result.localOmitted?.rawGitAccess.command ?? "",
-						LOCAL_STAGE_ACCESS_REGEX,
+					const result = expectTextResult(
+						await invokeGetConflict({
+							repositoryRoot: Uri.file(repoPath).toString(),
+							path: "tracked.txt",
+						}),
 					);
-					assert.match(
-						result.remoteOmitted?.rawGitAccess.command ?? "",
-						REMOTE_STAGE_ACCESS_REGEX,
+					for (const block of result.conflicts) {
+						const parts = splitBlock(block.text);
+						// RESOLVED was deleted by both sides. It may only
+						// appear inside the BASE section when Weld's region
+						// legitimately spans it — never as context and never
+						// as a local/remote alternative.
+						for (const section of [
+							parts.before,
+							parts.local,
+							parts.remote,
+							parts.after,
+						]) {
+							assert.ok(
+								!section.some((line) =>
+									line.includes("RESOLVED"),
+								),
+								`unexpected RESOLVED outside base in:\n${block.text}`,
+							);
+						}
+					}
+				});
+			},
+		));
+
+	it("returns every conflict when the range is omitted", () =>
+		withConflictRepo(
+			"weld-agent-two-hunk-",
+			makeTwoHunkConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					const all = expectTextResult(
+						await invokeGetConflict({
+							repositoryRoot: Uri.file(repoPath).toString(),
+							path: "tracked.txt",
+						}),
+					);
+					assert.equal(all.conflictCount, 2);
+					assert.deepEqual(
+						all.conflicts.map((block) => block.index),
+						[0, 1],
+					);
+					const [first, second] = all.conflicts;
+					assert.ok(first && second);
+					const firstParts = splitBlock(first.text);
+					assert.deepEqual(firstParts.local, ["LOCAL-B"]);
+					assert.deepEqual(firstParts.base, ["B"]);
+					assert.deepEqual(firstParts.remote, ["REMOTE-B"]);
+					const secondParts = splitBlock(second.text);
+					assert.deepEqual(secondParts.local, ["LOCAL-C"]);
+					// The neighboring conflict's disk markers are not context:
+					// context stops at marker lines.
+					assert.ok(
+						!first.text.includes("LOCAL-C"),
+						`unexpected second-conflict content in:\n${first.text}`,
+					);
+					assert.notDeepEqual(first.range, second.range);
+				});
+			},
+		));
+
+	it("selects a single conflict by range and rejects out-of-range", () =>
+		withConflictRepo(
+			"weld-agent-two-hunk-range-",
+			makeTwoHunkConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					const repositoryRoot = Uri.file(repoPath).toString();
+					const single = expectTextResult(
+						await invokeGetConflict({
+							repositoryRoot,
+							path: "tracked.txt",
+							conflicts: [1, 1],
+						}),
+					);
+					assert.equal(single.conflicts.length, 1);
+					assert.equal(single.conflicts[0]?.index, 1);
+					assert.deepEqual(
+						splitBlock(single.conflicts[0]?.text ?? "").local,
+						["LOCAL-C"],
+					);
+
+					await assert.rejects(
+						invokeGetConflict({
+							repositoryRoot,
+							path: "tracked.txt",
+							conflicts: [0, 2],
+						}),
+						OUT_OF_RANGE_ERROR_REGEX,
 					);
 				});
 			},
@@ -846,23 +1020,18 @@ function normalizedWireResponse(raw: string): string {
 }
 
 const USEFUL_RESPONSE_FIELDS = new Set([
-	"localDiff",
-	"remoteDiff",
-	"local",
-	"remote",
 	"text",
+	"autoMergeView",
+	"note",
 	"range",
-	"state",
-	"reason",
 	"message",
-	"stage",
-	"command",
+	"hash",
+	"ref",
+	"title",
+	"kind",
 	"path",
 	"type",
-	"kind",
-	"conflictIndex",
 	"conflictCount",
-	"state",
 ]);
 
 function usefulResponseBytes(value: unknown, fieldName: string): number {
@@ -922,9 +1091,8 @@ describe("Agent Tools: Response size budgets", () => {
 					const raw = await invokeTextTool("weld_get_conflict", {
 						repositoryRoot: Uri.file(repoPath).toString(),
 						path: "tracked.txt",
-						conflictIndex: 0,
 					});
-					assertResponseBudget(raw, 600, 15);
+					assertResponseBudget(raw, 450, 40);
 				});
 			},
 		));
@@ -938,9 +1106,8 @@ describe("Agent Tools: Response size budgets", () => {
 					const raw = await invokeTextTool("weld_get_conflict", {
 						repositoryRoot: Uri.file(repoPath).toString(),
 						path: "tracked.txt",
-						conflictIndex: 0,
 					});
-					assertResponseBudget(raw, 775, 20);
+					assertResponseBudget(raw, 550, 45);
 				});
 			},
 		));
@@ -954,9 +1121,9 @@ describe("Agent Tools: Response size budgets", () => {
 					const raw = await invokeTextTool("weld_get_conflict", {
 						repositoryRoot: Uri.file(repoPath).toString(),
 						path: "tracked.txt",
-						conflictIndex: 0,
+						conflicts: [0, 0],
 					});
-					assertResponseBudget(raw, 700, 15);
+					assertResponseBudget(raw, 450, 40);
 				});
 			},
 		));
@@ -970,14 +1137,13 @@ describe("Agent Tools: Response size budgets", () => {
 					const raw = await invokeTextTool("weld_get_conflict", {
 						repositoryRoot: Uri.file(repoPath).toString(),
 						path: "conflict.txt",
-						conflictIndex: 0,
 					});
-					assertResponseBudget(raw, 600, 10);
+					assertResponseBudget(raw, 450, 40);
 				});
 			},
 		));
 
-	it("keeps an omitted large conflict within the response budget", () =>
+	it("keeps an elided giant conflict within the response budget", () =>
 		withConflictRepo(
 			"weld-agent-size-large-",
 			makeLargeConflict,
@@ -986,9 +1152,9 @@ describe("Agent Tools: Response size budgets", () => {
 					const raw = await invokeTextTool("weld_get_conflict", {
 						repositoryRoot: Uri.file(repoPath).toString(),
 						path: "tracked.txt",
-						conflictIndex: 0,
+						maxSectionLines: 4,
 					});
-					assertResponseBudget(raw, 700, 15);
+					assertResponseBudget(raw, 800, 55);
 				});
 			},
 		));
@@ -997,26 +1163,19 @@ describe("Agent Tools: Response size budgets", () => {
 		withConflictRepo("weld-agent-size-list-", makeConflict, async () => {
 			await withListToolEnabled(async () => {
 				const raw = await invokeTextTool("weld_list_conflicts", {});
-				assert.ok(
-					new TextEncoder().encode(normalizedWireResponse(raw))
-						.length <= 300,
-				);
+				assertResponseBudget(raw, 1200, 45);
 			});
 		}));
 });
 
-describe("Agent Tools: Stale conflict requests", () => {
-	it("fails fast for invalid conflict-detail limits and identifiers", () =>
+describe("Agent Tools: Invalid and stale requests", () => {
+	it("fails fast for invalid conflict-detail inputs", () =>
 		withConflictRepo(
 			"weld-agent-invalid-input-",
 			makeConflict,
 			async (repoPath) => {
 				const repositoryRoot = Uri.file(repoPath).toString();
-				const valid = {
-					repositoryRoot,
-					path: "tracked.txt",
-					conflictIndex: 0,
-				};
+				const valid = { repositoryRoot, path: "tracked.txt" };
 				await withListToolEnabled(async () => {
 					const invalidInputs = [
 						{
@@ -1036,12 +1195,16 @@ describe("Agent Tools: Stale conflict requests", () => {
 							error: INVALID_TOOL_PATH_ERROR_REGEX,
 						},
 						{
-							input: { ...valid, conflictIndex: -1 },
-							error: INVALID_CONFLICT_INDEX_ERROR_REGEX,
+							input: { ...valid, conflicts: [-1, 0] },
+							error: INVALID_CONFLICT_RANGE_ERROR_REGEX,
 						},
 						{
-							input: { ...valid, conflictIndex: 0.5 },
-							error: INVALID_CONFLICT_INDEX_ERROR_REGEX,
+							input: { ...valid, conflicts: [0.5, 1] },
+							error: INVALID_CONFLICT_RANGE_ERROR_REGEX,
+						},
+						{
+							input: { ...valid, conflicts: [1, 0] },
+							error: INVALID_CONFLICT_RANGE_ERROR_REGEX,
 						},
 						{
 							input: { ...valid, contextLines: -1 },
@@ -1052,20 +1215,12 @@ describe("Agent Tools: Stale conflict requests", () => {
 							error: INVALID_CONTEXT_LINES_ERROR_REGEX,
 						},
 						{
-							input: { ...valid, maxStageLines: -1 },
-							error: INVALID_MAX_STAGE_LINES_ERROR_REGEX,
+							input: { ...valid, maxSectionLines: -1 },
+							error: INVALID_MAX_SECTION_LINES_ERROR_REGEX,
 						},
 						{
-							input: { ...valid, maxStageLines: 0.5 },
-							error: INVALID_MAX_STAGE_LINES_ERROR_REGEX,
-						},
-						{
-							input: { ...valid, maxResultItems: -1 },
-							error: INVALID_MAX_RESULT_ITEMS_ERROR_REGEX,
-						},
-						{
-							input: { ...valid, maxResultItems: 0.5 },
-							error: INVALID_MAX_RESULT_ITEMS_ERROR_REGEX,
+							input: { ...valid, maxSectionLines: 0.5 },
+							error: INVALID_MAX_SECTION_LINES_ERROR_REGEX,
 						},
 					];
 					await Promise.all(
@@ -1083,7 +1238,7 @@ describe("Agent Tools: Stale conflict requests", () => {
 			},
 		));
 
-	it("rejects stale repository, path, and conflict index inputs", () =>
+	it("rejects stale repository, path, and conflict range inputs", () =>
 		withConflictRepo(
 			"weld-agent-get-errors-",
 			makeConflict,
@@ -1094,7 +1249,6 @@ describe("Agent Tools: Stale conflict requests", () => {
 						invokeGetConflict({
 							repositoryRoot: "file:///not-open",
 							path: "tracked.txt",
-							conflictIndex: 0,
 						}),
 						NO_OPEN_REPOSITORY_ERROR_REGEX,
 					);
@@ -1102,7 +1256,6 @@ describe("Agent Tools: Stale conflict requests", () => {
 						invokeGetConflict({
 							repositoryRoot,
 							path: "missing.txt",
-							conflictIndex: 0,
 						}),
 						ACTIVE_CONFLICT_ERROR_REGEX,
 					);
@@ -1110,7 +1263,6 @@ describe("Agent Tools: Stale conflict requests", () => {
 						invokeGetConflict({
 							repositoryRoot,
 							path: "../outside.txt",
-							conflictIndex: 0,
 						}),
 						INVALID_REPOSITORY_PATH_REGEX,
 					);
@@ -1118,9 +1270,26 @@ describe("Agent Tools: Stale conflict requests", () => {
 						invokeGetConflict({
 							repositoryRoot,
 							path: "tracked.txt",
-							conflictIndex: 1,
+							conflicts: [1, 1],
 						}),
 						OUT_OF_RANGE_ERROR_REGEX,
+					);
+				});
+			},
+		));
+
+	it("rejects a non-canonical repository-relative path", () =>
+		withConflictRepo(
+			"weld-agent-canonical-",
+			makeConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					await assert.rejects(
+						invokeGetConflict({
+							repositoryRoot: Uri.file(repoPath).toString(),
+							path: "tracked.txt/../tracked.txt",
+						}),
+						CANONICAL_PATH_ERROR_REGEX,
 					);
 				});
 			},
@@ -1161,7 +1330,6 @@ describe("Agent Tools: Whole-file conflict detection", () => {
 						const detail = await invokeGetConflict({
 							repositoryRoot: Uri.file(repoPath).toString(),
 							path: "tracked.txt",
-							conflictIndex: 0,
 						});
 						assert.equal(detail.type, testCase.kind);
 					});
@@ -1187,7 +1355,6 @@ describe("Agent Tools: Special conflict detection", () => {
 					const detail = await invokeGetConflict({
 						repositoryRoot: Uri.file(repoPath).toString(),
 						path: "conflict.bin",
-						conflictIndex: 0,
 					});
 					assert.equal(detail.type, "binary");
 				});
@@ -1214,7 +1381,6 @@ describe("Agent Tools: Special conflict detection", () => {
 				const detail = await invokeGetConflict({
 					repositoryRoot: Uri.file(fixture.repoPath).toString(),
 					path: "sub",
-					conflictIndex: 0,
 				});
 				assert.equal(detail.type, "submodule");
 			});
@@ -1224,122 +1390,6 @@ describe("Agent Tools: Special conflict detection", () => {
 			await closePromise;
 		}
 	});
-});
-
-describe("Agent Tools: Multi-hunk conflict indexing", () => {
-	it("matches the GUI diff when an adjacent change was already resolved", () =>
-		withConflictRepo(
-			"weld-agent-adjacent-resolved-",
-			makeAdjacentResolvedChangeConflict,
-			async (repoPath) => {
-				await withListToolEnabled(async () => {
-					const result = await invokeGetConflict({
-						repositoryRoot: Uri.file(repoPath).toString(),
-						path: "tracked.txt",
-						conflictIndex: 0,
-					});
-					assert.equal(result.type, "text");
-					if (
-						result.type !== "text" ||
-						result.conflictIndex === null
-					) {
-						throw new Error("expected text conflict");
-					}
-					assert.match(
-						result.localDiff ?? "",
-						RESOLVED_CONTENT_REGEX,
-					);
-					assert.match(
-						result.remoteDiff ?? "",
-						RESOLVED_CONTENT_REGEX,
-					);
-				});
-			},
-		));
-
-	it("returns stage content for each independent conflict index", () =>
-		withConflictRepo(
-			"weld-agent-two-hunk-",
-			makeTwoHunkConflict,
-			async (repoPath) => {
-				await withListToolEnabled(async () => {
-					const repositoryRoot = Uri.file(repoPath).toString();
-					const [result0, result1] = await Promise.all([
-						invokeGetConflict({
-							repositoryRoot,
-							path: "tracked.txt",
-							conflictIndex: 0,
-						}),
-						invokeGetConflict({
-							repositoryRoot,
-							path: "tracked.txt",
-							conflictIndex: 1,
-						}),
-					]);
-					assert.equal(result0.type, "text");
-					assert.equal(result1.type, "text");
-					if (
-						result0.type !== "text" ||
-						result0.conflictIndex === null ||
-						result1.type !== "text" ||
-						result1.conflictIndex === null
-					) {
-						throw new Error("expected text conflicts");
-					}
-					assert.match(
-						result0.localDiff ?? "",
-						FIRST_HUNK_LOCAL_DIFF_REGEX,
-					);
-					assert.match(
-						result1.localDiff ?? "",
-						SECOND_HUNK_LOCAL_DIFF_REGEX,
-					);
-					assert.doesNotMatch(
-						result0.localDiff ?? "",
-						SECOND_HUNK_CONTENT_REGEX,
-						"the first conflict must not include the second conflict's change",
-					);
-					// current target and possible hunks must scope to the requested
-					// conflict, not dump every conflict in the file:
-					// asking about index 0 should not also return index 1's
-					// hunk and markers, and vice versa.
-					assert.equal(
-						result0.current.possibleConflictHunks?.length,
-						1,
-					);
-					assert.equal(
-						result1.current.possibleConflictHunks?.length,
-						1,
-					);
-					assert.notDeepEqual(
-						result0.current.possibleConflictHunks[0]?.range,
-						result1.current.possibleConflictHunks[0]?.range,
-					);
-					assert.ok(result0.current.residualMarkers?.length);
-					assert.ok(result1.current.residualMarkers?.length);
-				});
-			},
-		));
-});
-
-describe("Agent Tools: Canonical path guard", () => {
-	it("rejects a non-canonical repository-relative path", () =>
-		withConflictRepo(
-			"weld-agent-canonical-",
-			makeConflict,
-			async (repoPath) => {
-				await withListToolEnabled(async () => {
-					await assert.rejects(
-						invokeGetConflict({
-							repositoryRoot: Uri.file(repoPath).toString(),
-							path: "tracked.txt/../tracked.txt",
-							conflictIndex: 0,
-						}),
-						CANONICAL_PATH_ERROR_REGEX,
-					);
-				});
-			},
-		));
 });
 
 describe("Agent Tools: Repository aggregation", () => {

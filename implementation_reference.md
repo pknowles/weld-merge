@@ -33,31 +33,31 @@ Entry point and Git integration.
   tools once Weld has supplied the conflict data.
 - **`agentConflicts.ts`**: Shared conflict lookup and classification for
   `weld_list_conflicts` and `weld_get_conflict`. The list tool enumerates every
-  open workspace Git repository, returns canonical Weld hunk counts, and adds
-  concise local/incoming commit metadata. The get tool reads the current file
-  from disk, returns bounded base→local and base→remote unified diffs rendered
-  from the GUI's shared Base-comparison opcodes (never independently re-diffed
-  windows) with
-  explicit raw-Git omission records, plus a mapped disk target and nearby
-  disk context for direct edits. The target is deliberately unavailable when
-  the stages no longer map uniquely to the live file. `current.possibleConflictHunks`
-  and `current.residualMarkers` are scoped to the requested `conflictIndex`;
-  residual Git markers and Weld `(??)` sentinels overlapping the active target
-  are excluded, so the response does not repeat its own active marker block.
-  When a Git conflict has no initial Weld
-  conflict, omitting `conflictIndex` returns a whole-file summary
-  (`conflictIndex: null`, `conflictCount: 0`) with only current-file ranges,
-  markers, and auto-merge suggestions; it never fabricates a stage change or a
-  line-zero conflict region. Conflicts where local and remote each
-  independently created the file at this path (no common ancestor) report
-  `type: "bothAdded"` instead of `"text"` so a caller can distinguish "two
-  unrelated new files collided" from an edit conflict without inferring it
-  from `base.present`; the response otherwise has the same shape as a text
-  conflict. Non-text conflicts retain typed binary/delete/submodule results.
-  Agent tools run in-process in the workspace extension host, are
-  prompt-referenceable through `package.json`, and intentionally do not
-  expose MCP/stdio integration. See `agent-tools-schema.md` for the formal
-  wire-schema spec.
+  open workspace Git repository and returns each conflicted file's kind, Weld
+  conflict count, base/local/remote commit identifiers (hash, exact branch/tag
+  ref when one names the commit, title), and `strayMarkers`: git marker syntax
+  and Weld `(??)` sentinel lines found on disk, ranges only, as the post-merge
+  verification signal. When every conflict in the workspace fits the inline
+  budget, the rendered blocks are attached to the listing directly. The get
+  tool returns a selected `[first, last]` range (or all) of a file's conflicts
+  as generated diff3-style blocks: local/base/remote alternatives from the Git
+  stages via the shared `conflictSnapshot.ts` comparison models (never an
+  independent re-diff), wrapped in context lines read from the file on disk,
+  with the disk replace-range stated on the opening marker label. Context
+  stops at marker-like or sentinel lines; `(??)` never appears in a response.
+  Oversized sections are elided in the middle with explicit line numbers. An
+  opt-in `includeBaseDiffs` request flag adds `localDiff`/`remoteDiff`: Base
+  vs. Local and Base vs. Remote unified diffs scoped to the same region, via
+  the shared two-way comparison model `buildBaseDiffPayload` also uses.
+  When the disk context differs from the auto-merge result, `autoMergeView`
+  carries the same alternatives with the expected auto-merged surroundings;
+  when a conflict no longer maps to the disk file, a `note` replaces `range`
+  rather than fabricating a location. `bothAdded` blocks omit the BASE
+  section (no common ancestor). Non-text conflicts retain typed
+  binary/delete/submodule results. Agent tools run in-process in the
+  workspace extension host, are prompt-referenceable through `package.json`,
+  and intentionally do not expose MCP/stdio integration. See
+  `agent-tools-schema.md` for the formal wire-schema spec.
 
 ## Webview UI (React Frontend)
 Located in `src/webview/ui/`.

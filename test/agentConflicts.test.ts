@@ -7,22 +7,22 @@ import {
 } from "../src/agentConflicts.ts";
 
 const NONNEGATIVE_SAFE_INTEGER_REGEX = /nonnegative safe integer/u;
+const CONFLICT_RANGE_ERROR_REGEX = /first, last/u;
 
 describe("normalizeGetConflictInput", () => {
-	it("defaults omitted context to five lines", () => {
+	it("defaults omitted options and selects all conflicts", () => {
 		expect(
 			normalizeGetConflictInput({
 				repositoryRoot: "file:///repo",
 				path: "tracked.txt",
-				conflictIndex: 0,
 			}),
 		).toEqual({
 			repositoryRoot: "file:///repo",
 			path: "tracked.txt",
-			conflictIndex: 0,
+			conflicts: null,
 			contextLines: 5,
-			maxStageLines: 80,
-			maxResultItems: 80,
+			maxSectionLines: 40,
+			includeBaseDiffs: false,
 		});
 	});
 
@@ -31,43 +31,66 @@ describe("normalizeGetConflictInput", () => {
 			normalizeGetConflictInput({
 				repositoryRoot: "file:///repo",
 				path: "tracked.txt",
-				conflictIndex: 2,
+				conflicts: [2, 2],
 				contextLines: Number.MAX_SAFE_INTEGER,
 			}).contextLines,
 		).toBe(Number.MAX_SAFE_INTEGER);
 	});
 
-	it("accepts a tool-runtime null for an omitted conflict index", () => {
+	it("accepts a tool-runtime null for an omitted conflict range", () => {
 		expect(
 			normalizeGetConflictInput({
 				repositoryRoot: "file:///repo",
 				path: "tracked.txt",
-				conflictIndex: null,
+				conflicts: null,
 			}),
-		).toMatchObject({ conflictIndex: null });
+		).toMatchObject({ conflicts: null });
+	});
+
+	it("only enables includeBaseDiffs when explicitly true", () => {
+		expect(
+			normalizeGetConflictInput({
+				repositoryRoot: "file:///repo",
+				path: "tracked.txt",
+				includeBaseDiffs: true,
+			}),
+		).toMatchObject({ includeBaseDiffs: true });
+		expect(
+			normalizeGetConflictInput({
+				repositoryRoot: "file:///repo",
+				path: "tracked.txt",
+				includeBaseDiffs: false,
+			}),
+		).toMatchObject({ includeBaseDiffs: false });
 	});
 
 	for (const testCase of [
-		{ name: "negative conflict index", conflictIndex: -1, contextLines: 0 },
-		{
-			name: "fractional conflict index",
-			conflictIndex: 0.5,
-			contextLines: 0,
-		},
-		{ name: "negative context", conflictIndex: 0, contextLines: -1 },
-		{
-			name: "unsafe context",
-			conflictIndex: 0,
-			contextLines: Number.MAX_SAFE_INTEGER + 1,
-		},
+		{ name: "a negative conflict range", conflicts: [-1, 0] },
+		{ name: "a fractional conflict range", conflicts: [0.5, 1] },
+		{ name: "a reversed conflict range", conflicts: [2, 1] },
+	] as const) {
+		it(`rejects ${testCase.name}`, () => {
+			expect(() =>
+				normalizeGetConflictInput({
+					repositoryRoot: "file:///repo",
+					path: "tracked.txt",
+					conflicts: testCase.conflicts as [number, number],
+				}),
+			).toThrow(CONFLICT_RANGE_ERROR_REGEX);
+		});
+	}
+
+	for (const testCase of [
+		{ name: "negative context", contextLines: -1 },
+		{ name: "unsafe context", contextLines: Number.MAX_SAFE_INTEGER + 1 },
+		{ name: "negative section limit", maxSectionLines: -1 },
 	]) {
 		it(`rejects ${testCase.name}`, () => {
 			expect(() =>
 				normalizeGetConflictInput({
 					repositoryRoot: "file:///repo",
 					path: "tracked.txt",
-					conflictIndex: testCase.conflictIndex,
-					contextLines: testCase.contextLines,
+					...testCase,
 				}),
 			).toThrow(NONNEGATIVE_SAFE_INTEGER_REGEX);
 		});
@@ -84,14 +107,7 @@ describe("createNonTextConflictResult", () => {
 	] as const) {
 		it(`serializes a ${testCase.type} conflict`, () => {
 			const result = createNonTextConflictResult(
-				{
-					repositoryRoot: "file:///repo",
-					path: "tracked.txt",
-					conflictIndex: 0,
-					contextLines: 5,
-					maxStageLines: 80,
-					maxResultItems: 80,
-				},
+				{ repositoryRoot: "file:///repo", path: "tracked.txt" },
 				testCase.type,
 			);
 
@@ -99,7 +115,6 @@ describe("createNonTextConflictResult", () => {
 				type: testCase.type,
 				repositoryRoot: "file:///repo",
 				path: "tracked.txt",
-				conflictIndex: 0,
 				conflictCount: 1,
 			});
 			expect(result.message).toContain(testCase.message);
