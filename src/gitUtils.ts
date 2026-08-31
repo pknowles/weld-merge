@@ -289,6 +289,7 @@ export {
 	describeConflictStatusEvidence,
 	execGit,
 	execGitWithInput,
+	getErrorMessage,
 	getGitDirUri,
 	getUnresolvedReasons,
 	parseGitDirPointer,

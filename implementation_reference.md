@@ -150,12 +150,23 @@ Granular performance telemetry is **opt-in only** and has zero production impact
 
 ## Auto-Merge Candidate Classification
 
+- `src/webview/autoMerge.ts`
+  - `performAutoMerge()` runs the 3-way text merge and applies the result
+    via a `WorkspaceEdit`, refusing (`skippedWouldClobber`, unless `force`)
+    to overwrite a file whose live content is neither the pre-merge
+    conflict markers nor already the auto-merge result, and staging the
+    file once `remainingConflicts` is 0. It assumes its caller already
+    confirmed the file is a text-merge candidate — a delete/modify or
+    both-deleted conflict has no readable stage 2 or 3, and fetching it
+    unconditionally throws deep in Git's plumbing instead of failing
+    clearly. It is the single implementation shared by `src/extension.ts`
+    (tree/command auto-merge, `autoMergeAll`, the `weld_apply_automerge*`
+    agent tools) and `MeldCustomEditorProvider._maybeApplyAutoMerge` in
+    `src/webview/meldWebviewPanel.ts` (auto-merge on editor open) — it
+    lives under `src/webview/` rather than in `extension.ts` because the
+    editor path cannot import from `src/extension` (`.dependency-cruiser.js`
+    forbids it).
 - `src/extension.ts`
-  - `performAutoMerge()` runs the 3-way text merge and applies the result;
-    it assumes its caller already confirmed the file is a text-merge
-    candidate — a delete/modify or both-deleted conflict has no readable
-    stage 2 or 3, and fetching it unconditionally throws deep in Git's
-    plumbing instead of failing clearly.
   - `requireTextMergeable()` is the single classification path (via
     `ConflictedItem.conflictStatus()`, the same classifier
     `handleOpenMeldDiff` uses) shared by every auto-merge entry point, so
@@ -170,6 +181,10 @@ Granular performance telemetry is **opt-in only** and has zero production impact
     `weld_list_conflicts` and the tree view are unaffected by this filter —
     they still enumerate every `ConflictKind` (`agentConflicts.ts`); only
     auto-merge's own candidate selection is narrowed.
+  - Every outcome carries `remainingConflicts`; `"autoResolutionsAlreadyApplied"`
+    means the live file already equalled the auto-merge result (nothing
+    written this call) — not the same as "fully resolved", which
+    `remainingConflicts === 0` states explicitly.
 
 ## Delete/Modify Conflict Restore
 

@@ -21,6 +21,7 @@ import {
 	lsFilesStages,
 	makeAllConflictKindsRepo,
 	makeRepo,
+	makeWeldResolvableConflict,
 	openRepoInGitExtension,
 	waitForRepoClose,
 	withConflictRepo,
@@ -321,5 +322,66 @@ describe("autoMergeAll conflict classification (VS Code host)", () => {
 				);
 			},
 			{ expectedConflictCount: 6 },
+		));
+});
+
+// Regression guard: performAutoMerge used to overwrite the live document
+// unconditionally, computed only from Git's index stages — an edit already
+// made to the file (by hand or another tool) since the conflict was
+// created was silently destroyed. It now refuses (single-file — see
+// "rejects a clobbering write" in agent-tools.test.ts) or skips (batch)
+// instead, comparing the live document against both the raw pre-merge
+// conflict markers and the auto-merge result before ever writing.
+describe("auto-merge clobber protection (VS Code host)", () => {
+	it("autoMergeAll skips a clobbered file instead of aborting the batch", () =>
+		withConflictRepo(
+			"weld-automerge-clobber-batch-",
+			makeAllConflictKindsRepo,
+			async (repoPath) => {
+				const filePath = join(repoPath, "tracked.txt");
+				await writeFile(filePath, "someone's actual edit\n");
+
+				await commands.executeCommand("meld-auto-merge.autoMergeAll");
+
+				// Skipped, not aborted: added.txt and binary.bin (also
+				// eligible) were still attempted despite tracked.txt's
+				// clobber risk — a would-clobber file never stops the batch.
+				assert.equal(
+					workingTreeContent(repoPath, "tracked.txt"),
+					"someone's actual edit\n",
+					"the edit must survive the batch run untouched",
+				);
+				const addedText = workingTreeContent(repoPath, "added.txt");
+				assert.ok(addedText, "expected added.txt to be readable");
+				assert.ok(addedText.includes("local version"), addedText);
+			},
+			{ expectedConflictCount: 6 },
+		));
+});
+
+// Regression guard for the same-named feature: once a file's merge leaves
+// zero remaining conflicts, Weld must stage it (git add) — the point of
+// auto-merge is to finish the file, not just edit its text and leave Git
+// still reporting it unmerged.
+describe("auto-merge staging (VS Code host)", () => {
+	it("stages a file once Weld's auto-merge fully resolves it", () =>
+		withConflictRepo(
+			"weld-automerge-stage-",
+			makeWeldResolvableConflict,
+			async (repoPath) => {
+				assert.deepEqual(
+					lsFilesStages(repoPath, "tracked.txt"),
+					new Set([1, 2, 3]),
+					"expected the file to start unmerged",
+				);
+
+				await commands.executeCommand("meld-auto-merge.autoMergeAll");
+
+				assert.deepEqual(
+					lsFilesStages(repoPath, "tracked.txt"),
+					new Set(),
+					"expected Weld to stage the file once it was fully resolved",
+				);
+			},
 		));
 });

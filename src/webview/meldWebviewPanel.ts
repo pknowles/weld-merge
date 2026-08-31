@@ -41,10 +41,8 @@ import {
 	NotInRepositoryError,
 	RepositoryUnavailableError,
 } from "../repoContext.ts";
-import {
-	type ConflictLabels,
-	extractConflictLabels,
-} from "./conflictLabels.ts";
+import { performAutoMerge } from "./autoMerge.ts";
+import { extractConflictLabels } from "./conflictLabels.ts";
 import {
 	buildBaseDiffPayload,
 	buildDiffPayload,
@@ -584,24 +582,6 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		}
 	}
 
-	private async _replaceDocumentContent(
-		document: TextDocument,
-		content: string | undefined,
-	): Promise<void> {
-		const docText = document.getText();
-		if (content === undefined || content === docText) {
-			return;
-		}
-
-		const edit = new WorkspaceEdit();
-		const fullRange = new Range(
-			document.positionAt(0),
-			document.positionAt(docText.length),
-		);
-		edit.replace(document.uri, fullRange, content);
-		await workspace.applyEdit(edit);
-	}
-
 	private async _buildSnapshotFromCurrentDocument(
 		ctx: {
 			document: TextDocument;
@@ -621,46 +601,21 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		return snapshot;
 	}
 
-	private _tryBuildInitialConflictText(
-		ctx: {
-			repoContext: ConflictedItem;
-		},
-		stages: Awaited<ReturnType<typeof fetchConflictStages>>,
-		labels: ConflictLabels,
-	): Promise<string> {
-		return buildInitialConflictedState(
-			ctx.repoContext.rootUri,
-			stages,
-			labels,
-		);
-	}
-
-	private async _buildAutoMergedContent(
-		ctx: {
-			repoContext: ConflictedItem;
-		},
-		stages: Awaited<ReturnType<typeof fetchConflictStages>>,
-	): Promise<string | undefined> {
-		const snapshot = await buildDiffPayload(ctx.repoContext, {
-			stages,
-		});
-		return snapshot.files[1]?.content;
-	}
-
 	/**
-	 * Decides whether to apply auto-merge and, if so, replaces the document content.
+	 * Decides whether to apply auto-merge and, if so, replaces the document
+	 * content — via performAutoMerge, the same write/clobber-check logic
+	 * extension.ts's commands, autoMergeAll, and the weld_apply_automerge*
+	 * agent tools all share, so this editor path can never disagree with
+	 * them about what is safe to overwrite.
 	 *
-	 * Auto-merge detection: We only auto-merge if the file matches what the user's
-	 * current Git config recreates from the conflict stages. An exact match means
-	 * the conflicted text is trivial to reproduce with Git, so it is safe to
-	 * replace with our auto-merged buffer. A mismatch means either the user edited
-	 * the file or their Git config changed; in both cases, preserve the file and
-	 * ask before replacing it.
-	 *
-	 * We still extract labels from the document's conflict markers because Git
-	 * does not persist the human-readable labels elsewhere, and those labels must
-	 * match for the byte-for-byte comparison to be meaningful. If conflict markers
-	 * are missing, the user has already resolved/edited the file manually.
+	 * performAutoMerge itself is silent (no prompt): a "skippedWouldClobber"
+	 * outcome means the live document is neither the raw pre-merge conflict
+	 * text nor already the auto-merge result, i.e. the user edited the file
+	 * or their Git config changed since the conflict was generated. Only
+	 * then do we pay for reconstructing the pre-merge text and ask via
+	 * _checkAndPromptModification; "Continue (Replace)" re-runs with force,
+	 * which pre-agrees to the overwrite performAutoMerge would otherwise
+	 * refuse.
 	 *
 	 * This runs concurrently with the "ready" handshake. The workspace.applyEdit
 	 * it performs (if any) is handled correctly regardless of timing — see the
@@ -673,37 +628,36 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		},
 		stagesPromise: ReturnType<typeof fetchConflictStages>,
 	): Promise<void> {
-		const stages = await stagesPromise;
-		const docText = ctx.document.getText();
 		if (ctx.document.isDirty) {
 			// Already dirty: likely a hot exit restore or the user edited in another
 			// tab. They have unsaved changes they expect to keep — skip auto-merge.
 			return;
 		}
+		const stages = await stagesPromise;
 
-		// Extract conflict marker labels to verify the file is unchanged. If labels
-		// are missing, the user has already resolved/edited the file manually.
-		const labels = extractConflictLabels(docText);
-		if (!labels) {
+		const result = await performAutoMerge(
+			ctx.repoContext,
+			ctx.document.uri,
+		);
+		if (result.kind !== "skippedWouldClobber") {
 			return;
 		}
 
-		const initialGitState = await this._tryBuildInitialConflictText(
-			{ repoContext: ctx.repoContext },
+		// Reconstruct the pre-merge text only for this rarer path: the
+		// "Compare" prompt option needs it, and performAutoMerge itself has
+		// already made the safe/unsafe decision without it.
+		const docText = ctx.document.getText();
+		const labels = extractConflictLabels(docText);
+		if (!labels) {
+			// No markers to reconstruct against: the user has already
+			// resolved/edited the file manually. Nothing to prompt with.
+			return;
+		}
+		const initialGitState = await buildInitialConflictedState(
+			ctx.repoContext.rootUri,
 			stages,
 			labels,
 		);
-		if (docText === initialGitState) {
-			await this._replaceDocumentContent(
-				ctx.document,
-				await this._buildAutoMergedContent(
-					{ repoContext: ctx.repoContext },
-					stages,
-				),
-			);
-			return;
-		}
-
 		const modAction = await this._checkAndPromptModification(
 			ctx.document,
 			initialGitState,
@@ -711,13 +665,9 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		if (modAction !== "replace") {
 			return;
 		}
-		await this._replaceDocumentContent(
-			ctx.document,
-			await this._buildAutoMergedContent(
-				{ repoContext: ctx.repoContext },
-				stages,
-			),
-		);
+		await performAutoMerge(ctx.repoContext, ctx.document.uri, {
+			force: true,
+		});
 	}
 
 	private async _checkAndPromptModification(

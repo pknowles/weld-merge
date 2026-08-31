@@ -224,12 +224,19 @@
 				"toolReferenceName": "weldAutomergeAll",
 				"displayName": "Weld: Auto-merge all conflicts",
 				"userDescription": "Run Weld's automatic merge logic on every conflicted file in the workspace.",
-				"modelDescription": "Runs Weld Merge's auto-merge logic on every conflicted file in the workspace that is a text-merge candidate (both sides modified it). Delete/modify and both-deleted conflicts are never auto-merge candidates and are not included in the count; call weld_list_conflicts to see those and resolve them individually. Merges files sequentially and stops on the first failure, reporting how many of the eligible files were merged and how many were pending. Only available when weld.agent.enable is true.",
+				"modelDescription": "Runs Weld Merge's auto-merge logic on every conflicted file in the workspace that is a text-merge candidate (both sides modified it). This is opportunistic, not a guarantee: Weld can resolve some conflicts Git cannot, but outcome \"merged\" can still have remainingConflicts > 0, left as <<<<<<< markers — a merged-but-not-fully-resolved file still needs weld_get_conflict and a manual edit. Returns { files, totalCount } where each file has repositoryRoot/path plus one outcome: \"merged\" (wrote the 3-way merge; check remainingConflicts), \"autoResolutionsAlreadyApplied\" (already matched the auto-merge result, nothing written), or \"skippedWouldClobber\" (its live content had already changed since the conflict was created, so it was left untouched rather than discarding that change — feed it into weld_apply_automerge with force, or resolve it manually). Never produces skippedWouldClobber when force is set — every attempted file is overwritten instead. Delete/modify and both-deleted conflicts are never auto-merge candidates and are not included in totalCount; call weld_list_conflicts to see those and resolve them individually. Merges files sequentially and stops only on a genuine operational failure (never on a skip). Only available when weld.agent.enable is true.",
 				"canBeReferencedInPrompt": true,
 				"when": "config.weld.agent.enable",
 				"inputSchema": {
 					"type": "object",
-					"properties": {}
+					"additionalProperties": false,
+					"properties": {
+						"force": {
+							"type": "boolean",
+							"default": false,
+							"description": "Overwrite every attempted file even if its content has changed since the conflict was created, discarding that change; with force, no file is ever skipped for this reason."
+						}
+					}
 				}
 			},
 			{
@@ -237,7 +244,7 @@
 				"toolReferenceName": "weldAutomerge",
 				"displayName": "Weld: Auto-merge file",
 				"userDescription": "Run Weld's automatic merge logic on one conflicted file.",
-				"modelDescription": "Runs Weld Merge's auto-merge logic on a single conflicted file selected from weld_list_conflicts. Writes the merged result to the live document (conflicts Weld cannot resolve are left as <<<<<<< conflict markers) and returns the number of conflicts still remaining in the file. Only available when weld.agent.enable is true.",
+				"modelDescription": "Runs Weld Merge's auto-merge logic on a single conflicted file selected from weld_list_conflicts. This is opportunistic, not a guarantee: Weld can resolve some conflicts Git cannot, but writing the merged result does not mean the file is conflict-free — conflicts Weld cannot resolve are left as <<<<<<< conflict markers in the live document. Refuses (throws) instead of writing when the file's live content is neither the original pre-merge conflict markers nor already the auto-merge result — i.e. it was edited since the conflict was created — so it never silently discards an edit; pass force to overwrite anyway. Returns { kind: \"merged\", remainingConflicts } (a nonzero count means weld_get_conflict and a manual edit are still needed) or { kind: \"autoResolutionsAlreadyApplied\" } when the file already matched the auto-merge result and nothing was written. Only available when weld.agent.enable is true.",
 				"canBeReferencedInPrompt": true,
 				"when": "config.weld.agent.enable",
 				"inputSchema": {
@@ -253,6 +260,11 @@
 							"type": "string",
 							"minLength": 1,
 							"description": "Repository-relative conflicted path returned by weld_list_conflicts."
+						},
+						"force": {
+							"type": "boolean",
+							"default": false,
+							"description": "Overwrite the file even if its content has changed since the conflict was created, discarding that change. Omit unless a prior call refused for exactly this reason and overwriting is intended."
 						}
 					},
 					"required": [

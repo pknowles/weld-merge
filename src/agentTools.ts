@@ -19,10 +19,50 @@ import {
 } from "./agentConflicts.ts";
 import { getWeldLogChannel } from "./log.ts";
 
-type ApplyAutomergeAll = () => Promise<string>;
+interface ApplyAutomergeAllInput {
+	force?: boolean;
+}
+// Mirrors extension.ts's AutoMergeAllEntry: one entry per file the batch
+// attempted, in the same repositoryRoot/path shape every other tool uses to
+// identify a file, so a skipped entry can be fed straight into
+// weld_apply_automerge with force. remainingConflicts is always present —
+// including on "skippedWouldClobber", where it describes what auto-merge
+// would produce, not the live file's actual state, since the merge was
+// never applied. "merged" wrote the 3-way merge (remainingConflicts left as
+// <<<<<<< markers is opportunistic, not guaranteed zero); nothing here
+// asserts the file is fully resolved — check remainingConflicts for that.
+// "skippedWouldClobber" means the file's live content had already changed
+// since the conflict was created, so it was left untouched rather than
+// discarding that change — never a batch-aborting failure, and never
+// produced when force is set.
+type ApplyAutomergeAllEntry = ConflictLocation & {
+	remainingConflicts: number;
+} & (
+		| { outcome: "merged" }
+		| { outcome: "autoResolutionsAlreadyApplied" }
+		| { outcome: "skippedWouldClobber" }
+	);
+interface ApplyAutomergeAllResult {
+	files: ApplyAutomergeAllEntry[];
+	totalCount: number;
+}
+type ApplyAutomergeAll = (
+	input: ApplyAutomergeAllInput,
+) => Promise<ApplyAutomergeAllResult>;
+// Mirrors extension.ts's AutoMergeResult: "merged" wrote the 3-way merge;
+// "autoResolutionsAlreadyApplied" means the live file already equalled the
+// auto-merge result, so this call had nothing left to write — not the same
+// as "fully resolved" (see remainingConflicts). performAutoMerge refuses
+// (throws WouldClobberEditError) rather than overwrite a file that has
+// diverged from both the pre-merge conflict markers and the auto-merge
+// result, unless the caller passes force.
+type ApplyAutomergeResult =
+	| { kind: "merged"; remainingConflicts: number }
+	| { kind: "autoResolutionsAlreadyApplied"; remainingConflicts: number };
+type ApplyAutomergeSingleInput = ConflictLocation & { force?: boolean };
 type ApplyAutomergeSingle = (
-	location: ConflictLocation,
-) => Promise<{ remainingConflicts: number }>;
+	input: ApplyAutomergeSingleInput,
+) => Promise<ApplyAutomergeResult>;
 
 function registerEnabledTools(
 	applyAutomergeAll: ApplyAutomergeAll,
@@ -33,28 +73,41 @@ function registerEnabledTools(
 	) {
 		return null;
 	}
-	const applyAllDisposable = lm.registerTool("weld_apply_automerge_all", {
-		async invoke() {
-			const message = await applyAutomergeAll();
-			getWeldLogChannel().info(
-				`Weld agent tool weld_apply_automerge_all: ${message}`,
-			);
-			return new LanguageModelToolResult([
-				new LanguageModelTextPart(message),
-			]);
+	const applyAllDisposable = lm.registerTool<ApplyAutomergeAllInput>(
+		"weld_apply_automerge_all",
+		{
+			async invoke(options) {
+				const result = await applyAutomergeAll(options.input);
+				const mergedCount = result.files.filter(
+					(file) => file.outcome !== "skippedWouldClobber",
+				).length;
+				const skippedCount = result.files.length - mergedCount;
+				getWeldLogChannel().info(
+					`Weld agent tool weld_apply_automerge_all: merged ${mergedCount} of ${result.totalCount} file(s), skipped ${skippedCount}`,
+				);
+				return new LanguageModelToolResult([
+					new LanguageModelTextPart(JSON.stringify(result)),
+				]);
+			},
 		},
-	});
-	const applySingleDisposable = lm.registerTool<ConflictLocation>(
+	);
+	const applySingleDisposable = lm.registerTool<ApplyAutomergeSingleInput>(
 		"weld_apply_automerge",
 		{
 			async invoke(options) {
 				const result = await applyAutomergeSingle(options.input);
 				getWeldLogChannel().info(
-					`Weld agent tool weld_apply_automerge: ${options.input.path} has ${result.remainingConflicts} conflict(s) remaining`,
+					result.kind === "autoResolutionsAlreadyApplied"
+						? `Weld agent tool weld_apply_automerge: ${options.input.path} already matches the auto-merge result; no change made, ${result.remainingConflicts} conflict(s) remaining`
+						: `Weld agent tool weld_apply_automerge: ${options.input.path} has ${result.remainingConflicts} conflict(s) remaining`,
 				);
 				return new LanguageModelToolResult([
 					new LanguageModelTextPart(
-						JSON.stringify({ ...options.input, ...result }),
+						JSON.stringify({
+							repositoryRoot: options.input.repositoryRoot,
+							path: options.input.path,
+							...result,
+						}),
 					),
 				]);
 			},
@@ -129,4 +182,5 @@ function registerAgentTools(
 	});
 }
 
+export type { ApplyAutomergeAll, ApplyAutomergeSingle };
 export { registerAgentTools };

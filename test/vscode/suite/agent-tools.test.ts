@@ -1,7 +1,8 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
 import assert from "node:assert/strict";
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { describe, it } from "mocha";
 import {
 	extensions,
@@ -43,6 +44,7 @@ import {
 	waitForMergeChanges,
 	waitForRepoClose,
 	withConflictRepo,
+	workingTreeContent,
 } from "./helpers.ts";
 
 const ACTIVE_CONFLICT_ERROR_REGEX = /not an active conflict/u;
@@ -60,6 +62,7 @@ const INVALID_CONTEXT_LINES_ERROR_REGEX =
 	/contextLines must be a nonnegative safe integer/u;
 const INVALID_MAX_SECTION_LINES_ERROR_REGEX =
 	/maxSectionLines must be a nonnegative safe integer/u;
+const WOULD_CLOBBER_ERROR_REGEX = /Pass force to overwrite it anyway/u;
 const WELD_SENTINEL = "(??)";
 
 async function invokeTextTool(name: string, input: object): Promise<string> {
@@ -113,6 +116,7 @@ function expectTextResult(
 interface ApplyAutomergeResult {
 	repositoryRoot: string;
 	path: string;
+	kind: "merged" | "autoResolutionsAlreadyApplied";
 	remainingConflicts: number;
 }
 
@@ -300,7 +304,7 @@ describe("Agent Tools: Settings (VS Code host)", () => {
 		await withListToolEnabled(async () => {
 			assert.equal(
 				await invokeTextTool("weld_apply_automerge_all", {}),
-				"No conflicted files found.",
+				JSON.stringify({ files: [], totalCount: 0 }),
 			);
 		});
 	});
@@ -391,6 +395,57 @@ describe("Agent Tools: Single-file auto-merge", () => {
 							path: "does-not-exist.txt",
 						}),
 						ACTIVE_CONFLICT_ERROR_REGEX,
+					);
+				});
+			},
+			{ closeBeforeCleanup: true },
+		));
+
+	// Regression guard: performAutoMerge used to overwrite the live document
+	// unconditionally, computed only from Git's index stages — an edit
+	// already made to the file (by hand or another tool) since the conflict
+	// was created was silently destroyed. A single named file has no "skip
+	// and continue" to fall back to, so it rejects instead; force
+	// pre-agrees to the overwrite.
+	it("rejects a clobbering write, but force overwrites it", () =>
+		withConflictRepo(
+			"weld-agent-automerge-clobber-",
+			makeConflict,
+			async (repoPath) => {
+				const filePath = join(repoPath, "tracked.txt");
+				const edit = "someone's actual edit\n";
+				await writeFile(filePath, edit);
+
+				await withListToolEnabled(async () => {
+					await assert.rejects(
+						invokeApplyAutomerge({
+							repositoryRoot: Uri.file(repoPath).toString(),
+							path: "tracked.txt",
+						}),
+						WOULD_CLOBBER_ERROR_REGEX,
+					);
+					assert.equal(
+						workingTreeContent(repoPath, "tracked.txt"),
+						edit,
+						"the edit must survive the rejected call untouched",
+					);
+
+					const result = await invokeApplyAutomerge({
+						repositoryRoot: Uri.file(repoPath).toString(),
+						path: "tracked.txt",
+						force: true,
+					});
+					assert.equal(result.kind, "merged");
+					// applyEdit changes the open document buffer, not disk,
+					// until something saves it — read the live document the
+					// same way the merge itself does, not the file on disk.
+					const document = await workspace.openTextDocument(
+						Uri.file(filePath),
+					);
+					assert.notEqual(
+						document.getText(),
+						edit,
+						"force must overwrite the edit",
 					);
 				});
 			},

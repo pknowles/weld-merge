@@ -5,9 +5,7 @@ import {
 	type Disposable,
 	type ExtensionContext,
 	ProgressLocation,
-	Range,
 	Uri,
-	WorkspaceEdit,
 	window,
 	workspace,
 } from "vscode";
@@ -28,7 +26,6 @@ import {
 	repositoryRelativePath,
 } from "./gitUtils.ts";
 import { getWeldLogChannel, initializeWeldLogChannel } from "./log.ts";
-import { GitTextMerger } from "./matchers/gitTextMerger.ts";
 import {
 	type ConflictedItem,
 	conflictedItemFromUri,
@@ -46,6 +43,11 @@ import {
 } from "./repoContext.ts";
 import { SubmoduleConflict } from "./submoduleConflict.ts";
 import { ConflictedFilesProvider, GitFile } from "./treeView.ts";
+import {
+	type AutoMergeResult,
+	performAutoMerge,
+	WouldClobberEditError,
+} from "./webview/autoMerge.ts";
 import { extractConflictLabels } from "./webview/conflictLabels.ts";
 import { buildInitialConflictedState } from "./webview/diffPayload.ts";
 import { MeldCustomEditorProvider } from "./webview/meldWebviewPanel.ts";
@@ -524,68 +526,6 @@ async function restoreDeleteModifyConflict(
 	);
 }
 
-interface AutoMergeResult {
-	remainingConflicts: number;
-}
-
-// Runs Weld's three-way merge for a single conflicted file and writes the
-// result back through a VS Code WorkspaceEdit. Throws on any failure so both
-// the single-file command and the batch "auto-merge all" flow can surface the
-// real reason instead of swallowing it. Callers must only pass a file
-// conflictStatus() reports as bothModified — a delete/modify or both-deleted
-// conflict is never a text-merge candidate (no 3-way merge to compute, only
-// a choice of which side survives); collectConflictedFilesAcrossRepositories
-// filters those out before this is ever called for the batch path, and
-// handleAutoMerge/handleApplyAutomergeSingle check the same way for the
-// single-file path (see requireTextMergeable). Returns the number of
-// conflicts the merge could not resolve (left as <<<<<<< markers in the
-// document). This is differ.conflicts (populated by initialize()'s
-// three-way diff, one entry per conflicting hunk), not differ.unresolved
-// (populated by merge3FilesGit, one entry per marker *line* — the same
-// distinction agentConflicts.ts's conflictCount draws via
-// conflictChangeIndexes vs. individual DiffChunks).
-async function performAutoMerge(
-	conflictedItem: ConflictedItem,
-	documentUri: Uri,
-): Promise<AutoMergeResult> {
-	// Reuses fetchConflictStages rather than fetching git stage 1 directly:
-	// a both-added conflict has no stage 1 (no common ancestor), and
-	// git show :1: throws for it. fetchConflictStages already knows this
-	// and substitutes "" for base, matching the empty-base convention
-	// createThreeWayComparison relies on elsewhere.
-	const {
-		base: baseContent,
-		local: localContent,
-		remote: remoteContent,
-	} = await fetchConflictStages(conflictedItem);
-
-	const merger = new GitTextMerger();
-	const localLines = localContent.split("\n");
-	const baseLines = baseContent.split("\n");
-	const remoteLines = remoteContent.split("\n");
-
-	const sequences = [localLines, baseLines, remoteLines];
-	merger.initialize(sequences, sequences);
-
-	const finalMergedText = merger.merge3FilesGit(true);
-
-	const document = await workspace.openTextDocument(documentUri);
-	const fullRange = new Range(
-		document.positionAt(0),
-		document.positionAt(document.getText().length),
-	);
-
-	const edit = new WorkspaceEdit();
-	edit.replace(documentUri, fullRange, finalMergedText);
-	const applied = await workspace.applyEdit(edit);
-	if (!applied) {
-		throw new Error(
-			`Failed to apply merged text to ${conflictedItem.uri}.`,
-		);
-	}
-	return { remainingConflicts: merger.differ.conflicts.length };
-}
-
 // The one place that decides whether a conflict is a text-merge candidate,
 // shared by every auto-merge path (single-file command, single-file agent
 // tool, and the batch's upfront filter) so they can never disagree. Throws
@@ -611,27 +551,56 @@ async function requireTextMergeable(
 	);
 }
 
+// Adapter for the single-file paths only: a caller naming one specific
+// file wants a rejection when performAutoMerge could not safely apply the
+// merge, not a silently-skipped result — there is no "skip and continue"
+// for a single explicit request. handleAutoMergeAll deliberately does not
+// use this: it leaves "skippedWouldClobber" as a normal result entry so
+// one such file never aborts the batch.
+function throwIfSkippedWouldClobber(
+	result: AutoMergeResult,
+	documentUri: Uri,
+): Exclude<AutoMergeResult, { kind: "skippedWouldClobber" }> {
+	if (result.kind === "skippedWouldClobber") {
+		throw new WouldClobberEditError(documentUri);
+	}
+	return result;
+}
+
 async function handleAutoMerge(
 	conflictedItem: ConflictedItem,
 	documentUri: Uri,
 	conflictedFilesProvider: ConflictedFilesProvider,
 ) {
 	await requireTextMergeable(conflictedItem, documentUri);
-	await performAutoMerge(conflictedItem, documentUri);
+	throwIfSkippedWouldClobber(
+		await performAutoMerge(conflictedItem, documentUri),
+		documentUri,
+	);
 	conflictedFilesProvider.refresh();
 }
 
 // Auto-merges a single conflicted file identified by the agent tool's
 // repository-root/path location, reusing the same merge logic as the
 // single-file command and the "auto-merge all" batch. Refreshes the tree so
-// the UI reflects the change alongside the agent's own result.
+// the UI reflects the change alongside the agent's own result. force lets
+// the agent explicitly pre-agree to overwriting a file that has diverged
+// from both the pre-merge conflict markers and the auto-merge result —
+// see performAutoMerge.
 async function handleApplyAutomergeSingle(
-	location: ConflictLocation,
+	location: ConflictLocation & { force?: boolean },
 	conflictedFilesProvider: ConflictedFilesProvider,
-): Promise<AutoMergeResult> {
+): Promise<Exclude<AutoMergeResult, { kind: "skippedWouldClobber" }>> {
 	const conflictedItem = resolveConflictedItem(location);
 	await requireTextMergeable(conflictedItem, conflictedItem.uri);
-	const result = await performAutoMerge(conflictedItem, conflictedItem.uri);
+	const result = throwIfSkippedWouldClobber(
+		await performAutoMerge(
+			conflictedItem,
+			conflictedItem.uri,
+			location.force === undefined ? {} : { force: location.force },
+		),
+		conflictedItem.uri,
+	);
 	conflictedFilesProvider.refresh();
 	return result;
 }
@@ -671,25 +640,56 @@ async function collectAutoMergeableFiles(): Promise<ConflictedFileEntry[]> {
 	return eligible.filter((entry) => entry !== null);
 }
 
+// One file's outcome from an auto-merge-all run, in the same
+// repositoryRoot/path shape weld_list_conflicts and weld_get_conflict use to
+// identify files, so an agent can feed a skipped entry straight into
+// weld_apply_automerge with force without reformatting anything.
+// remainingConflicts is always present, on every outcome — including
+// "skippedWouldClobber", where it describes what auto-merge would produce,
+// not the live file's actual state, since the merge was never applied — so
+// "this outcome fixed nothing" is never confused with "there is nothing
+// left to fix": a caller must read remainingConflicts, not the outcome
+// label alone, to know whether the file still needs attention.
+type AutoMergeAllEntry = ConflictLocation & {
+	remainingConflicts: number;
+} & ( // Wrote the 3-way merge result to the file this call.
+		| { outcome: "merged" }
+		// Auto-merge was not able to do anything this call: the live file
+		// already held exactly the auto-merge result, so nothing was
+		// written. Not the same as "resolved" — remainingConflicts still
+		// names what, if anything, is left.
+		| { outcome: "autoResolutionsAlreadyApplied" }
+		// Applying the merge would have discarded an edit already made to
+		// this file (WouldClobberEditError) — never an abort reason for
+		// the batch, and never produced when force is set. Needs
+		// weld_apply_automerge with force, or a manual resolution.
+		| { outcome: "skippedWouldClobber" }
+	);
+
 interface AutoMergeAllResult {
-	mergedCount: number;
+	files: AutoMergeAllEntry[];
 	totalCount: number;
 }
 
 // Auto-merges every text-mergeable conflicted file in every tracked
-// repository. Fails fast on the first file that cannot be merged (rethrows
-// with the failing file's name and successful count as context). Returns
-// merged/total counts for the caller to log or display.
+// repository. A file whose live content would be discarded by the merge
+// (WouldClobberEditError) is skipped, not a batch-aborting failure — see
+// WouldClobberEditError; force applies to every file the batch attempts, so
+// nothing is ever skipped for this reason when it is set. Any other error
+// still fails the batch fast (rethrows with the failing file's name and
+// successful count as context). Returns one result per file the batch
+// attempted, plus the files it skipped and the total considered.
 async function handleAutoMergeAll(
 	conflictedFilesProvider: ConflictedFilesProvider,
+	options: { force?: boolean } = {},
 ): Promise<AutoMergeAllResult> {
 	const conflictedFiles = await collectAutoMergeableFiles();
 	const totalCount = conflictedFiles.length;
 	if (totalCount === 0) {
-		return { mergedCount: 0, totalCount: 0 };
+		return { files: [], totalCount: 0 };
 	}
 
-	let mergedCount = 0;
+	const files: AutoMergeAllEntry[] = [];
 	const mergeEntryBuilder =
 		(progress: { report: (value: { message?: string }) => void }) =>
 		async (entry: ConflictedFileEntry): Promise<void> => {
@@ -698,15 +698,31 @@ async function handleAutoMergeAll(
 				entry.repository,
 				entry.change,
 			);
+			const location: ConflictLocation = {
+				repositoryRoot: entry.repository.rootUri.toString(),
+				path: repositoryRelativePath(
+					entry.repository.rootUri,
+					entry.change.uri,
+				),
+			};
+			let result: AutoMergeResult;
 			try {
-				await performAutoMerge(repoContext, entry.change.uri);
+				result = await performAutoMerge(
+					repoContext,
+					entry.change.uri,
+					options,
+				);
 			} catch (error: unknown) {
 				throw new Error(
-					`Weld Auto-Merge All stopped at ${entry.change.uri} after ${mergedCount} successful merge(s): ${getErrorMessage(error)}`,
+					`Weld Auto-Merge All stopped at ${entry.change.uri} after ${files.length} successful merge(s): ${getErrorMessage(error)}`,
 					{ cause: error },
 				);
 			}
-			mergedCount++;
+			files.push({
+				...location,
+				remainingConflicts: result.remainingConflicts,
+				outcome: result.kind,
+			});
 		};
 	try {
 		await window.withProgress(
@@ -716,9 +732,10 @@ async function handleAutoMergeAll(
 				cancellable: false,
 			},
 			async (progress) => {
-				// Sequential chain: stop-on-first-failure is intentional, and
-				// each merge must observe the previous one's applied edit
-				// before starting.
+				// Sequential chain: stop-on-first-failure is intentional
+				// (a clobber-skip is not a failure and never stops the
+				// chain), and each merge must observe the previous one's
+				// applied edit before starting.
 				const mergeEntry = mergeEntryBuilder(progress);
 				await conflictedFiles.reduce<Promise<void>>(
 					(previous, entry) => previous.then(() => mergeEntry(entry)),
@@ -727,15 +744,59 @@ async function handleAutoMergeAll(
 			},
 		);
 	} finally {
+		const mergedCount = files.filter(
+			(file) => file.outcome !== "skippedWouldClobber",
+		).length;
 		if (mergedCount > 0) {
+			const fullyResolvedCount = files.filter(
+				(file) => file.remainingConflicts === 0,
+			).length;
+			const skippedCount = files.length - mergedCount;
 			getWeldLogChannel().info(
-				`Weld Auto-Merge All: merged ${mergedCount} of ${totalCount} file(s).`,
+				`Weld Auto-Merge All: merged ${mergedCount} of ${totalCount} file(s), ${fullyResolvedCount} fully resolved${
+					skippedCount > 0
+						? `, skipped ${skippedCount} already-edited file(s)`
+						: ""
+				}.`,
 			);
 			conflictedFilesProvider.refresh();
 		}
 	}
 
-	return { mergedCount, totalCount };
+	return { files, totalCount };
+}
+
+// Single place that turns an AutoMergeAllResult into human-readable text,
+// shared by the tree command's info message and the agent tool's response
+// so they can never drift into describing the same result differently.
+function summarizeAutoMergeAll(result: AutoMergeAllResult): string {
+	const attempted = result.files.filter(
+		(file) => file.outcome !== "skippedWouldClobber",
+	);
+	const mergedCount = attempted.length;
+	const fullyResolvedCount = attempted.filter(
+		(file) => file.remainingConflicts === 0,
+	).length;
+	const unresolvedCount = mergedCount - fullyResolvedCount;
+	const skipped = result.files.filter(
+		(file) => file.outcome === "skippedWouldClobber",
+	);
+	const parts = [
+		`Merged ${mergedCount} of ${result.totalCount} file(s); ${fullyResolvedCount} fully resolved`,
+	];
+	if (unresolvedCount > 0) {
+		parts.push(
+			`, ${unresolvedCount} still have unresolved conflicts left as <<<<<<< markers`,
+		);
+	}
+	if (skipped.length > 0) {
+		parts.push(
+			`, ${skipped.length} skipped (already edited since the conflict was created — retry with force to overwrite): ${skipped
+				.map((file) => file.path)
+				.join(", ")}`,
+		);
+	}
+	return `${parts.join("")}.`;
 }
 
 async function handleCheckoutConflicted(
@@ -1234,17 +1295,15 @@ function registerCommands(
 			},
 		),
 		commands.registerCommand("meld-auto-merge.autoMergeAll", async () => {
-			const { mergedCount, totalCount } = await handleAutoMergeAll(
-				conflictedFilesProvider,
-			);
-			if (totalCount === 0) {
+			const result = await handleAutoMergeAll(conflictedFilesProvider);
+			if (result.totalCount === 0) {
 				window.showInformationMessage(
 					"No unmerged files to auto-merge.",
 				);
 				return;
 			}
 			window.showInformationMessage(
-				`Weld Auto-Merge All: merged ${mergedCount} file(s).`,
+				`Weld Auto-Merge All: ${summarizeAutoMergeAll(result)}`,
 			);
 		}),
 		commands.registerCommand(
@@ -1387,14 +1446,7 @@ export function activate(context: ExtensionContext): WeldExtensionApi {
 	setupGitRepoWatchers(context, conflictedFilesProvider, telemetry);
 	registerAgentTools(
 		context,
-		async () => {
-			const { mergedCount, totalCount } = await handleAutoMergeAll(
-				conflictedFilesProvider,
-			);
-			return totalCount === 0
-				? "No conflicted files found."
-				: `Merged ${mergedCount} of ${totalCount} file(s).`;
-		},
+		(options) => handleAutoMergeAll(conflictedFilesProvider, options),
 		(location) =>
 			handleApplyAutomergeSingle(location, conflictedFilesProvider),
 	);

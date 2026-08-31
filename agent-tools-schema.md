@@ -137,6 +137,48 @@ convinced until I actually test it:
 - Auto-merge; but this could be the one and only tool call too and avoid the
   complexity of returning conflicts
 
+### Auto-Merge
+
+We expose two auto-merge functions. One all-files and one targeted file:
+
+- weld_apply_automerge_all
+- weld_apply_automerge
+
+For weld_apply_automerge_all, attempt all appropriate both-modified files.
+
+- Report and skip files that would be clobbered by auto-merge. To do this we
+  check if the file is in its pre-auto-merge state OR its post-auto-merge state. If neither match, the file has been edited since git created the merge conflict.
+- If the above states are the same, auto-merge wouldn't do anything anyway. If
+  it's in the post-auto-merge state, it's already been run and the result is a
+  no-op.
+- We report the result and reason of each - which files were skipped, wouldn't
+  have changed, had any successful auto-merged conflicts via the number of
+  conflicts that were able to be auto-merged and the number of remaining
+  conflicts.
+
+An optional force option (off by default) can be given to either call to
+pre-agree to clobber files with the auto-merged result.
+
+weld_apply_automerge is just like weld_apply_automerge_all but targets a
+specific file and may outright fail if it would clobber the result and force was
+not set.
+
+In addition to applying auto-merge, we check if there are still remaining
+conflicts. If there are no more conflicts we should automatically stage the
+changes for that file. if there are still conflicts, the result is a success but
+we also report explicitly how many conflicts remain (even if none were fixed).
+If this doesn't already happen in the vscode/UI auto-merge, then we should
+update that path too. Both paths should share the same implementation.
+
+Code to do all this is already implemented in weld-merge. Adapt it to be used by
+both paths and do not duplicate any code.
+
+It is important to be explicit that auto-merge does not guarantee automatic
+merging (admittedly a misnomer, carried over from Meld). We must also not claim
+that a file has been auto-merged or is "already merged" as this implies there
+are no conflicts left. Instead, something like: all automatic resolutions have
+already been applied but not all conflicts are resolved.
+
 ## Compactness
 
 Compactness is a correctness requirement. The response must be cheaper than
