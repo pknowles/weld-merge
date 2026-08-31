@@ -649,9 +649,12 @@ async function collectAutoMergeableFiles(): Promise<ConflictedFileEntry[]> {
 // not the live file's actual state, since the merge was never applied — so
 // "this outcome fixed nothing" is never confused with "there is nothing
 // left to fix": a caller must read remainingConflicts, not the outcome
-// label alone, to know whether the file still needs attention.
+// label alone, to know whether the file still needs attention. staged is
+// true only when remainingConflicts was 0 and `git add` actually succeeded —
+// see performAutoMerge.
 type AutoMergeAllEntry = ConflictLocation & {
 	remainingConflicts: number;
+	staged: boolean;
 } & ( // Wrote the 3-way merge result to the file this call.
 		| { outcome: "merged" }
 		// Auto-merge was not able to do anything this call: the live file
@@ -721,6 +724,7 @@ async function handleAutoMergeAll(
 			files.push({
 				...location,
 				remainingConflicts: result.remainingConflicts,
+				staged: result.staged,
 				outcome: result.kind,
 			});
 		};
@@ -766,9 +770,10 @@ async function handleAutoMergeAll(
 	return { files, totalCount };
 }
 
-// Single place that turns an AutoMergeAllResult into human-readable text,
-// shared by the tree command's info message and the agent tool's response
-// so they can never drift into describing the same result differently.
+// Turns an AutoMergeAllResult into the tree command's human-readable info
+// message. The agent tool returns the structured result directly (JSON, not
+// prose) and logs its own short summary instead of this one — an agent reads
+// the fields, not the sentence a person would see in a notification popup.
 function summarizeAutoMergeAll(result: AutoMergeAllResult): string {
 	const attempted = result.files.filter(
 		(file) => file.outcome !== "skippedWouldClobber",

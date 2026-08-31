@@ -34,9 +34,13 @@ interface ApplyAutomergeAllInput {
 // "skippedWouldClobber" means the file's live content had already changed
 // since the conflict was created, so it was left untouched rather than
 // discarding that change — never a batch-aborting failure, and never
-// produced when force is set.
+// produced when force is set. staged is true only when remainingConflicts
+// was 0 and `git add` actually succeeded — false covers both "conflicts
+// remain, so staging was never attempted" and "staging was attempted but
+// failed"; a caller must not infer staged from remainingConflicts alone.
 type ApplyAutomergeAllEntry = ConflictLocation & {
 	remainingConflicts: number;
+	staged: boolean;
 } & (
 		| { outcome: "merged" }
 		| { outcome: "autoResolutionsAlreadyApplied" }
@@ -55,10 +59,15 @@ type ApplyAutomergeAll = (
 // as "fully resolved" (see remainingConflicts). performAutoMerge refuses
 // (throws WouldClobberEditError) rather than overwrite a file that has
 // diverged from both the pre-merge conflict markers and the auto-merge
-// result, unless the caller passes force.
+// result, unless the caller passes force. staged is true only when
+// remainingConflicts was 0 and `git add` actually succeeded.
 type ApplyAutomergeResult =
-	| { kind: "merged"; remainingConflicts: number }
-	| { kind: "autoResolutionsAlreadyApplied"; remainingConflicts: number };
+	| { kind: "merged"; remainingConflicts: number; staged: boolean }
+	| {
+			kind: "autoResolutionsAlreadyApplied";
+			remainingConflicts: number;
+			staged: boolean;
+	  };
 type ApplyAutomergeSingleInput = ConflictLocation & { force?: boolean };
 type ApplyAutomergeSingle = (
 	input: ApplyAutomergeSingleInput,

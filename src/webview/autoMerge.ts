@@ -18,10 +18,24 @@ import { buildInitialConflictedState } from "./diffPayload.ts";
 // means the call never touched the file, so remainingConflicts here
 // describes what auto-merge would produce, not the live document's actual
 // state.
+//
+// staged is true only when remainingConflicts was 0 AND `git add` actually
+// succeeded — false covers both "there were still conflicts, so staging was
+// never attempted" and "staging was attempted but failed" (logged, see
+// stageIfClean). A caller that cares whether the file is really staged must
+// check this rather than inferring it from remainingConflicts === 0.
 type AutoMergeResult =
-	| { kind: "merged"; remainingConflicts: number }
-	| { kind: "autoResolutionsAlreadyApplied"; remainingConflicts: number }
-	| { kind: "skippedWouldClobber"; remainingConflicts: number };
+	| { kind: "merged"; remainingConflicts: number; staged: boolean }
+	| {
+			kind: "autoResolutionsAlreadyApplied";
+			remainingConflicts: number;
+			staged: boolean;
+	  }
+	| {
+			kind: "skippedWouldClobber";
+			remainingConflicts: number;
+			staged: false;
+	  };
 
 // Distinct from any other performAutoMerge failure: the file itself is
 // fine, it was just edited since the conflict was created, so applying the
@@ -50,14 +64,17 @@ class WouldClobberEditError extends Error {
 // interactive "add" command uses, which this deliberately does not
 // duplicate). Logs rather than throws on failure: staging is a convenience
 // on top of a merge that already succeeded, not a reason to fail the merge
-// itself.
-async function stageIfClean(conflictedItem: ConflictedItem): Promise<void> {
+// itself — but the caller still needs to know it failed (returned false)
+// rather than silently reporting success, so callers can surface it.
+async function stageIfClean(conflictedItem: ConflictedItem): Promise<boolean> {
 	try {
 		await conflictedItem.repository.add([conflictedItem.uri.fsPath]);
+		return true;
 	} catch (error: unknown) {
 		getWeldLogChannel().error(
 			`Weld auto-merge resolved ${conflictedItem.uri.fsPath} but could not stage it: ${getErrorMessage(error)}`,
 		);
+		return false;
 	}
 }
 
@@ -122,10 +139,13 @@ async function performAutoMerge(
 	const document = await workspace.openTextDocument(documentUri);
 	const docText = document.getText();
 	if (docText === finalMergedText) {
-		if (remainingConflicts === 0) {
-			await stageIfClean(conflictedItem);
-		}
-		return { kind: "autoResolutionsAlreadyApplied", remainingConflicts };
+		const staged =
+			remainingConflicts === 0 && (await stageIfClean(conflictedItem));
+		return {
+			kind: "autoResolutionsAlreadyApplied",
+			remainingConflicts,
+			staged,
+		};
 	}
 	if (!options.force) {
 		const labels = extractConflictLabels(docText);
@@ -137,7 +157,11 @@ async function performAutoMerge(
 				)
 			: null;
 		if (docText !== initialGitState) {
-			return { kind: "skippedWouldClobber", remainingConflicts };
+			return {
+				kind: "skippedWouldClobber",
+				remainingConflicts,
+				staged: false,
+			};
 		}
 	}
 
@@ -154,10 +178,9 @@ async function performAutoMerge(
 			`Failed to apply merged text to ${conflictedItem.uri}.`,
 		);
 	}
-	if (remainingConflicts === 0) {
-		await stageIfClean(conflictedItem);
-	}
-	return { kind: "merged", remainingConflicts };
+	const staged =
+		remainingConflicts === 0 && (await stageIfClean(conflictedItem));
+	return { kind: "merged", remainingConflicts, staged };
 }
 
 export type { AutoMergeResult };

@@ -838,6 +838,7 @@ describe("extension agent tool registration", () => {
 					path: "a.txt",
 					outcome: "merged",
 					remainingConflicts: 1,
+					staged: false,
 				},
 			],
 		});
@@ -869,7 +870,11 @@ describe("extension agent tool registration", () => {
 
 		// base/local/remote each change the same single line differently, so
 		// Weld cannot auto-resolve the one conflicting hunk.
-		expect(result).toEqual({ kind: "merged", remainingConflicts: 1 });
+		expect(result).toEqual({
+			kind: "merged",
+			remainingConflicts: 1,
+			staged: false,
+		});
 		expect(refresh).toHaveBeenCalled();
 	});
 });

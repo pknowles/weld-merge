@@ -26,6 +26,7 @@ import {
 import {
 	cleanupTempFixture,
 	getConflictedItem,
+	lsFilesStages,
 	makeAdjacentResolvedChangeConflict,
 	makeBinaryConflict,
 	makeBothAddedConflict,
@@ -118,6 +119,7 @@ interface ApplyAutomergeResult {
 	path: string;
 	kind: "merged" | "autoResolutionsAlreadyApplied";
 	remainingConflicts: number;
+	staged: boolean;
 }
 
 async function invokeApplyAutomerge(
@@ -131,6 +133,7 @@ async function invokeApplyAutomerge(
 		"remainingConflicts" in parsed &&
 			typeof parsed.remainingConflicts === "number",
 	);
+	assert.ok("staged" in parsed && typeof parsed.staged === "boolean");
 	return parsed as ApplyAutomergeResult;
 }
 
@@ -357,6 +360,11 @@ describe("Agent Tools: Single-file auto-merge", () => {
 					});
 					assert.equal(result.path, "tracked.txt");
 					assert.equal(result.remainingConflicts, 1);
+					assert.equal(
+						result.staged,
+						false,
+						"a file with conflicts left unresolved must not be staged",
+					);
 
 					const document = await workspace.openTextDocument(
 						Uri.file(`${repoPath}/tracked.txt`),
@@ -446,6 +454,30 @@ describe("Agent Tools: Single-file auto-merge", () => {
 						document.getText(),
 						edit,
 						"force must overwrite the edit",
+					);
+				});
+			},
+			{ closeBeforeCleanup: true },
+		));
+});
+
+describe("Agent Tools: Auto-merge staging", () => {
+	it("stages the file and reports staged when auto-merge fully resolves it", () =>
+		withConflictRepo(
+			"weld-agent-automerge-resolvable-",
+			makeWeldResolvableConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					const result = await invokeApplyAutomerge({
+						repositoryRoot: Uri.file(repoPath).toString(),
+						path: "tracked.txt",
+					});
+					assert.equal(result.remainingConflicts, 0);
+					assert.equal(result.staged, true);
+					assert.deepEqual(
+						lsFilesStages(repoPath, "tracked.txt"),
+						new Set(),
+						"expected the fully auto-merged file to be staged",
 					);
 				});
 			},
