@@ -224,7 +224,7 @@
 				"toolReferenceName": "weldAutomergeAll",
 				"displayName": "Weld: Auto-merge all conflicts",
 				"userDescription": "Run Weld's automatic merge logic on every conflicted file in the workspace.",
-				"modelDescription": "Runs Weld Merge's auto-merge logic on every conflicted file in the workspace. Merges files sequentially and stops on the first failure, reporting how many files were merged and how many were pending. Only available when weld.agent.enable is true.",
+				"modelDescription": "Runs Weld Merge's auto-merge logic on every conflicted file in the workspace that is a text-merge candidate (both sides modified it). Delete/modify and both-deleted conflicts are never auto-merge candidates and are not included in the count; call weld_list_conflicts to see those and resolve them individually. Merges files sequentially and stops on the first failure, reporting how many of the eligible files were merged and how many were pending. Only available when weld.agent.enable is true.",
 				"canBeReferencedInPrompt": true,
 				"when": "config.weld.agent.enable",
 				"inputSchema": {

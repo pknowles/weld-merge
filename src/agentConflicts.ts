@@ -1047,11 +1047,13 @@ export type {
 	GetConflictToolInput,
 	ListConflictsToolInput,
 	ListedConflict,
+	NonTextConflictKind,
 };
 export {
 	createNonTextConflictResult,
 	getConflict,
 	listConflicts,
+	nonTextMessage,
 	normalizeGetConflictInput,
 	renderBaseDiff,
 	resolveConflictedItem,

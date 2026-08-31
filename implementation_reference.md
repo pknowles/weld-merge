@@ -148,6 +148,29 @@ Granular performance telemetry is **opt-in only** and has zero production impact
 - **`test/benchmarking/config.ts`** — owns benchmark paths. The HTML fixture stays in `test/benchmarking/benchmark.html`; generated benchmark metrics and CPU profiles go to `test-output/benchmarking/results/`.
 - **`test/benchmarking/ui_stress.test.ts`**: The "massive 50k document" test injects the stats gate, types 150 keystrokes with a double-rAF yield between each, then extracts avg/max for all four metrics. Also post-processes the `.cpuprofile` via exact function-name matching (`changeSequence`, `useFilteredDiffs`, `deltaDecorations`). **Verify these names against a real `.cpuprofile` run** — if they change (minification/rename), the profile metrics silently report `0`.
 
+## Auto-Merge Candidate Classification
+
+- `src/extension.ts`
+  - `performAutoMerge()` runs the 3-way text merge and applies the result;
+    it assumes its caller already confirmed the file is a text-merge
+    candidate — a delete/modify or both-deleted conflict has no readable
+    stage 2 or 3, and fetching it unconditionally throws deep in Git's
+    plumbing instead of failing clearly.
+  - `requireTextMergeable()` is the single classification path (via
+    `ConflictedItem.conflictStatus()`, the same classifier
+    `handleOpenMeldDiff` uses) shared by every auto-merge entry point, so
+    they can never disagree about what is mergeable. The single-file paths
+    (`handleAutoMerge`, `handleApplyAutomergeSingle`) call it and let it
+    throw — an explicit request naming one file has no "skip and continue"
+    to fall back to.
+  - `collectAutoMergeableFiles()` is `handleAutoMergeAll`'s upfront filter:
+    it narrows the batch's candidate list to `conflictStatus()`'s
+    `bothModified` before `performAutoMerge` is ever called, so an
+    ineligible file is never attempted rather than attempted-then-caught.
+    `weld_list_conflicts` and the tree view are unaffected by this filter —
+    they still enumerate every `ConflictKind` (`agentConflicts.ts`); only
+    auto-merge's own candidate selection is narrowed.
+
 ## Delete/Modify Conflict Restore
 
 - `src/extension.ts`

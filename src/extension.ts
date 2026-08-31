@@ -11,8 +11,11 @@ import {
 	window,
 	workspace,
 } from "vscode";
-import type { ConflictLocation } from "./agentConflicts.ts";
-import { resolveConflictedItem } from "./agentConflicts.ts";
+import type {
+	ConflictLocation,
+	NonTextConflictKind,
+} from "./agentConflicts.ts";
+import { nonTextMessage, resolveConflictedItem } from "./agentConflicts.ts";
 import { registerAgentTools } from "./agentTools.ts";
 import { fetchConflictStages } from "./conflictSnapshot.ts";
 import {
@@ -528,12 +531,19 @@ interface AutoMergeResult {
 // Runs Weld's three-way merge for a single conflicted file and writes the
 // result back through a VS Code WorkspaceEdit. Throws on any failure so both
 // the single-file command and the batch "auto-merge all" flow can surface the
-// real reason instead of swallowing it. Returns the number of conflicts the
-// merge could not resolve (left as <<<<<<< markers in the document). This is
-// differ.conflicts (populated by initialize()'s three-way diff, one entry per
-// conflicting hunk), not differ.unresolved (populated by merge3FilesGit, one
-// entry per marker *line* — the same distinction agentConflicts.ts's
-// conflictCount draws via conflictChangeIndexes vs. individual DiffChunks).
+// real reason instead of swallowing it. Callers must only pass a file
+// conflictStatus() reports as bothModified — a delete/modify or both-deleted
+// conflict is never a text-merge candidate (no 3-way merge to compute, only
+// a choice of which side survives); collectConflictedFilesAcrossRepositories
+// filters those out before this is ever called for the batch path, and
+// handleAutoMerge/handleApplyAutomergeSingle check the same way for the
+// single-file path (see requireTextMergeable). Returns the number of
+// conflicts the merge could not resolve (left as <<<<<<< markers in the
+// document). This is differ.conflicts (populated by initialize()'s
+// three-way diff, one entry per conflicting hunk), not differ.unresolved
+// (populated by merge3FilesGit, one entry per marker *line* — the same
+// distinction agentConflicts.ts's conflictCount draws via
+// conflictChangeIndexes vs. individual DiffChunks).
 async function performAutoMerge(
 	conflictedItem: ConflictedItem,
 	documentUri: Uri,
@@ -576,11 +586,37 @@ async function performAutoMerge(
 	return { remainingConflicts: merger.differ.conflicts.length };
 }
 
+// The one place that decides whether a conflict is a text-merge candidate,
+// shared by every auto-merge path (single-file command, single-file agent
+// tool, and the batch's upfront filter) so they can never disagree. Throws
+// with the same wording agentConflicts.ts's nonTextMessage uses for the
+// equivalent case there — remainingStage names which side survived, so the
+// missing side is the one that deleted it.
+async function requireTextMergeable(
+	conflictedItem: ConflictedItem,
+	documentUri: Uri,
+): Promise<void> {
+	const status = await conflictedItem.conflictStatus();
+	if (status.kind === "bothModified") {
+		return;
+	}
+	const nonTextKind: NonTextConflictKind =
+		status.kind === "bothDeleted"
+			? "bothDeleted"
+			: status.remainingStage === GIT_STAGE_REMOTE
+				? "deletedByUs"
+				: "deletedByThem";
+	throw new Error(
+		`Cannot auto-merge ${documentUri.fsPath} as text: ${nonTextMessage(nonTextKind)}`,
+	);
+}
+
 async function handleAutoMerge(
 	conflictedItem: ConflictedItem,
 	documentUri: Uri,
 	conflictedFilesProvider: ConflictedFilesProvider,
 ) {
+	await requireTextMergeable(conflictedItem, documentUri);
 	await performAutoMerge(conflictedItem, documentUri);
 	conflictedFilesProvider.refresh();
 }
@@ -594,6 +630,7 @@ async function handleApplyAutomergeSingle(
 	conflictedFilesProvider: ConflictedFilesProvider,
 ): Promise<AutoMergeResult> {
 	const conflictedItem = resolveConflictedItem(location);
+	await requireTextMergeable(conflictedItem, conflictedItem.uri);
 	const result = await performAutoMerge(conflictedItem, conflictedItem.uri);
 	conflictedFilesProvider.refresh();
 	return result;
@@ -604,16 +641,34 @@ interface ConflictedFileEntry {
 	change: GitApiChange;
 }
 
-function collectConflictedFilesAcrossRepositories(): ConflictedFileEntry[] {
+// Only files conflictStatus() reports as bothModified are text-merge
+// candidates (see requireTextMergeable) — a delete/modify or both-deleted
+// conflict has no 3-way merge to compute, only a choice of which side
+// survives. Filtering here means autoMergeAll's candidate set is correct by
+// construction: performAutoMerge is never called on an ineligible file, so
+// there is nothing to catch, skip, or report as not-applicable downstream.
+// weld_list_conflicts and the tree view are unaffected — they still report
+// every conflict kind; only auto-merge's own candidate set is narrowed.
+async function collectAutoMergeableFiles(): Promise<ConflictedFileEntry[]> {
 	const repos = getGitApi().repositories.filter((r) =>
 		isSupportedScheme(r.rootUri),
 	);
-	return repos.flatMap((repo) =>
+	const entries = repos.flatMap((repo) =>
 		repo.state.mergeChanges.map<ConflictedFileEntry>((change) => ({
 			repository: repo,
 			change,
 		})),
 	);
+	const eligible = await Promise.all(
+		entries.map(async (entry) => {
+			const status = await createConflictedItem(
+				entry.repository,
+				entry.change,
+			).conflictStatus();
+			return status.kind === "bothModified" ? entry : null;
+		}),
+	);
+	return eligible.filter((entry) => entry !== null);
 }
 
 interface AutoMergeAllResult {
@@ -621,14 +676,14 @@ interface AutoMergeAllResult {
 	totalCount: number;
 }
 
-// Auto-merges every conflicted file in every tracked repository. Fails fast on
-// the first file that cannot be merged (rethrows with the failing file's name
-// and successful count as context). Returns merged/total counts for the caller
-// to log or display.
+// Auto-merges every text-mergeable conflicted file in every tracked
+// repository. Fails fast on the first file that cannot be merged (rethrows
+// with the failing file's name and successful count as context). Returns
+// merged/total counts for the caller to log or display.
 async function handleAutoMergeAll(
 	conflictedFilesProvider: ConflictedFilesProvider,
 ): Promise<AutoMergeAllResult> {
-	const conflictedFiles = collectConflictedFilesAcrossRepositories();
+	const conflictedFiles = await collectAutoMergeableFiles();
 	const totalCount = conflictedFiles.length;
 	if (totalCount === 0) {
 		return { mergedCount: 0, totalCount: 0 };

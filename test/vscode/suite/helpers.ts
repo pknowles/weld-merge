@@ -23,6 +23,10 @@ interface TempRepoFixture {
 
 interface WithConflictRepoOptions {
 	closeBeforeCleanup?: boolean;
+	// Number of merge changes makeConflictFn produces. Defaults to 1; pass
+	// the real count for a fixture that conflicts several paths at once
+	// (e.g. makeAllConflictKindsRepo), or waitForMergeChanges never resolves.
+	expectedConflictCount?: number;
 }
 
 function assertUnmergedPaths(repoPath: string, expectedPaths: string[]): void {
@@ -508,6 +512,104 @@ function makeBothDeletedConflict(repoPath: string): void {
 	}
 }
 
+// Builds every ConflictKind agentConflicts.ts distinguishes in one repo from
+// one `git merge`, so tests exercising multiple kinds pay Git's setup cost
+// once instead of once per kind. Deliberately excludes submodule conflicts
+// (they need a second source repo — see makeSubmoduleConflictRepo) and
+// bothDeleted (git auto-resolves that case inside a normal merge; it is
+// added afterwards as a synthetic index state, same as makeBothDeletedConflict).
+//
+// Resulting paths and kinds (see agentConflicts.ts's inspectConflict):
+//   text.txt          text          — both sides modify the tracked base file
+//   added.txt         bothAdded     — both sides add it fresh, no common ancestor
+//   local-deletes.txt deletedByUs   — local deletes, remote modifies
+//   remote-deletes.txt deletedByThem — remote deletes, local modifies
+//   binary.bin        binary        — both sides modify, contains a NUL byte
+//   both-deleted.txt  bothDeleted   — added synthetically after the merge
+function makeAllConflictKindsRepo(repoPath: string): void {
+	writeFileSync(join(repoPath, "local-deletes.txt"), "shared\n");
+	writeFileSync(join(repoPath, "remote-deletes.txt"), "shared\n");
+	writeFileSync(join(repoPath, "binary.bin"), "base\0content\n");
+	runGit(
+		["add", "--", "local-deletes.txt", "remote-deletes.txt", "binary.bin"],
+		repoPath,
+	);
+	runGit(["commit", "-m", "add shared files"], repoPath);
+
+	runGit(["checkout", "-b", "other"], repoPath);
+	writeFileSync(join(repoPath, "tracked.txt"), "remote\n");
+	writeFileSync(join(repoPath, "added.txt"), "remote version\n");
+	runGit(["rm", "--", "local-deletes.txt"], repoPath);
+	writeFileSync(join(repoPath, "remote-deletes.txt"), "remote edit\n");
+	writeFileSync(join(repoPath, "binary.bin"), "remote\0content\n");
+	runGit(
+		[
+			"add",
+			"--",
+			"tracked.txt",
+			"added.txt",
+			"remote-deletes.txt",
+			"binary.bin",
+		],
+		repoPath,
+	);
+	runGit(["commit", "-m", "remote changes"], repoPath);
+
+	runGit(["checkout", "-"], repoPath);
+	writeFileSync(join(repoPath, "tracked.txt"), "local\n");
+	writeFileSync(join(repoPath, "added.txt"), "local version\n");
+	writeFileSync(join(repoPath, "local-deletes.txt"), "local edit\n");
+	runGit(["rm", "--", "remote-deletes.txt"], repoPath);
+	writeFileSync(join(repoPath, "binary.bin"), "local\0content\n");
+	runGit(
+		[
+			"add",
+			"--",
+			"tracked.txt",
+			"added.txt",
+			"local-deletes.txt",
+			"binary.bin",
+		],
+		repoPath,
+	);
+	runGit(["commit", "-m", "local changes"], repoPath);
+
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits 1 for the expected conflicts
+	}
+	const conflictedPaths = [
+		"tracked.txt",
+		"added.txt",
+		"local-deletes.txt",
+		"remote-deletes.txt",
+		"binary.bin",
+	];
+	assertUnmergedPaths(repoPath, conflictedPaths);
+
+	// Layer a both-deleted file on top, the same way makeBothDeletedConflict
+	// does: git auto-resolves an actual both-deleted merge, so the unmerged
+	// index state has to be written directly.
+	assertSafeGitCwd(repoPath);
+	const fileName = "both-deleted.txt";
+	const blob = execFileSync(
+		"git",
+		["-C", repoPath, "hash-object", "-w", "--stdin"],
+		{
+			input: "base\n",
+			encoding: "utf8",
+			stdio: ["pipe", "pipe", "pipe"],
+		},
+	).trim();
+	execFileSync("git", ["-C", repoPath, "update-index", "--index-info"], {
+		input: `0 0000000000000000000000000000000000000000 0\t${fileName}\n100644 ${blob} 1\t${fileName}\n`,
+		encoding: "utf8",
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	assertUnmergedPaths(repoPath, [...conflictedPaths, fileName]);
+}
+
 // Waits for the git extension to fire onDidCloseRepository for repoPath.
 // Subscribe BEFORE deleting the repo directory so no events are missed.
 // Returns immediately if the repo is not currently registered.
@@ -579,7 +681,7 @@ async function withConflictRepo(
 	if (!repo) {
 		throw new Error(`Expected git repository at ${repoPath}`);
 	}
-	await waitForMergeChanges(repo, 1);
+	await waitForMergeChanges(repo, options.expectedConflictCount ?? 1);
 	try {
 		await testFn(repoPath, repo);
 	} finally {
@@ -641,6 +743,7 @@ export {
 	getConflictedItem,
 	lsFilesStages,
 	makeAdjacentResolvedChangeConflict,
+	makeAllConflictKindsRepo,
 	makeBinaryConflict,
 	makeBothAddedConflict,
 	makeBothDeletedConflict,

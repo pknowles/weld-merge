@@ -18,11 +18,13 @@ import {
 	ErrorTreeItem,
 } from "../../../src/treeView.ts";
 import {
-	makeBothAddedConflict,
+	lsFilesStages,
+	makeAllConflictKindsRepo,
 	makeRepo,
 	openRepoInGitExtension,
 	waitForRepoClose,
 	withConflictRepo,
+	workingTreeContent,
 } from "./helpers.ts";
 
 const TOP_LEVEL_FAILURE_REGEX = /forced top-level failure/;
@@ -180,7 +182,17 @@ describe("autoMergeAll command error propagation (VS Code host)", () => {
 				],
 				onDidChange: changeEmitter.event,
 			},
-			show: (): Promise<string> => {
+			// collectAutoMergeableFiles classifies via conflictStatus()
+			// before autoMergeAll ever calls performAutoMerge, which only
+			// ever reads stages 2 and 3 (never 1 — see computeConflictStatus
+			// in repoContext.ts). Resolving those lets classification
+			// correctly see a bothModified conflict and proceed to the real
+			// merge, where fetchConflictStages' stage-1 read hits the
+			// injected failure this test exists to observe.
+			show: (ref: string): Promise<string> => {
+				if (ref === ":2" || ref === ":3") {
+					return Promise.resolve("stage content\n");
+				}
 				injectedFailureCalls++;
 				return Promise.reject(
 					new Error("forced repository.show failure"),
@@ -244,19 +256,70 @@ describe("autoMergeAll command error propagation (VS Code host)", () => {
 	});
 });
 
-// Regression guard: a both-added conflict has no Git stage 1 (no common
-// ancestor), so fetching it directly throws "Could not get git content for
-// stage 1 ... Is it in conflict?" performAutoMerge must go through
-// fetchConflictStages, which already substitutes "" for a missing base
-// (the same convention createThreeWayComparison relies on), instead of
-// fetching stage 1 unconditionally.
-describe("autoMergeAll on a both-added conflict (VS Code host)", () => {
-	it("does not throw when the conflict has no base stage", () =>
+// Two regression guards sharing one repo and one merge (makeAllConflictKindsRepo)
+// rather than a fixture per kind:
+//
+// 1. A both-added conflict has no Git stage 1 (no common ancestor), so
+//    fetching it directly threw "Could not get git content for stage 1 ...
+//    Is it in conflict?" performAutoMerge must go through
+//    fetchConflictStages, which already substitutes "" for a missing base
+//    (the same convention createThreeWayComparison relies on).
+// 2. autoMergeAll iterated every conflicted file and called performAutoMerge
+//    unconditionally, assuming every conflict is a 3-way text merge.
+//    deletedByUs/deletedByThem/bothDeleted conflicts are missing a stage
+//    performAutoMerge needs, so it crashed deep in Git's plumbing ("Could
+//    not show object") instead of never attempting them in the first place.
+//    collectAutoMergeableFiles filters to conflictStatus()'s bothModified
+//    (the same classifier handleOpenMeldDiff already uses) before
+//    autoMergeAll ever calls performAutoMerge — these kinds were never
+//    auto-merge candidates, so they are simply not in its candidate set,
+//    not a failure to catch or report.
+describe("autoMergeAll conflict classification (VS Code host)", () => {
+	it("merges only the auto-mergeable files, leaving the rest untouched", () =>
 		withConflictRepo(
-			"weld-automerge-both-added-",
-			makeBothAddedConflict,
-			async () => {
+			"weld-automerge-all-kinds-",
+			makeAllConflictKindsRepo,
+			async (repoPath) => {
 				await commands.executeCommand("meld-auto-merge.autoMergeAll");
+
+				// Eligible (bothModified) files were genuinely attempted:
+				// both sides' real content shows up (the both-added file's
+				// fix — no stage-1 crash) rather than the fixture's plain
+				// "shared" placeholder, even though neither file's single
+				// differing line can auto-resolve without a real edit.
+				const addedText = workingTreeContent(repoPath, "added.txt");
+				assert.ok(addedText, "expected added.txt to be readable");
+				assert.ok(addedText.includes("local version"), addedText);
+				assert.ok(addedText.includes("remote version"), addedText);
+				const trackedText = workingTreeContent(repoPath, "tracked.txt");
+				assert.ok(trackedText, "expected tracked.txt to be readable");
+				assert.ok(trackedText.includes("local"), trackedText);
+				assert.ok(trackedText.includes("remote"), trackedText);
+				// binary.bin is bothModified too (also eligible), so it was
+				// attempted rather than silently skipped or crashed on just
+				// because its content is not text: the file changed from
+				// its pre-merge content instead of being left untouched.
+				const binaryText = workingTreeContent(repoPath, "binary.bin");
+				assert.ok(binaryText, "expected binary.bin to be readable");
+				assert.notEqual(binaryText, "base\0content\n");
+
+				// Ineligible kinds were never attempted: still mid-merge,
+				// with no <<<<<<< markers ever written for them either,
+				// since Git's own index — not a merge attempt — is what
+				// makes them conflicted.
+				assert.deepEqual(
+					lsFilesStages(repoPath, "local-deletes.txt"),
+					new Set([1, 2]),
+				);
+				assert.deepEqual(
+					lsFilesStages(repoPath, "remote-deletes.txt"),
+					new Set([1, 3]),
+				);
+				assert.deepEqual(
+					lsFilesStages(repoPath, "both-deleted.txt"),
+					new Set([1]),
+				);
 			},
+			{ expectedConflictCount: 6 },
 		));
 });
