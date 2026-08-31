@@ -352,22 +352,6 @@ function watchRepo(
 	};
 }
 
-async function getGitFileContent(
-	repository: GitApiRepository,
-	file: Uri,
-	stage: number,
-): Promise<string> {
-	try {
-		return await repository.show(`:${stage}`, file.fsPath);
-	} catch (error: unknown) {
-		const reason = getErrorMessage(error);
-		throw new Error(
-			`Could not get git content for stage ${stage} of ${file}. Is it in conflict? ${reason}`,
-			{ cause: error },
-		);
-	}
-}
-
 function isUriCommandArg(value: unknown): value is UriCommandArg {
 	return (
 		typeof value === "object" &&
@@ -554,11 +538,16 @@ async function performAutoMerge(
 	conflictedItem: ConflictedItem,
 	documentUri: Uri,
 ): Promise<AutoMergeResult> {
-	const [baseContent, localContent, remoteContent] = await Promise.all([
-		getGitFileContent(conflictedItem.repository, conflictedItem.uri, 1),
-		getGitFileContent(conflictedItem.repository, conflictedItem.uri, 2),
-		getGitFileContent(conflictedItem.repository, conflictedItem.uri, 3),
-	]);
+	// Reuses fetchConflictStages rather than fetching git stage 1 directly:
+	// a both-added conflict has no stage 1 (no common ancestor), and
+	// git show :1: throws for it. fetchConflictStages already knows this
+	// and substitutes "" for base, matching the empty-base convention
+	// createThreeWayComparison relies on elsewhere.
+	const {
+		base: baseContent,
+		local: localContent,
+		remote: remoteContent,
+	} = await fetchConflictStages(conflictedItem);
 
 	const merger = new GitTextMerger();
 	const localLines = localContent.split("\n");
@@ -1110,18 +1099,18 @@ async function openFirstConflictFromTreeForRemoteSmokeTest(
 			"Remote smoke test conflicted tree item command has no arguments.",
 		);
 	}
-	const [base, local, remote] = await Promise.all([
-		getGitFileContent(conflict.conflictedItem.repository, conflict.uri, 1),
-		getGitFileContent(conflict.conflictedItem.repository, conflict.uri, 2),
-		getGitFileContent(conflict.conflictedItem.repository, conflict.uri, 3),
-	]);
+	// One fetch for both uses below: stages themselves and the reconstructed
+	// state. Also avoids performAutoMerge's stage-1 bug for both-added
+	// conflicts, which have no base stage to show.
+	const stages = await fetchConflictStages(conflict.conflictedItem);
+	const { base, local, remote } = stages;
 	const document = await workspace.openTextDocument(conflict.uri);
 	const workingContent = document.getText();
 	const labels = extractConflictLabels(workingContent);
 	const reconstructedContent = labels
 		? await buildInitialConflictedState(
 				conflict.conflictedItem.rootUri,
-				await fetchConflictStages(conflict.conflictedItem),
+				stages,
 				labels,
 			)
 		: null;

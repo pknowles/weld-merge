@@ -651,9 +651,13 @@ describe("extension auto-merge commands", () => {
 
 		await registered("meld-auto-merge.autoMerge")(target);
 
-		expect(repo.showMock).toHaveBeenCalledWith(":1", target.uri.fsPath);
-		expect(repo.showMock).toHaveBeenCalledWith(":2", target.uri.fsPath);
-		expect(repo.showMock).toHaveBeenCalledWith(":3", target.uri.fsPath);
+		// Goes through fetchConflictStages rather than reading each stage
+		// directly: a both-added conflict has no stage 1, and fetching it
+		// unconditionally throws for that case (see the "no base stage"
+		// regression test in initial_conflict_uri.test.ts).
+		expect(mockFetchConflictStages).toHaveBeenCalledWith(
+			target.conflictedItem,
+		);
 		expect(edits[0]?.replacements[0]).toMatchObject({
 			uri: target.uri,
 		});

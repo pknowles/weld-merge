@@ -18,9 +18,11 @@ import {
 	ErrorTreeItem,
 } from "../../../src/treeView.ts";
 import {
+	makeBothAddedConflict,
 	makeRepo,
 	openRepoInGitExtension,
 	waitForRepoClose,
+	withConflictRepo,
 } from "./helpers.ts";
 
 const TOP_LEVEL_FAILURE_REGEX = /forced top-level failure/;
@@ -240,4 +242,21 @@ describe("autoMergeAll command error propagation (VS Code host)", () => {
 			changeEmitter.dispose();
 		}
 	});
+});
+
+// Regression guard: a both-added conflict has no Git stage 1 (no common
+// ancestor), so fetching it directly throws "Could not get git content for
+// stage 1 ... Is it in conflict?" performAutoMerge must go through
+// fetchConflictStages, which already substitutes "" for a missing base
+// (the same convention createThreeWayComparison relies on), instead of
+// fetching stage 1 unconditionally.
+describe("autoMergeAll on a both-added conflict (VS Code host)", () => {
+	it("does not throw when the conflict has no base stage", () =>
+		withConflictRepo(
+			"weld-automerge-both-added-",
+			makeBothAddedConflict,
+			async () => {
+				await commands.executeCommand("meld-auto-merge.autoMergeAll");
+			},
+		));
 });
