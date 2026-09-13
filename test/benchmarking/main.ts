@@ -112,9 +112,10 @@ function runUIStressTest(resultsDir: string) {
 			"  Building dev webview bundle (preserves function names)...",
 		);
 		execSync("npm run build:webview:dev", { stdio: "inherit" });
-		execSync("npx playwright test test/benchmarking/ui_stress.test.ts", {
-			stdio: "inherit",
-		});
+		execSync(
+			"npx playwright test test/benchmarking/ui_stress.test.ts --output=test-output/playwright/benchmark-results",
+			{ stdio: "inherit" },
+		);
 	} catch (e) {
 		// biome-ignore lint/suspicious/noConsole: report
 		console.error("UI stress test failed:", e);

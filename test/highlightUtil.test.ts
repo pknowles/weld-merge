@@ -345,3 +345,127 @@ describe("getPaneHighlights: modify+restore on Meld test cases restores initial 
 		}
 	});
 });
+
+// ─── exact coordinate assertions ──────────────────────────────────────────────
+// These kill the +1/-1 offset mutants that range/bound tests miss.
+
+describe("getPaneHighlights: exact startLine 1-based offset", () => {
+	it("whole-line startLine is startA+1 for first line (line 0 → reports 1)", () => {
+		const files = [f("X\nb"), f("a\nb")];
+		const diffs = [[chunk("replace", 0, 1, 0, 1)], null];
+		const whole = getPaneHighlights(0, files, diffs, false, false).find(
+			(h) => h.isWholeLine,
+		);
+		expect(whole?.startLine).toBe(1);
+	});
+
+	it("whole-line startLine is startA+1 for a mid-file line (line 2 → reports 3)", () => {
+		const files = [f("a\nb\nX"), f("a\nb\nc")];
+		const diffs = [[chunk("replace", 2, 3, 2, 3)], null];
+		const whole = getPaneHighlights(0, files, diffs, false, false).find(
+			(h) => h.isWholeLine,
+		);
+		expect(whole?.startLine).toBe(3);
+	});
+
+	it("whole-line endLine is endA-1 (exclusive endA=2 → last line is 1)", () => {
+		const files = [f("X\nb"), f("a\nb")];
+		const diffs = [[chunk("replace", 0, 1, 0, 1)], null];
+		const whole = getPaneHighlights(0, files, diffs, false, false).find(
+			(h) => h.isWholeLine,
+		);
+		// endA is exclusive: chunk 0..1 covers only line 0. endLine should be 1.
+		expect(whole?.endLine).toBe(1);
+	});
+
+	it("multi-line whole-line highlight spans from startA+1 to endA", () => {
+		// chunk 1..3 covers lines 1 and 2 (0-indexed), so 1-based 2..3
+		const files = [f("a\nX\nY\nd"), f("a\nb\nc\nd")];
+		const diffs = [[chunk("replace", 1, 3, 1, 3)], null];
+		const whole = getPaneHighlights(0, files, diffs, false, false).find(
+			(h) => h.isWholeLine,
+		);
+		expect(whole?.startLine).toBe(2);
+		expect(whole?.endLine).toBe(3);
+	});
+});
+
+describe("getPaneHighlights: exact inline character-level coordinates", () => {
+	it("single-char replacement at column 1 has startColumn=1, endColumn=2", () => {
+		// "Xbc" vs "abc": X differs at position 0 → column 1
+		const files = [f("Xbc"), f("abc")];
+		const diffs = [[chunk("replace", 0, 1, 0, 1)], null];
+		const sub = getPaneHighlights(0, files, diffs, false, false).filter(
+			(h) => !h.isWholeLine,
+		);
+		expect(sub).toHaveLength(1);
+		expect(sub[0]).toMatchObject({
+			startLine: 1,
+			startColumn: 1,
+			endLine: 1,
+			endColumn: 2,
+		});
+	});
+
+	it("single-char replacement at column 3 has startColumn=3, endColumn=4", () => {
+		// "abXde" vs "abcde": X differs at position 2 → column 3
+		const files = [f("abXde"), f("abcde")];
+		const diffs = [[chunk("replace", 0, 1, 0, 1)], null];
+		const sub = getPaneHighlights(0, files, diffs, false, false).filter(
+			(h) => !h.isWholeLine,
+		);
+		expect(sub).toHaveLength(1);
+		expect(sub[0]).toMatchObject({
+			startLine: 1,
+			startColumn: 3,
+			endLine: 1,
+			endColumn: 4,
+		});
+	});
+
+	it("multi-char replacement has endColumn = startColumn + replacement length", () => {
+		// "aXXXe" vs "abcde": positions 1-3 differ → columns 2-4 (endColumn=5)
+		const files = [f("aXXXe"), f("abcde")];
+		const diffs = [[chunk("replace", 0, 1, 0, 1)], null];
+		const sub = getPaneHighlights(0, files, diffs, false, false).filter(
+			(h) => !h.isWholeLine,
+		);
+		expect(sub).toHaveLength(1);
+		expect(sub[0]).toMatchObject({
+			startColumn: 2,
+			endColumn: 5,
+		});
+	});
+
+	it("multi-line replacement: second changed line starts at column 1", () => {
+		// Two-line replace: line 0 differs at col 1, line 1 differs at col 1
+		const files = [f("X\nY"), f("a\nb")];
+		const diffs = [[chunk("replace", 0, 2, 0, 2)], null];
+		const sub = getPaneHighlights(0, files, diffs, false, false).filter(
+			(h) => !h.isWholeLine,
+		);
+		// Each differing line should produce its own sub-highlight
+		expect(sub.length).toBeGreaterThan(0);
+		const line2subs = sub.filter((h) => h.startLine === 2);
+		expect(line2subs.length).toBeGreaterThan(0);
+		expect(line2subs[0]?.startColumn).toBeGreaterThanOrEqual(1);
+	});
+
+	it("delete chunk produces no inline sub-highlights", () => {
+		const files = [f("a\nb"), f("a")];
+		const diffs = [[chunk("delete", 1, 2, 1, 1)], null];
+		const sub = getPaneHighlights(0, files, diffs, false, false).filter(
+			(h) => !h.isWholeLine,
+		);
+		expect(sub).toHaveLength(0);
+	});
+
+	it("insert chunk produces no inline sub-highlights", () => {
+		const files = [f("a"), f("a\nb")];
+		const diffs = [[chunk("insert", 1, 1, 1, 2)], null];
+		const sub = getPaneHighlights(0, files, diffs, false, false).filter(
+			(h) => !h.isWholeLine,
+		);
+		expect(sub).toHaveLength(0);
+	});
+});

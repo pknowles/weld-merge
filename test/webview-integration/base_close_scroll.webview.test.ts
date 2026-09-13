@@ -1,6 +1,7 @@
 import path from "node:path";
 import process from "node:process";
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
+import { test } from "./coverageFixture.ts";
 
 const htmlPath = () =>
 	`file://${path.resolve(process.cwd(), "test", "benchmarking", "benchmark.html")}`;

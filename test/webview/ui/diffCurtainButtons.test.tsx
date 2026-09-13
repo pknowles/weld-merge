@@ -4,8 +4,8 @@ import { describe, it, jest } from "@jest/globals";
 import "@testing-library/jest-dom";
 import { render, screen } from "@testing-library/react";
 import type { editor } from "monaco-editor";
-import { DiffCurtain } from "./DiffCurtain.tsx";
-import type { DiffChunk } from "./types.ts";
+import { DiffCurtain } from "../../../src/webview/ui/DiffCurtain.tsx";
+import type { DiffChunk } from "../../../src/webview/ui/types.ts";
 
 global.ResizeObserver = class ResizeObserver {
 	observe() {

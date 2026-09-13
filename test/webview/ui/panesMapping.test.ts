@@ -1,8 +1,8 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
 import { describe, it } from "@jest/globals";
-import { mapLineAcrossPanes } from "./scrollMapping.ts";
-import type { DiffChunk } from "./types.ts";
+import { mapLineAcrossPanes } from "../../../src/webview/ui/scrollMapping.ts";
+import type { DiffChunk } from "../../../src/webview/ui/types.ts";
 
 const LINE_COUNT_STANDARD = 100;
 const LINE_COUNT_SHORT = 10;

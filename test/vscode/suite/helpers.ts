@@ -12,7 +12,7 @@ import {
 	createConflictedItemFromUri,
 	getGitApi,
 } from "../../../src/repoContext.ts";
-import { runGit } from "../../runGit.ts";
+import { assertSafeGitCwd, runGit } from "../../runGit.ts";
 
 const LS_FILES_STAGE_REGEX = /^\S+ \S+ (\d+)\t/;
 
@@ -321,6 +321,7 @@ function makeBothAddedConflict(repoPath: string): void {
 // auto-resolve this case, so write the unmerged index directly: remove the
 // resolved stage-0 entry and leave only stage 1 for the original path.
 function makeBothDeletedConflict(repoPath: string): void {
+	assertSafeGitCwd(repoPath);
 	const fileName = "tracked.txt";
 	const blob = execFileSync(
 		"git",

@@ -2,6 +2,15 @@
 	"$schema": "https://schema.stryker-mutator.io/stryker-config.schema.json",
 	"packageManager": "npm",
 	"reporters": ["html", "json", "clear-text", "progress"],
+	"tempDirName": "test-output/stryker/tmp",
+	"cleanTempDir": "always",
+	"htmlReporter": {
+		"fileName": "test-output/stryker/reports/mutation.html"
+	},
+	"jsonReporter": {
+		"fileName": "test-output/stryker/reports/mutation.json"
+	},
+	"incrementalFile": "test-output/stryker/stryker-incremental.json",
 	"testRunner": "jest",
 	"coverageAnalysis": "perTest",
 	"mutate": [

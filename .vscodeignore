@@ -27,6 +27,7 @@ test-split.js
 package-lock.json
 .antigravityignore
 *.vsix
+test-output/
 coverage
 reports
 .cifuzz-corpus

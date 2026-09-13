@@ -334,6 +334,7 @@ export {
 	getGitDirUri,
 	getUnresolvedReasons,
 	getRepoRelativePath,
+	parseGitDirPointer,
 	readConflictState,
 	readIndexStageContent,
 };

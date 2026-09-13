@@ -30,6 +30,17 @@ function getModelFromEditor(content: string): editor.ITextModel & {
 	return ed.getModel() as editor.ITextModel & { getValue: () => string };
 }
 
+// Returns the editor AND captures executeEdits calls for range assertions.
+function makeEditorWithCapture(content: string) {
+	const ed = createMockEditor(
+		content,
+	) as unknown as editor.IStandaloneCodeEditor & {
+		getValue: () => string;
+		executeEdits: ReturnType<typeof jest.fn>;
+	};
+	return ed;
+}
+
 describe("editorActions/getChunkText", () => {
 	it("returns empty text for empty chunks", () => {
 		const model = getModelFromEditor("A\nB\nC");
@@ -249,5 +260,117 @@ describe("editorActions/copyDownChunk", () => {
 		copyDownChunk(targetEditor, chunk({ startA: 0, endA: 8 }), "\ntail");
 
 		expect(targetEditor.getValue()).toBe("A\nB\ntail");
+	});
+});
+
+// ─── exact executeEdits range assertions ──────────────────────────────────────
+// These kill off-by-one mutants (e.g. eL >= mMax vs eL > mMax) that content-
+// only tests miss because adjacent lines happen to have the same result.
+
+describe("editorActions/applyChunkEdit exact ranges", () => {
+	it("mid-file replace: startLineNumber=startA+1, endLineNumber=endA+1, endColumn=1", () => {
+		// "A\nB\nC\nD" — chunk covers line index 1 (line 2). endA=2 < mMax=4.
+		// Expected: startLine=2, endLine=3, endCol=1.
+		const ed = makeEditorWithCapture("A\nB\nC\nD");
+		applyChunkEdit(ed, chunk({ startA: 1, endA: 2 }), "X\n");
+		const call = (ed.executeEdits as ReturnType<typeof jest.fn>).mock
+			.calls[0];
+		const range = (
+			call?.[1] as {
+				range: {
+					startLineNumber: number;
+					startColumn: number;
+					endLineNumber: number;
+					endColumn: number;
+				};
+			}[]
+		)[0]?.range;
+		expect(range?.startLineNumber).toBe(2);
+		expect(range?.startColumn).toBe(1);
+		expect(range?.endLineNumber).toBe(3);
+		expect(range?.endColumn).toBe(1);
+	});
+
+	it("replace through last line: endLineNumber=mMax, endColumn=lastLineMaxCol", () => {
+		// "A\nB\nC" — chunk endA=3 === mMax=3. endCol should be column past "C".
+		const ed = makeEditorWithCapture("A\nB\nC");
+		applyChunkEdit(ed, chunk({ startA: 1, endA: 3 }), "X");
+		const call = (ed.executeEdits as ReturnType<typeof jest.fn>).mock
+			.calls[0];
+		const range = (
+			call?.[1] as {
+				range: {
+					startLineNumber: number;
+					startColumn: number;
+					endLineNumber: number;
+					endColumn: number;
+				};
+			}[]
+		)[0]?.range;
+		expect(range?.endLineNumber).toBe(3);
+		expect(range?.endColumn).toBeGreaterThan(1);
+	});
+
+	it("insert after EOF: range is at end of last line", () => {
+		// startA > mMax → appends to last line.
+		const ed = makeEditorWithCapture("A\nB");
+		applyChunkEdit(ed, chunk({ startA: 5, endA: 5 }), "Z");
+		const call = (ed.executeEdits as ReturnType<typeof jest.fn>).mock
+			.calls[0];
+		const range = (
+			call?.[1] as {
+				range: {
+					startLineNumber: number;
+					startColumn: number;
+					endLineNumber: number;
+					endColumn: number;
+				};
+			}[]
+		)[0]?.range;
+		expect(range?.startLineNumber).toBe(2);
+		expect(range?.endLineNumber).toBe(2);
+	});
+});
+
+describe("editorActions/deleteChunk exact ranges", () => {
+	it("mid-file delete: range covers exactly the deleted lines", () => {
+		// "A\nB\nC\nD" — delete index 1 (line 2). endLine=3, endCol=1.
+		const ed = makeEditorWithCapture("A\nB\nC\nD");
+		deleteChunk(ed, chunk({ startA: 1, endA: 2 }));
+		const call = (ed.executeEdits as ReturnType<typeof jest.fn>).mock
+			.calls[0];
+		const range = (
+			call?.[1] as {
+				range: {
+					startLineNumber: number;
+					startColumn: number;
+					endLineNumber: number;
+					endColumn: number;
+				};
+			}[]
+		)[0]?.range;
+		expect(range?.startLineNumber).toBe(2);
+		expect(range?.endLineNumber).toBe(3);
+		expect(range?.endColumn).toBe(1);
+	});
+
+	it("delete through EOF: endLineNumber=mMax, endColumn=lastLineMaxCol", () => {
+		// "A\nB\nC" — delete from index 1 to 3 (to end). No trailing newline.
+		const ed = makeEditorWithCapture("A\nB\nC");
+		deleteChunk(ed, chunk({ startA: 1, endA: 3 }));
+		const call = (ed.executeEdits as ReturnType<typeof jest.fn>).mock
+			.calls[0];
+		const range = (
+			call?.[1] as {
+				range: {
+					startLineNumber: number;
+					startColumn: number;
+					endLineNumber: number;
+					endColumn: number;
+				};
+			}[]
+		)[0]?.range;
+		expect(range?.endLineNumber).toBe(3);
+		expect(range?.endColumn).toBeGreaterThan(1);
 	});
 });
