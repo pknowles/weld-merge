@@ -253,6 +253,9 @@ const workspace = {
 	getConfiguration: (section: string) => ({
 		get: (key: string) => configurationValues.get(`${section}.${key}`),
 	}),
+	onDidChangeConfiguration: (_callback: (e: unknown) => void) => ({
+		dispose: () => undefined,
+	}),
 };
 
 const window = {

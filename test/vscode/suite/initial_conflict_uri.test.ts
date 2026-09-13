@@ -18,9 +18,14 @@ import {
 	ErrorTreeItem,
 } from "../../../src/treeView.ts";
 import {
+	lsFilesStages,
+	makeAllConflictKindsRepo,
 	makeRepo,
+	makeWeldResolvableConflict,
 	openRepoInGitExtension,
 	waitForRepoClose,
+	withConflictRepo,
+	workingTreeContent,
 } from "./helpers.ts";
 
 const TOP_LEVEL_FAILURE_REGEX = /forced top-level failure/;
@@ -178,7 +183,17 @@ describe("autoMergeAll command error propagation (VS Code host)", () => {
 				],
 				onDidChange: changeEmitter.event,
 			},
-			show: (): Promise<string> => {
+			// collectAutoMergeableFiles classifies via conflictStatus()
+			// before autoMergeAll ever calls performAutoMerge, which only
+			// ever reads stages 2 and 3 (never 1 — see computeConflictStatus
+			// in repoContext.ts). Resolving those lets classification
+			// correctly see a bothModified conflict and proceed to the real
+			// merge, where fetchConflictStages' stage-1 read hits the
+			// injected failure this test exists to observe.
+			show: (ref: string): Promise<string> => {
+				if (ref === ":2" || ref === ":3") {
+					return Promise.resolve("stage content\n");
+				}
 				injectedFailureCalls++;
 				return Promise.reject(
 					new Error("forced repository.show failure"),
@@ -252,4 +267,133 @@ describe("autoMergeAll command error propagation (VS Code host)", () => {
 			changeEmitter.dispose();
 		}
 	});
+});
+
+// Two regression guards sharing one repo and one merge (makeAllConflictKindsRepo)
+// rather than a fixture per kind:
+//
+// 1. A both-added conflict has no Git stage 1 (no common ancestor), so
+//    fetching it directly threw "Could not get git content for stage 1 ...
+//    Is it in conflict?" performAutoMerge must go through
+//    fetchConflictStages, which already substitutes "" for a missing base
+//    (the same convention createThreeWayComparison relies on).
+// 2. autoMergeAll iterated every conflicted file and called performAutoMerge
+//    unconditionally, assuming every conflict is a 3-way text merge.
+//    deletedByUs/deletedByThem/bothDeleted conflicts are missing a stage
+//    performAutoMerge needs, so it crashed deep in Git's plumbing ("Could
+//    not show object") instead of never attempting them in the first place.
+//    collectAutoMergeableFiles filters to conflictStatus()'s bothModified
+//    (the same classifier handleOpenMeldDiff already uses) before
+//    autoMergeAll ever calls performAutoMerge — these kinds were never
+//    auto-merge candidates, so they are simply not in its candidate set,
+//    not a failure to catch or report.
+describe("autoMergeAll conflict classification (VS Code host)", () => {
+	it("merges only the auto-mergeable files, leaving the rest untouched", () =>
+		withConflictRepo(
+			"weld-automerge-all-kinds-",
+			makeAllConflictKindsRepo,
+			async (repoPath) => {
+				await commands.executeCommand("meld-auto-merge.autoMergeAll");
+
+				// Eligible (bothModified) files were genuinely attempted:
+				// both sides' real content shows up (the both-added file's
+				// fix — no stage-1 crash) rather than the fixture's plain
+				// "shared" placeholder, even though neither file's single
+				// differing line can auto-resolve without a real edit.
+				const addedText = workingTreeContent(repoPath, "added.txt");
+				assert.ok(addedText, "expected added.txt to be readable");
+				assert.ok(addedText.includes("local version"), addedText);
+				assert.ok(addedText.includes("remote version"), addedText);
+				const trackedText = workingTreeContent(repoPath, "tracked.txt");
+				assert.ok(trackedText, "expected tracked.txt to be readable");
+				assert.ok(trackedText.includes("local"), trackedText);
+				assert.ok(trackedText.includes("remote"), trackedText);
+				// binary.bin is bothModified too (also eligible), so it was
+				// attempted rather than silently skipped or crashed on just
+				// because its content is not text: the file changed from
+				// its pre-merge content instead of being left untouched.
+				const binaryText = workingTreeContent(repoPath, "binary.bin");
+				assert.ok(binaryText, "expected binary.bin to be readable");
+				assert.notEqual(binaryText, "base\0content\n");
+
+				// Ineligible kinds were never attempted: still mid-merge,
+				// with no <<<<<<< markers ever written for them either,
+				// since Git's own index — not a merge attempt — is what
+				// makes them conflicted.
+				assert.deepEqual(
+					lsFilesStages(repoPath, "local-deletes.txt"),
+					new Set([1, 2]),
+				);
+				assert.deepEqual(
+					lsFilesStages(repoPath, "remote-deletes.txt"),
+					new Set([1, 3]),
+				);
+				assert.deepEqual(
+					lsFilesStages(repoPath, "both-deleted.txt"),
+					new Set([1]),
+				);
+			},
+			{ expectedConflictCount: 6 },
+		));
+});
+
+// Regression guard: performAutoMerge used to overwrite the live document
+// unconditionally, computed only from Git's index stages — an edit already
+// made to the file (by hand or another tool) since the conflict was
+// created was silently destroyed. It now refuses (single-file — see
+// "rejects a clobbering write" in agent-tools.test.ts) or skips (batch)
+// instead, comparing the live document against both the raw pre-merge
+// conflict markers and the auto-merge result before ever writing.
+describe("auto-merge clobber protection (VS Code host)", () => {
+	it("autoMergeAll skips a clobbered file instead of aborting the batch", () =>
+		withConflictRepo(
+			"weld-automerge-clobber-batch-",
+			makeAllConflictKindsRepo,
+			async (repoPath) => {
+				const filePath = join(repoPath, "tracked.txt");
+				await writeFile(filePath, "someone's actual edit\n");
+
+				await commands.executeCommand("meld-auto-merge.autoMergeAll");
+
+				// Skipped, not aborted: added.txt and binary.bin (also
+				// eligible) were still attempted despite tracked.txt's
+				// clobber risk — a would-clobber file never stops the batch.
+				assert.equal(
+					workingTreeContent(repoPath, "tracked.txt"),
+					"someone's actual edit\n",
+					"the edit must survive the batch run untouched",
+				);
+				const addedText = workingTreeContent(repoPath, "added.txt");
+				assert.ok(addedText, "expected added.txt to be readable");
+				assert.ok(addedText.includes("local version"), addedText);
+			},
+			{ expectedConflictCount: 6 },
+		));
+});
+
+// Regression guard for the same-named feature: once a file's merge leaves
+// zero remaining conflicts, Weld must stage it (git add) — the point of
+// auto-merge is to finish the file, not just edit its text and leave Git
+// still reporting it unmerged.
+describe("auto-merge staging (VS Code host)", () => {
+	it("stages a file once Weld's auto-merge fully resolves it", () =>
+		withConflictRepo(
+			"weld-automerge-stage-",
+			makeWeldResolvableConflict,
+			async (repoPath) => {
+				assert.deepEqual(
+					lsFilesStages(repoPath, "tracked.txt"),
+					new Set([1, 2, 3]),
+					"expected the file to start unmerged",
+				);
+
+				await commands.executeCommand("meld-auto-merge.autoMergeAll");
+
+				assert.deepEqual(
+					lsFilesStages(repoPath, "tracked.txt"),
+					new Set(),
+					"expected Weld to stage the file once it was fully resolved",
+				);
+			},
+		));
 });

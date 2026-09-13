@@ -59,6 +59,28 @@ const CONFLICT_STATE_FILES: Array<{
 
 const gitDirByRepoUri: Map<string, Uri> = new Map();
 
+// Git commands take repo-relative, forward-slash paths regardless of
+// platform. node:path's `relative` owns the platform-specific fsPath
+// semantics (Windows drive letters, separators, casing); this only remaps
+// the separator and rejects paths git could misinterpret.
+function repositoryRelativePath(rootUri: Uri, fileUri: Uri): string {
+	const relativePath = relative(rootUri.fsPath, fileUri.fsPath)
+		.split(sep)
+		.join("/");
+	if (
+		relativePath.length === 0 ||
+		relativePath.startsWith("../") ||
+		relativePath === ".." ||
+		relativePath.includes("\n") ||
+		relativePath.includes("\t")
+	) {
+		throw new Error(
+			`Cannot use ${fileUri.toString()}: invalid repository path.`,
+		);
+	}
+	return relativePath;
+}
+
 function getParentUri(uri: Uri): Uri {
 	const path = uri.path;
 	const slash = path.lastIndexOf("/");
@@ -204,28 +226,6 @@ function getErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-// Git commands take repo-relative, forward-slash paths regardless of
-// platform. node:path's `relative` owns the platform-specific fsPath
-// semantics (Windows drive letters, separators, casing); this only remaps
-// the separator and rejects paths git could misinterpret.
-function getRepoRelativePath(rootUri: Uri, fileUri: Uri): string {
-	const repoRelativePath = relative(rootUri.fsPath, fileUri.fsPath)
-		.split(sep)
-		.join("/");
-	if (
-		repoRelativePath.length === 0 ||
-		repoRelativePath.startsWith("../") ||
-		repoRelativePath === ".." ||
-		repoRelativePath.includes("\n") ||
-		repoRelativePath.includes("\t")
-	) {
-		throw new Error(
-			`Cannot use ${fileUri.toString()}: invalid repository path.`,
-		);
-	}
-	return repoRelativePath;
-}
-
 // Returns the content of an unmerged index stage exactly as Git's checkout
 // would write it to the worktree: filtered through `core.autocrlf`,
 // `.gitattributes` eol/text, and any smudge filters. This is required for
@@ -248,7 +248,7 @@ async function readIndexStageContent(
 	file: Uri,
 	stage: number,
 ): Promise<string> {
-	const relativePath = getRepoRelativePath(repository.rootUri, file);
+	const relativePath = repositoryRelativePath(repository.rootUri, file);
 	try {
 		return await execGit(
 			["cat-file", "--filters", `:${stage}:${relativePath}`],
@@ -331,10 +331,11 @@ export {
 	describeConflictStatusEvidence,
 	execGit,
 	execGitWithInput,
+	getErrorMessage,
 	getGitDirUri,
 	getUnresolvedReasons,
-	getRepoRelativePath,
 	parseGitDirPointer,
 	readConflictState,
 	readIndexStageContent,
+	repositoryRelativePath,
 };

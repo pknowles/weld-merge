@@ -7,6 +7,10 @@ import {
 	jest,
 } from "@jest/globals";
 import { EventEmitter, TreeItemCollapsibleState, Uri } from "vscode";
+import type {
+	ApplyAutomergeAll,
+	ApplyAutomergeSingle,
+} from "../src/agentTools.ts";
 import type { WeldExtensionApi } from "../src/extension.ts";
 import { activate } from "../src/extension.ts";
 import type { ConflictState } from "../src/gitUtils.ts";
@@ -89,6 +93,27 @@ const mockBuildInitialConflictedState =
 	>();
 const mockFetchConflictStages =
 	jest.fn<(conflictedItem: ConflictedItem) => Promise<unknown>>();
+const mockRegisterAgentTools =
+	jest.fn<
+		(
+			context: unknown,
+			applyAutomergeAll: ApplyAutomergeAll,
+			applyAutomergeSingle: ApplyAutomergeSingle,
+		) => void
+	>();
+
+jest.mock("../src/agentTools.ts", () => ({
+	registerAgentTools: (
+		context: unknown,
+		applyAutomergeAll: ApplyAutomergeAll,
+		applyAutomergeSingle: ApplyAutomergeSingle,
+	) =>
+		mockRegisterAgentTools(
+			context,
+			applyAutomergeAll,
+			applyAutomergeSingle,
+		),
+}));
 
 jest.mock("../src/repoContext.ts", () => ({
 	...Object.fromEntries([
@@ -121,15 +146,27 @@ jest.mock("../src/repoContext.ts", () => ({
 	unregisterRepository: (rootUri: Uri) => mockUnregisterRepository(rootUri),
 }));
 
-jest.mock("../src/gitUtils.ts", () => ({
-	describeConflictStatusEvidence: (conflictedItem: ConflictedItem) =>
-		mockDescribeConflictStatusEvidence(conflictedItem),
-	execGit: (args: string[], cwd: string) => mockExecGit(args, cwd),
-	execGitWithInput: (args: string[], cwd: string, input: string) =>
-		mockExecGitWithInput(args, cwd, input),
-	getUnresolvedReasons: (text: string) => mockGetUnresolvedReasons(text),
-	readConflictState: (repository: GitApiRepository) =>
-		mockReadConflictState(repository),
+jest.mock("../src/gitUtils.ts", () => {
+	const actual =
+		jest.requireActual<typeof import("../src/gitUtils.ts")>(
+			"../src/gitUtils.ts",
+		);
+	return {
+		...actual,
+		describeConflictStatusEvidence: (conflictedItem: ConflictedItem) =>
+			mockDescribeConflictStatusEvidence(conflictedItem),
+		execGit: (args: string[], cwd: string) => mockExecGit(args, cwd),
+		execGitWithInput: (args: string[], cwd: string, input: string) =>
+			mockExecGitWithInput(args, cwd, input),
+		getUnresolvedReasons: (text: string) => mockGetUnresolvedReasons(text),
+		readConflictState: (repository: GitApiRepository) =>
+			mockReadConflictState(repository),
+	};
+});
+
+jest.mock("../src/conflictSnapshot.ts", () => ({
+	fetchConflictStages: (conflictedItem: ConflictedItem) =>
+		mockFetchConflictStages(conflictedItem),
 }));
 
 jest.mock("../src/webview/meldWebviewPanel.ts", () =>
@@ -203,8 +240,6 @@ jest.mock("../src/webview/diffPayload.ts", () => ({
 		stages: unknown,
 		labels: unknown,
 	) => mockBuildInitialConflictedState(rootUri, stages, labels),
-	fetchConflictStages: (conflictedItem: ConflictedItem) =>
-		mockFetchConflictStages(conflictedItem),
 }));
 
 interface FakeGitApi {
@@ -604,7 +639,16 @@ describe("extension auto-merge commands", () => {
 			"conflictedFile",
 			makeConflictedItem(repo, Uri.file("/work/repo/a.txt")),
 		);
-		const document = documentFor(target.uri, "old text\n");
+		// Real marker text, not arbitrary content: performAutoMerge now
+		// refuses to overwrite a live document unless it is either the raw
+		// pre-merge conflict text (this) or already the auto-merge result,
+		// so extractConflictLabels must find real labels and
+		// buildInitialConflictedState (mocked) must echo this exact text
+		// back for the safety check to pass.
+		const conflictText =
+			"<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> other\n";
+		mockBuildInitialConflictedState.mockResolvedValue(conflictText);
+		const document = documentFor(target.uri, conflictText);
 		mockVscodeSetOpenTextDocument(() => Promise.resolve(document));
 		const edits: WorkspaceEdit[] = [];
 		mockVscodeSetApplyEdit((edit) => {
@@ -614,14 +658,54 @@ describe("extension auto-merge commands", () => {
 
 		await registered("meld-auto-merge.autoMerge")(target);
 
-		expect(repo.showMock).toHaveBeenCalledWith(":1", target.uri.fsPath);
-		expect(repo.showMock).toHaveBeenCalledWith(":2", target.uri.fsPath);
-		expect(repo.showMock).toHaveBeenCalledWith(":3", target.uri.fsPath);
+		// Goes through fetchConflictStages rather than reading each stage
+		// directly: a both-added conflict has no stage 1, and fetching it
+		// unconditionally throws for that case (see the "no base stage"
+		// regression test in initial_conflict_uri.test.ts).
+		expect(mockFetchConflictStages).toHaveBeenCalledWith(
+			target.conflictedItem,
+		);
 		expect(edits[0]?.replacements[0]).toMatchObject({
 			uri: target.uri,
 		});
 		expect(edits[0]?.replacements[0]?.text).toContain("local");
 		expect(refresh).toHaveBeenCalled();
+		// base/local/remote differ on the same line with no shared content,
+		// so the merge leaves it unresolved — never stage a file that still
+		// has conflict markers in it.
+		expect(repo.addMock).not.toHaveBeenCalled();
+	});
+});
+
+describe("extension auto-merge staging", () => {
+	it("stages the file once auto-merge fully resolves it", async () => {
+		const repo = makeRepo("/work/repo", ["a.txt"]);
+		installGitApi(makeGitApi([repo]));
+		activateWeld();
+		const target = new TestGitFile(
+			"conflictedFile",
+			makeConflictedItem(repo, Uri.file("/work/repo/a.txt")),
+		);
+		// Non-overlapping edits on different lines: base/local/remote here
+		// let the 3-way merge fully resolve on its own, unlike the
+		// same-line-conflict fixture used elsewhere in this file.
+		mockFetchConflictStages.mockResolvedValue({
+			base: "one\ntwo\nthree\n",
+			local: "one changed\ntwo\nthree\n",
+			remote: "one\ntwo\nthree changed\n",
+		});
+		const conflictText =
+			"<<<<<<< HEAD\none changed\n=======\none\n>>>>>>> other\ntwo\n" +
+			"<<<<<<< HEAD\nthree\n=======\nthree changed\n>>>>>>> other\n";
+		mockBuildInitialConflictedState.mockResolvedValue(conflictText);
+		mockVscodeSetOpenTextDocument(() =>
+			Promise.resolve(documentFor(target.uri, conflictText)),
+		);
+		mockVscodeSetApplyEdit(() => Promise.resolve(true));
+
+		await registered("meld-auto-merge.autoMerge")(target);
+
+		expect(repo.addMock).toHaveBeenCalledWith([target.uri.fsPath]);
 	});
 
 	it("rejects when auto-merge cannot apply the edit and refuses submodule rows", async () => {
@@ -636,8 +720,14 @@ describe("extension auto-merge commands", () => {
 			"conflictedSubmodule",
 			makeConflictedItem(repo, Uri.file("/work/repo/sub")),
 		);
+		// Real marker text so performAutoMerge's live-content safety check
+		// passes and the failure under test — applyEdit rejecting — is what
+		// actually triggers, not an unrelated WouldClobberEditError.
+		const conflictText =
+			"<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> other\n";
+		mockBuildInitialConflictedState.mockResolvedValue(conflictText);
 		mockVscodeSetOpenTextDocument(() =>
-			Promise.resolve(documentFor(textTarget.uri, "old\n")),
+			Promise.resolve(documentFor(textTarget.uri, conflictText)),
 		);
 		mockVscodeSetApplyEdit(() => Promise.resolve(false));
 
@@ -650,8 +740,10 @@ describe("extension auto-merge commands", () => {
 			"Submodule conflicts cannot be auto-merged as text. Open the submodule resolver from the tree instead.",
 		);
 	});
+});
 
-	it("handles auto-merge-all empty, success, and partial-failure flows", async () => {
+describe("extension auto-merge-all command", () => {
+	it("handles auto-merge-all empty and success flows", async () => {
 		const emptyRepo = makeRepo("/work/empty");
 		installGitApi(makeGitApi([emptyRepo]));
 		const { api } = activateWeld();
@@ -664,8 +756,13 @@ describe("extension auto-merge commands", () => {
 		const firstRepo = makeRepo("/work/one", ["a.txt"]);
 		const secondRepo = makeRepo("/work/two", ["b.txt"]);
 		installGitApi(makeGitApi([firstRepo, secondRepo]));
+		// Real marker text so performAutoMerge's live-content safety check
+		// passes for both files.
+		const conflictText =
+			"<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> other\n";
+		mockBuildInitialConflictedState.mockResolvedValue(conflictText);
 		mockVscodeSetOpenTextDocument((uri) =>
-			Promise.resolve(documentFor(uri, "old\n")),
+			Promise.resolve(documentFor(uri, conflictText)),
 		);
 		mockVscodeSetApplyEdit(() => Promise.resolve(true));
 		await registered("meld-auto-merge.autoMergeAll")();
@@ -673,17 +770,29 @@ describe("extension auto-merge commands", () => {
 			{ message: "Merging file:///work/one/a.txt..." },
 			{ message: "Merging file:///work/two/b.txt..." },
 		]);
+		// base/local/remote all differ on the fixture's single line with no
+		// shared content to reconcile, so both merges attempt but leave
+		// <<<<<<< markers rather than fully resolving.
 		expect(mockVscodeLogChannel().infos).toEqual([
-			"Weld Auto-Merge All: merged file:///work/one/a.txt",
-			"Weld Auto-Merge All: merged file:///work/two/b.txt",
+			"Weld Auto-Merge All: merged 2 of 2 file(s), 0 fully resolved.",
 		]);
 		expect(window.showInformationMessage).toHaveBeenCalledWith(
-			"Weld Auto-Merge All: merged 2 file(s).",
+			"Weld Auto-Merge All: Merged 2 of 2 file(s); 0 fully resolved, 2 still have unresolved conflicts left as <<<<<<< markers.",
 		);
 		expect(refresh).toHaveBeenCalled();
+	});
 
-		mockVscodeProgressReports().length = 0;
-		mockVscodeLogChannel().clear();
+	it("stops auto-merge-all on the first failure, reporting the successful count", async () => {
+		const firstRepo = makeRepo("/work/one", ["a.txt"]);
+		const secondRepo = makeRepo("/work/two", ["b.txt"]);
+		installGitApi(makeGitApi([firstRepo, secondRepo]));
+		activateWeld();
+		const conflictText =
+			"<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> other\n";
+		mockBuildInitialConflictedState.mockResolvedValue(conflictText);
+		mockVscodeSetOpenTextDocument((uri) =>
+			Promise.resolve(documentFor(uri, conflictText)),
+		);
 		mockVscodeSetApplyEdit((edit) =>
 			Promise.resolve(
 				edit.replacements[0]?.uri.fsPath.endsWith("a.txt") === true,
@@ -695,8 +804,78 @@ describe("extension auto-merge commands", () => {
 			"Weld Auto-Merge All stopped at file:///work/two/b.txt after 1 successful merge(s)",
 		);
 		expect(mockVscodeLogChannel().infos).toEqual([
-			"Weld Auto-Merge All: merged file:///work/one/a.txt",
+			"Weld Auto-Merge All: merged 1 of 2 file(s), 0 fully resolved.",
 		]);
+	});
+});
+
+describe("extension agent tool registration", () => {
+	it("registers a weld_apply_automerge_all callback that reports each file's outcome", async () => {
+		const repo = makeRepo("/work/repo", ["a.txt"]);
+		installGitApi(makeGitApi([repo]));
+		activateWeld();
+		const conflictText =
+			"<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> other\n";
+		mockBuildInitialConflictedState.mockResolvedValue(conflictText);
+		mockVscodeSetOpenTextDocument((uri) =>
+			Promise.resolve(documentFor(uri, conflictText)),
+		);
+		mockVscodeSetApplyEdit(() => Promise.resolve(true));
+
+		expect(mockRegisterAgentTools).toHaveBeenCalledTimes(1);
+		const applyAutomergeAll = mockRegisterAgentTools.mock.calls[0]?.[1];
+		expect(applyAutomergeAll).toBeDefined();
+
+		// base/local/remote each change the same single line differently
+		// (same fixture as the single-file test below), so the file is
+		// merged but not fully resolved.
+		const result = await applyAutomergeAll?.({});
+		expect(result).toEqual({
+			totalCount: 1,
+			files: [
+				{
+					repositoryRoot: repo.rootUri.toString(),
+					path: "a.txt",
+					outcome: "merged",
+					remainingConflicts: 1,
+					staged: false,
+				},
+			],
+		});
+	});
+
+	it("registers a weld_apply_automerge callback that merges one located file and reports remaining conflicts", async () => {
+		const repo = makeRepo("/work/repo", ["a.txt"]);
+		installGitApi(makeGitApi([repo]));
+		const { api } = activateWeld();
+		const refresh = jest.spyOn(api.conflictedFilesProvider, "refresh");
+		const conflictText =
+			"<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> other\n";
+		mockBuildInitialConflictedState.mockResolvedValue(conflictText);
+		const document = documentFor(
+			Uri.file("/work/repo/a.txt"),
+			conflictText,
+		);
+		mockVscodeSetOpenTextDocument(() => Promise.resolve(document));
+		mockVscodeSetApplyEdit(() => Promise.resolve(true));
+
+		expect(mockRegisterAgentTools).toHaveBeenCalledTimes(1);
+		const applyAutomergeSingle = mockRegisterAgentTools.mock.calls[0]?.[2];
+		expect(applyAutomergeSingle).toBeDefined();
+
+		const result = await applyAutomergeSingle?.({
+			repositoryRoot: repo.rootUri.toString(),
+			path: "a.txt",
+		});
+
+		// base/local/remote each change the same single line differently, so
+		// Weld cannot auto-resolve the one conflicting hunk.
+		expect(result).toEqual({
+			kind: "merged",
+			remainingConflicts: 1,
+			staged: false,
+		});
+		expect(refresh).toHaveBeenCalled();
 	});
 });
 

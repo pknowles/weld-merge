@@ -2,6 +2,56 @@
 
 ## New Ideas and Features
 
+### Agent / LLM Integration
+
+Expose weld-merge to VS Code Agent Mode / Copilot through VS Code Language
+Model Tools (`contributes.languageModelTools`), gated behind `weld.agent.enable`
+(default off) since some users won't want AI/agent interaction. Already
+implemented for `weld_apply_automerge_all`, `weld_apply_automerge`,
+`weld_list_conflicts`, and `weld_get_conflict`.
+
+No MCP integration for now. Weld's useful agent operations depend on VS Code
+extension-host APIs such as the Git API, `workspace.applyEdit`, and editor UI.
+An MCP version would need either a separate headless implementation or a socket
+bridge back into the extension host, which adds remote-development and
+multi-instance complexity without helping the primary Copilot-in-VS-Code
+workflow.
+
+Design principle: Weld's tools are shortcuts for information/computation an
+agent could otherwise only get by running Weld's own deterministic algorithms
+(listing conflicts, reading conflict regions, running Weld's auto-merge). They
+must not become a channel for the model to write arbitrary or model-chosen
+content into files — that belongs to the editor's native file-editing tools,
+which already work fine once an agent has the conflict info Weld provides. Do
+not add a "resolve/apply this specific text" tool; if a tool would let the
+model author the replacement content (a full text override, or even a
+side-selection edit that a native edit could just as easily perform once
+`weld_get_conflict` has supplied exact line ranges and content), that's out of
+scope for weld-merge's LM tools.
+
+Remaining Language Model Tools:
+- `weld_open_3view` — open the 3-view diff editor for a file (read-only, no
+  state changes); requires design work to support opening without an active
+  conflict in git state (see annoyance note about re-opening the 3-view editor)
+
+#### `weld_get_conflict` / `weld_list_conflicts` (implemented)
+
+The shipped response shape is the diff3-style block design documented in
+`agent-tools-schema.md` (see its "Purpose and Intent" and `## weld_get_conflict`
+sections for the authoritative contract) — `ConflictBlock` with `range`/`note`/
+`text`/`autoMergeView`, opt-in `includeBaseDiffs`, and `weld_list_conflicts`'
+`strayMarkers`/commit-identifier fields. An earlier draft of this design
+(`current`/`unresolvedHunks`/`rawGitAccess`/`maxStageLines`/a separate
+"auto-merge suggestions" tier) was superseded before shipping and no longer
+exists in the code; do not resurrect that vocabulary.
+
+Scenario coverage (adversarial disk edits, marker-style variation, truncation,
+elision budgets, both-added/deleted/submodule kinds) lives in real-repo
+fixtures in `test/vscode/suite/agent-tools.test.ts` and
+`test/vscode/suite/helpers.ts` — see that file for what's covered.
+
+### Take-all Buttons
+
 Buttons to copy local or remote into merged would avoid having to copy/paste.
 
 ## Annoyances

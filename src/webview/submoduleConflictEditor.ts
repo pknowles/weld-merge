@@ -14,7 +14,7 @@ import {
 	type WebviewPanel,
 	window,
 } from "vscode";
-import { getRepoRelativePath } from "../gitUtils.ts";
+import { repositoryRelativePath } from "../gitUtils.ts";
 import { getWeldLogChannel } from "../log.ts";
 import {
 	EditorDisposedError,
@@ -102,7 +102,7 @@ class SubmoduleConflictEditorProvider
 	static uriFor(repository: GitApiRepository, submoduleUri: Uri): Uri {
 		const identity = {
 			repositoryRoot: repository.rootUri,
-			submodulePath: getRepoRelativePath(
+			submodulePath: repositoryRelativePath(
 				repository.rootUri,
 				submoduleUri,
 			),

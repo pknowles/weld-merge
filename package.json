@@ -210,9 +210,147 @@
 					"type": "boolean",
 					"default": true,
 					"description": "Enable smooth proportional scrolling synchronization across panels."
+				},
+				"weld.agent.enable": {
+					"type": "boolean",
+					"default": false,
+					"description": "Expose Weld Merge tools to AI agents via the VS Code Language Model Tool API."
 				}
 			}
 		},
+		"languageModelTools": [
+			{
+				"name": "weld_apply_automerge_all",
+				"toolReferenceName": "weldAutomergeAll",
+				"displayName": "Weld: Auto-merge all conflicts",
+				"userDescription": "Run Weld's automatic merge logic on every conflicted file in the workspace.",
+				"modelDescription": "Runs Weld Merge's auto-merge logic on every conflicted file in the workspace that is a text-merge candidate (both sides modified it). This is opportunistic, not a guarantee: Weld can resolve some conflicts Git cannot, but outcome \"merged\" can still have remainingConflicts > 0, left as <<<<<<< markers — a merged-but-not-fully-resolved file still needs weld_get_conflict and a manual edit. Returns { files, totalCount } where each file has repositoryRoot/path plus remainingConflicts, staged, and one outcome: \"merged\" (wrote the 3-way merge; check remainingConflicts), \"autoResolutionsAlreadyApplied\" (already matched the auto-merge result, nothing written), or \"skippedWouldClobber\" (its live content had already changed since the conflict was created, so it was left untouched rather than discarding that change — feed it into weld_apply_automerge with force, or resolve it manually). staged is true only when remainingConflicts is 0 and the file was actually staged with git add; false can mean conflicts remain, or that staging itself failed (rare) despite a successful merge — check staged rather than assuming remainingConflicts === 0 implies staged. Never produces skippedWouldClobber when force is set — every attempted file is overwritten instead. Delete/modify and both-deleted conflicts are never auto-merge candidates and are not included in totalCount; call weld_list_conflicts to see those and resolve them individually. Merges files sequentially and stops only on a genuine operational failure (never on a skip). Only available when weld.agent.enable is true.",
+				"canBeReferencedInPrompt": true,
+				"when": "config.weld.agent.enable",
+				"inputSchema": {
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"force": {
+							"type": "boolean",
+							"default": false,
+							"description": "Overwrite every attempted file even if its content has changed since the conflict was created, discarding that change; with force, no file is ever skipped for this reason."
+						}
+					}
+				}
+			},
+			{
+				"name": "weld_apply_automerge",
+				"toolReferenceName": "weldAutomerge",
+				"displayName": "Weld: Auto-merge file",
+				"userDescription": "Run Weld's automatic merge logic on one conflicted file.",
+				"modelDescription": "Runs Weld Merge's auto-merge logic on a single conflicted file selected from weld_list_conflicts. This is opportunistic, not a guarantee: Weld can resolve some conflicts Git cannot, but writing the merged result does not mean the file is conflict-free — conflicts Weld cannot resolve are left as <<<<<<< conflict markers in the live document. Refuses (throws) instead of writing when the file's live content is neither the original pre-merge conflict markers nor already the auto-merge result — i.e. it was edited since the conflict was created — so it never silently discards an edit; pass force to overwrite anyway. Returns { kind: \"merged\", remainingConflicts, staged } (a nonzero remainingConflicts means weld_get_conflict and a manual edit are still needed) or { kind: \"autoResolutionsAlreadyApplied\", remainingConflicts, staged } when the file already matched the auto-merge result and nothing was written. staged is true only when remainingConflicts is 0 and the file was actually staged with git add; false can mean conflicts remain, or that staging itself failed (rare) despite a successful merge. Only available when weld.agent.enable is true.",
+				"canBeReferencedInPrompt": true,
+				"when": "config.weld.agent.enable",
+				"inputSchema": {
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"repositoryRoot": {
+							"type": "string",
+							"minLength": 1,
+							"description": "Repository root URI returned by weld_list_conflicts."
+						},
+						"path": {
+							"type": "string",
+							"minLength": 1,
+							"description": "Repository-relative conflicted path returned by weld_list_conflicts."
+						},
+						"force": {
+							"type": "boolean",
+							"default": false,
+							"description": "Overwrite the file even if its content has changed since the conflict was created, discarding that change. Omit unless a prior call refused for exactly this reason and overwriting is intended."
+						}
+					},
+					"required": [
+						"repositoryRoot",
+						"path"
+					]
+				}
+			},
+			{
+				"name": "weld_list_conflicts",
+				"toolReferenceName": "weldListConflicts",
+				"displayName": "Weld: List conflicts",
+				"userDescription": "List active Git conflicts, Weld conflict counts, commit identifiers, and leftover conflict markers across workspace repositories.",
+				"modelDescription": "Lists active conflicted files across workspace Git repositories. Returns each repository root, repository-relative path, conflict kind, Weld conflict count (Weld auto-merge resolves some conflicts git cannot, so this can be lower than the file's git marker count), base/local/remote commit identifiers (hash, branch/tag ref when known, title), and strayMarkers: git conflict-marker syntax or Weld (??) sentinel lines found on disk with their line ranges. During an active merge those markers may belong to unresolved conflicts; after resolving, call this again to verify none remain. When all conflicts in the workspace are small, each file's rendered conflict blocks are inlined as conflicts so no follow-up call is needed. Typical workflow: list, weld_apply_automerge each file, weld_get_conflict for what remains, edit the file directly, list again to verify.",
+				"canBeReferencedInPrompt": true,
+				"when": "config.weld.agent.enable",
+				"inputSchema": {
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"inlineConflictLines": {
+							"type": "integer",
+							"minimum": 0,
+							"default": 40,
+							"description": "Inline each file's conflict blocks into the listing when the total rendered line count across the workspace is at or below this budget."
+						}
+					}
+				}
+			},
+			{
+				"name": "weld_get_conflict",
+				"toolReferenceName": "weldGetConflict",
+				"displayName": "Weld: Get conflict",
+				"userDescription": "Get a file's Weld conflicts as located diff3-style blocks with surrounding disk context.",
+				"modelDescription": "Returns a conflicted file's remaining Weld conflicts as ready-to-resolve text blocks. Each block is a generated diff3-style conflict (<<<<<<< LOCAL / ||||||| BASE / ======= / >>>>>>> REMOTE) built from the Git stages, wrapped in real context lines from the file on disk. The opening marker states the one-based inclusive disk line range the resolution replaces (e.g. 'replaces lines 12-18'); range repeats it machine-readably as [startLine, endLineExclusive]. Resolve by editing the file directly at that range; there is no editing tool. When the file on disk has diverged from Weld's auto-merge result near a conflict, autoMergeView shows the same alternatives with the expected auto-merged surroundings (no file location). When a conflict cannot be mapped to the disk file, note says so instead of range; read the file before editing. Oversized sections are elided in the middle with their line numbers stated ('... N lines elided (local X-Y) ...'). type is 'bothAdded' when both sides created the file with no common ancestor; its blocks have no BASE section. Binary, delete/modify, both-deleted, and submodule conflicts return a typed explanation instead. Set includeBaseDiffs for a harder conflict to also get localDiff/remoteDiff: standard unified diffs of Base against Local and against Remote (the same 'compare with base' data the UI's buttons show), which can make what each side actually changed clearer than reading two full sections side by side; omitted by default since the block's alternatives already convey the change for most conflicts.",
+				"canBeReferencedInPrompt": true,
+				"when": "config.weld.agent.enable",
+				"inputSchema": {
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"repositoryRoot": {
+							"type": "string",
+							"minLength": 1,
+							"description": "Repository root URI returned by weld_list_conflicts."
+						},
+						"path": {
+							"type": "string",
+							"minLength": 1,
+							"description": "Repository-relative conflicted path returned by weld_list_conflicts."
+						},
+						"conflicts": {
+							"type": "array",
+							"items": {
+								"type": "integer",
+								"minimum": 0
+							},
+							"minItems": 2,
+							"maxItems": 2,
+							"description": "Zero-based inclusive [first, last] conflict range. Omit to return every conflict in the file; a single conflict is [n, n]."
+						},
+						"contextLines": {
+							"type": "integer",
+							"minimum": 0,
+							"default": 5,
+							"description": "Number of surrounding disk lines included above and below each conflict block."
+						},
+						"maxSectionLines": {
+							"type": "integer",
+							"minimum": 0,
+							"default": 40,
+							"description": "Maximum lines per LOCAL/BASE/REMOTE section before its interior is elided with an explicit line-number note."
+						},
+						"includeBaseDiffs": {
+							"type": "boolean",
+							"default": false,
+							"description": "Also return localDiff and remoteDiff: standard unified diffs of Base against Local and against Remote, scoped to each conflict, like the UI's compare-with-base buttons."
+						}
+					},
+					"required": [
+						"repositoryRoot",
+						"path"
+					]
+				}
+			}
+		],
 		"keybindings": [
 			{
 				"command": "weldConflictedFiles.focus",
@@ -406,14 +544,14 @@
 		"esbuild": "^0.28.0",
 		"glob": "^13.0.6",
 		"husky": "^9.1.7",
-		"jest": "^30.3.0",
-		"jest-environment-jsdom": "^30.3.0",
-		"jscpd": "^4.0.9",
 		"istanbul-lib-coverage": "^3.2.2",
 		"istanbul-lib-instrument": "^6.0.3",
 		"istanbul-lib-report": "^3.0.1",
 		"istanbul-lib-source-maps": "^5.0.6",
 		"istanbul-reports": "^3.2.0",
+		"jest": "^30.3.0",
+		"jest-environment-jsdom": "^30.3.0",
+		"jscpd": "^4.0.9",
 		"knip": "^6.11.0",
 		"lcov-result-merger": "^6.0.0",
 		"lint-staged": "^16.4.0",

@@ -82,7 +82,8 @@ interface CpuProfile {
 function generateText(lines: number): string {
 	let text = "";
 	for (let i = 0; i < lines; i++) {
-		text += `Line ${i}: ${Math.random().toString(36).slice(7)}\n`;
+		const variedPayload = Math.imul(i + 1, 2_654_435_761) >>> 0;
+		text += `Line ${i}: ${variedPayload.toString(36)}\n`;
 	}
 	return text;
 }

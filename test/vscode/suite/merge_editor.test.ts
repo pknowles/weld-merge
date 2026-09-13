@@ -12,9 +12,11 @@ import type {
 } from "../../../src/webview/ui/types.ts";
 import { runGit } from "../../runGit.ts";
 import {
+	lsFilesStages,
 	makeConflict,
 	makeRepo,
 	makeSecondConflict,
+	makeWeldResolvableConflict,
 	openRepoInGitExtension,
 	waitForMergeChanges,
 	waitForRepoClose,
@@ -434,6 +436,53 @@ describe("MeldCustomEditorProvider — all 5 panes after conflict switch (VS Cod
 			);
 
 			panel.dispose();
+		} finally {
+			const closePromise = waitForRepoClose(repoPath);
+			await rm(repoPath, { recursive: true, force: true });
+			await closePromise;
+		}
+	});
+});
+
+// Regression guard: opening the merge editor on a Weld-resolvable conflict
+// (git cannot auto-resolve it, but Weld's algorithm can) used to replace the
+// document content via its own separate implementation that never staged
+// the result — Git kept reporting the file unmerged even though the editor
+// had already "fixed" it. _maybeApplyAutoMerge now goes through
+// performAutoMerge, the same shared function extension.ts's commands and
+// agent tools use, so the editor path gets staging for free.
+describe("MeldCustomEditorProvider — auto-merge on open (VS Code host)", () => {
+	it("stages the file once opening the editor auto-merges it", async () => {
+		const repoPath = await makeRepo("weld-editor-automerge-");
+		try {
+			makeWeldResolvableConflict(repoPath);
+			await openRepoInGitExtension(repoPath);
+			const repo = getGitApi().getRepository(Uri.file(repoPath));
+			if (!repo) {
+				throw new Error(`Expected git repository at ${repoPath}`);
+			}
+			await waitForMergeChanges(repo, 1);
+
+			assert.deepEqual(
+				lsFilesStages(repoPath, "tracked.txt"),
+				new Set([1, 2, 3]),
+				"expected the file to start unmerged",
+			);
+
+			const { panel } = await openEditorOnConflictedFile(repoPath);
+			// _maybeApplyAutoMerge runs fire-and-forget from
+			// resolveCustomTextEditor (see its call site's "Note:" comment) —
+			// openEditorOnConflictedFile only awaits the initial loadDiff, not
+			// the auto-merge itself, so wait for git to actually observe the
+			// stage drop before asserting on it.
+			await waitForMergeChanges(repo, 0);
+			panel.dispose();
+
+			assert.deepEqual(
+				lsFilesStages(repoPath, "tracked.txt"),
+				new Set(),
+				"expected the editor's auto-merge to stage the file",
+			);
 		} finally {
 			const closePromise = waitForRepoClose(repoPath);
 			await rm(repoPath, { recursive: true, force: true });
