@@ -710,17 +710,24 @@ async function withConflictRepo(
 ): Promise<void> {
 	const repoPath = await makeRepo(prefix);
 	makeConflictFn(repoPath);
-	await openRepoInGitExtension(repoPath);
-	const repo = getGitApi().getRepository(Uri.file(repoPath));
-	if (!repo) {
-		throw new Error(`Expected git repository at ${repoPath}`);
-	}
-	await waitForMergeChanges(repo, options.expectedConflictCount ?? 1);
+	// openRepoInGitExtension and waitForMergeChanges both register the repo
+	// with the live Git extension; if either throws (e.g. a wrong
+	// expectedConflictCount timing out), the repo would otherwise leak open
+	// for the rest of the run and pollute every later test that lists
+	// conflicts across all open repositories. Covering them by the same
+	// try/finally as testFn ensures cleanup always runs.
 	try {
+		await openRepoInGitExtension(repoPath);
+		const repo = getGitApi().getRepository(Uri.file(repoPath));
+		if (!repo) {
+			throw new Error(`Expected git repository at ${repoPath}`);
+		}
+		await waitForMergeChanges(repo, options.expectedConflictCount ?? 1);
 		await testFn(repoPath, repo);
 	} finally {
 		const closePromise = waitForRepoClose(repoPath);
-		if (options.closeBeforeCleanup) {
+		const repo = getGitApi().getRepository(Uri.file(repoPath));
+		if (options.closeBeforeCleanup && repo) {
 			// An auto-merge edits the worktree and causes the Git extension to
 			// schedule refresh work. Close its repository before deletion so that
 			// work cannot start git with a removed working directory.
