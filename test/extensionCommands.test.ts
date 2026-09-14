@@ -801,7 +801,7 @@ describe("extension auto-merge-all command", () => {
 		await expect(
 			registered("meld-auto-merge.autoMergeAll")(),
 		).rejects.toThrow(
-			"Weld Auto-Merge All stopped at file:///work/two/b.txt after 1 successful merge(s)",
+			"Weld Auto-Merge All stopped at file:///work/two/b.txt after 1 file(s) attempted",
 		);
 		expect(mockVscodeLogChannel().infos).toEqual([
 			"Weld Auto-Merge All: merged 1 of 2 file(s), 0 fully resolved.",
