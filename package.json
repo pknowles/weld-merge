@@ -213,7 +213,7 @@
 				},
 				"weld.agent.enable": {
 					"type": "boolean",
-					"default": false,
+					"default": true,
 					"description": "Expose Weld Merge tools to AI agents via the VS Code Language Model Tool API."
 				}
 			}

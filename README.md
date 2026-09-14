@@ -22,6 +22,24 @@ looking for a dedicated 3-way merge tool and superior Git merge conflict
 resolution, this Visual Studio Code Git extension provides an unmatched
 developer experience.
 
+**AI Integration**
+
+Weld Merge enables better AI merge conflict resolution, exposing the same
+features through vscode's [Language Model Tool
+API](https://code.visualstudio.com/api/extension-guides/ai/tools).
+
+You might think manual conflict resolution is a thing of the past, but tools
+still have value to AI. Similarly to an MCP server, coding agents can be given
+access to the same auto-merge operation and visualization data. Yes, agents are
+quite capable of resolving merge conflicts by themselves, but with Weld Merge
+they don't have to consume as much context or work as hard to match code between
+branches. Weld Merge LLM tools (enabled by default) provide conflict block
+summaries with previews, surrounding context and line number correlations
+between *base*, *local* and *remote* versions.
+
+Note: AFAIK Copilot Chat is the only agent currently using the vscode's API, but
+I hope Claude, Codex, Cursor, Antigravity etc. will add support soon.
+
 **Environment Support**
 
 ✔ Local Filesystem<br/>
@@ -161,6 +179,24 @@ The extension adds a **Weld Merge : Conflicted Files** view to the native Source
   - **Open File (Default Editor)**: Opens the file in the standard VS Code editor.
   - **Open VS Code's 3-Way Merge Editor**: Opens the file in the default VS Code 3-way merge editor.
 
+### LLM Tools
+
+The following AI callable tools are provided. You may also tell your agent to
+use them, e.g. "rebase onto origin/main using Weld Merge tools":
+
+- `weld_apply_automerge_all` - Runs Weld's automatic merge logic on all
+  conflicted files. Safe to try first, before any manual investigation.
+- `weld_apply_automerge` - Single file variant.
+- `weld_list_conflicts` - Lists active conflicted files, conflict kind, count,
+  base/local/remote commit info, leftover conflict markers. Small conflicts are
+  inlined directly to shortcut `weld_get_conflict` follow-up calls.
+- `weld_get_conflict` - Returns a file's remaining conflicts as diff3-style
+  blocks with surrounding context and disk line ranges, so the agent can edit
+  the file directly without needing to re-derive the conflict boundaries itself.
+
+These tools are only registered when the `weld.agent.enable` setting is `true`
+(the default).
+
 ## How It Works
 
 This is a straight diff algorithm port plus a reimplementation of the 3-way Meld
@@ -202,6 +238,18 @@ If you already have a conflicted file actively open in your regular VS Code edit
 3. The custom 3-way merge viewer will open up immediately for that file.
 4. *(Optional)* Alternatively, you can run the **Weld: Auto-Merge Current File**
    in case there are low hanging fruit conflicts that can be auto-resolved.
+
+### From a Copilot Chat
+
+Install the extension, open a copilot chat and ask the agent (for example):
+
+- "Rebase onto origin/main using Weld Merge tools"
+- "Can you see the Weld Merge tools in vscode's Language Model API?"
+- "What LLM tools does Weld Merge expose in this chat and would they be useful now?"
+
+If missing, check Ctrl-Shift-P, "Preferences: Open User Settings", search
+"Weld", verify "Weld › Agent: Enable" is enabled. The agent also sees command
+palette actions, which it should avoid.
 
 ### Resolving Merge Conflicts
 
