@@ -22,11 +22,13 @@ import { execGit, repositoryRelativePath } from "./gitUtils.ts";
 import type { DiffChunk } from "./matchers/myers.ts";
 import {
 	type ConflictedItem,
+	type ConflictLocation,
 	createConflictedItem,
 	getGitApi,
 	isSupportedScheme,
 } from "./repoContext.ts";
 import { isActiveSubmoduleGitlinkConflict } from "./submoduleConflict.ts";
+import { stageIfClean } from "./webview/autoMerge.ts";
 
 const DEFAULT_CONTEXT_LINES = 5;
 const DEFAULT_MAX_SECTION_LINES = 40;
@@ -50,11 +52,6 @@ type ConflictKind =
 	| "submodule";
 type TextConflictKind = "text" | "bothAdded";
 type NonTextConflictKind = Exclude<ConflictKind, TextConflictKind>;
-
-interface ConflictLocation {
-	repositoryRoot: string;
-	path: string;
-}
 
 interface CommitId {
 	hash: string;
@@ -121,6 +118,35 @@ interface ConflictList {
 
 interface ListConflictsToolInput {
 	inlineConflictLines?: number;
+}
+
+interface StageResolvedToolInput {
+	repositoryRoot: string;
+	paths: string[];
+}
+
+/**
+ * Per-file outcome of a `weld_stage_resolved` call. `staged` is true only
+ * when this file had no stray markers left on disk and `git add` actually
+ * succeeded — `reason` explains why staging was skipped whenever it is
+ * false. `conflictCount` (from Weld's own index-stage diff, not the disk
+ * text) is included for context but is not itself the staging gate: a
+ * correctly hand-resolved file routinely still reports it above zero.
+ */
+type StagedFile =
+	| { path: string; staged: true }
+	| {
+			path: string;
+			staged: false;
+			reason: "strayMarkers" | "notStageableKind" | "stagingFailed";
+			kind: ConflictKind;
+			conflictCount: number;
+			strayMarkers?: StrayMarker[];
+			strayMarkersTruncated?: true;
+	  };
+
+interface StageResolvedResult {
+	files: StagedFile[];
 }
 
 interface GetConflictToolInput extends ConflictLocation {
@@ -207,6 +233,27 @@ function normalizeGetConflictInput(
 		maxSectionLines,
 		includeBaseDiffs: input.includeBaseDiffs === true,
 	};
+}
+
+function normalizeStageResolvedInput(
+	input: StageResolvedToolInput,
+): StageResolvedToolInput {
+	if (
+		typeof input.repositoryRoot !== "string" ||
+		input.repositoryRoot === ""
+	) {
+		throw new Error("repositoryRoot must be a non-empty URI string.");
+	}
+	if (
+		!Array.isArray(input.paths) ||
+		input.paths.length === 0 ||
+		input.paths.some((path) => typeof path !== "string" || path === "")
+	) {
+		throw new Error(
+			"paths must be a non-empty array of non-empty strings.",
+		);
+	}
+	return input;
 }
 
 function validConflictRange(conflicts: [number, number]): boolean {
@@ -896,6 +943,34 @@ function blockLineCount(blocks: ConflictBlock[]): number {
 	);
 }
 
+// Shared per-file inspection: conflict kind, disk content (when the kind has
+// any), and the resulting stray-marker report. listConflicts uses this for
+// every open conflict to build its listing; stageResolved uses the same
+// result shape to decide whether a specific file is actually clean, so the
+// two never diverge on what "clean" means.
+interface ConflictItemInspection {
+	inspection: ConflictInspection;
+	diskContent: string | null;
+	strayMarkers: Pick<
+		ListedConflict,
+		"strayMarkers" | "strayMarkersTruncated"
+	>;
+}
+
+async function inspectConflictItem(
+	item: ConflictedItem,
+): Promise<ConflictItemInspection> {
+	const inspection = await inspectConflict(item);
+	const diskContent = DISK_READABLE_KINDS.has(inspection.kind)
+		? await readDiskContent(item)
+		: null;
+	return {
+		inspection,
+		diskContent,
+		strayMarkers: strayMarkerReport(inspection.kind, diskContent),
+	};
+}
+
 async function listConflicts(
 	input: ListConflictsToolInput = {},
 ): Promise<ConflictList> {
@@ -924,10 +999,8 @@ async function listConflicts(
 					item.repository.rootUri.toString(),
 					commits,
 				);
-				const inspection = await inspectConflict(item);
-				const diskContent = DISK_READABLE_KINDS.has(inspection.kind)
-					? await readDiskContent(item)
-					: null;
+				const { inspection, diskContent, strayMarkers } =
+					await inspectConflictItem(item);
 				let blocks: ConflictBlock[] = [];
 				if (
 					inspection.kind === "text" ||
@@ -959,7 +1032,7 @@ async function listConflicts(
 								: 1,
 						kind: inspection.kind,
 						commits: await commits,
-						...strayMarkerReport(inspection.kind, diskContent),
+						...strayMarkers,
 					} satisfies ListedConflict,
 					blocks,
 				};
@@ -1065,15 +1138,82 @@ async function getConflict(
 	};
 }
 
+// weld_stage_resolved: stages exactly the given files that are actually
+// clean, skipping the rest with a typed reason. This is the narrow verify
+// step for files an agent just edited — unlike weld_list_conflicts it never
+// returns conflict content, commit info, or unrequested files, and it acts
+// (git add) rather than only reporting, so a "did my edits work, and if so
+// lock them in" round trip is one call instead of list-then-add.
+//
+// Gates on stray markers, not conflictCount: conflictCount comes from diffing
+// the git index stages (see conflictSnapshot.ts's conflictChangeIndexes) and
+// reflects whether Weld's own auto-merge could reconcile base/local/remote —
+// it says nothing about arbitrary hand-written text an agent puts on disk, so
+// a correctly hand-resolved file routinely still reports conflictCount > 0
+// (see SKILL.md and agent-tools-schema.md's "post-merge verification step").
+// The only signal that generalizes to a hand edit is the absence of stray
+// marker/sentinel syntax on disk, exactly what weld_list_conflicts documents
+// as the verification step: list again and expect no strayMarkers.
+async function stageOneResolved(
+	repositoryRoot: string,
+	path: string,
+): Promise<StagedFile> {
+	const item = resolveConflictedItem({ repositoryRoot, path });
+	const { inspection, strayMarkers } = await inspectConflictItem(item);
+	if (inspection.kind !== "text" && inspection.kind !== "bothAdded") {
+		return {
+			path,
+			staged: false,
+			reason: "notStageableKind",
+			kind: inspection.kind,
+			conflictCount: 1,
+		};
+	}
+	const conflictCount = inspection.snapshot.conflictChangeIndexes.length;
+	if (strayMarkers.strayMarkers !== undefined) {
+		return {
+			path,
+			staged: false,
+			reason: "strayMarkers",
+			kind: inspection.kind,
+			conflictCount,
+			...strayMarkers,
+		};
+	}
+	if (!(await stageIfClean(item))) {
+		return {
+			path,
+			staged: false,
+			reason: "stagingFailed",
+			kind: inspection.kind,
+			conflictCount,
+		};
+	}
+	return { path, staged: true };
+}
+
+async function stageResolved(
+	input: StageResolvedToolInput,
+): Promise<StageResolvedResult> {
+	const { repositoryRoot, paths } = normalizeStageResolvedInput(input);
+	return {
+		files: await Promise.all(
+			paths.map((path) => stageOneResolved(repositoryRoot, path)),
+		),
+	};
+}
+
+export type { ConflictLocation } from "./repoContext.ts";
 export type {
 	BaseDiffInput,
 	ConflictList,
-	ConflictLocation,
 	GetConflictResult,
 	GetConflictToolInput,
 	ListConflictsToolInput,
 	ListedConflict,
 	NonTextConflictKind,
+	StageResolvedResult,
+	StageResolvedToolInput,
 };
 export {
 	createNonTextConflictResult,
@@ -1081,6 +1221,8 @@ export {
 	listConflicts,
 	nonTextMessage,
 	normalizeGetConflictInput,
+	normalizeStageResolvedInput,
 	renderBaseDiff,
 	resolveConflictedItem,
+	stageResolved,
 };

@@ -228,7 +228,9 @@ async function fetchConflictStages(
 	const isBothAdded =
 		conflictedItem.mergeChange?.status === GitStatus.BOTH_ADDED;
 	const [base, local, remote] = await Promise.all([
-		isBothAdded ? "" : readIndexStageContent(repository, uri, GIT_STAGE_BASE),
+		isBothAdded
+			? ""
+			: readIndexStageContent(repository, uri, GIT_STAGE_BASE),
 		readIndexStageContent(repository, uri, GIT_STAGE_LOCAL),
 		readIndexStageContent(repository, uri, GIT_STAGE_REMOTE),
 	]);

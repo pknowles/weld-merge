@@ -1,12 +1,11 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
 import { Range, type Uri, WorkspaceEdit, workspace } from "vscode";
-import type { ConflictLocation } from "../agentConflicts.ts";
 import { fetchConflictStages } from "../conflictSnapshot.ts";
 import { getErrorMessage } from "../gitUtils.ts";
 import { getWeldLogChannel } from "../log.ts";
 import { GitTextMerger } from "../matchers/gitTextMerger.ts";
-import type { ConflictedItem } from "../repoContext.ts";
+import type { ConflictedItem, ConflictLocation } from "../repoContext.ts";
 import { extractConflictLabels } from "./conflictLabels.ts";
 import { buildInitialConflictedState } from "./diffPayload.ts";
 
@@ -58,15 +57,23 @@ class WouldClobberEditError extends Error {
 	}
 }
 
-// Stages a file whose merge left zero remaining conflicts. Called only
-// after performAutoMerge already confirmed remainingConflicts === 0 for
-// this exact content, so this never re-derives that from the text (see
-// getUnresolvedReasons in gitUtils.ts, the text-scanning check the
-// interactive "add" command uses, which this deliberately does not
-// duplicate). Logs rather than throws on failure: staging is a convenience
-// on top of a merge that already succeeded, not a reason to fail the merge
-// itself — but the caller still needs to know it failed (returned false)
-// rather than silently reporting success, so callers can surface it.
+// Stages a file whose conflicts are confirmed resolved. Callers (this
+// module's own performAutoMerge, and agentConflicts.ts's weld_stage_resolved)
+// must have already confirmed the file has no leftover conflict-marker
+// syntax on disk before calling this — it never re-derives that from the
+// text itself (see getUnresolvedReasons in gitUtils.ts, the text-scanning
+// check the interactive "add" command uses, and scanMarkers in
+// agentConflicts.ts, the equivalent check weld_stage_resolved uses; this
+// deliberately does not duplicate either). Note performAutoMerge's caller
+// confirms via remainingConflicts === 0 (Weld's own index-stage diff, valid
+// there since it only ever stages its own generated merge output) while
+// weld_stage_resolved's caller confirms via absence of stray markers (the
+// only signal that generalizes to arbitrary hand-written text) — different
+// checks for different content, same "no markers left" invariant this relies
+// on. Logs rather than throws on failure: staging is a convenience on top of
+// a resolution that already succeeded, not a reason to fail that resolution
+// — but the caller still needs to know it failed (returned false) rather
+// than silently reporting success, so callers can surface it.
 async function stageIfClean(conflictedItem: ConflictedItem): Promise<boolean> {
 	try {
 		await conflictedItem.repository.add([conflictedItem.uri.fsPath]);
@@ -242,4 +249,9 @@ class AutoMergeAllAbortedError extends Error {
 }
 
 export type { AutoMergeAllEntry, AutoMergeAllResult, AutoMergeResult };
-export { AutoMergeAllAbortedError, performAutoMerge, WouldClobberEditError };
+export {
+	AutoMergeAllAbortedError,
+	performAutoMerge,
+	stageIfClean,
+	WouldClobberEditError,
+};

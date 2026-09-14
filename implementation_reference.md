@@ -24,41 +24,47 @@ Entry point and Git integration.
 - **`webview/submoduleConflictEditor.ts`**: Readonly custom editor for submodule conflicts. The editor URI stores only repository root URI and repo-relative submodule path; every open/reload recomputes live state from Git, so no serializer or saved conflict snapshot is needed.
 - **`agentTools.ts`**: Registers VS Code Language Model Tools
   (`weld_apply_automerge_all`, `weld_apply_automerge`, `weld_list_conflicts`,
-  `weld_get_conflict`) when `weld.agent.enable` is true and serializes typed
-  results for the LM boundary. These tools are read/compute shortcuts for
-  information or algorithms an agent could otherwise only reach by running
-  Weld's own logic (conflict listing, region inspection, Weld's deterministic
-  auto-merge); they intentionally do not let the model write arbitrary or
-  chosen content into files — that stays with the editor's native file-editing
-  tools once Weld has supplied the conflict data.
+  `weld_get_conflict`, `weld_stage_resolved`) when `weld.agent.enable` is true
+  and serializes typed results for the LM boundary. These tools are
+  read/compute shortcuts for information or algorithms an agent could
+  otherwise only reach by running Weld's own logic (conflict listing, region
+  inspection, Weld's deterministic auto-merge); they intentionally do not let
+  the model write arbitrary or chosen content into files — that stays with
+  the editor's native file-editing tools once Weld has supplied the conflict
+  data. `weld_stage_resolved` is the one exception that acts rather than only
+  reporting: it `git add`s files it has itself verified are clean.
 - **`skills/resolve-merge-conflicts/SKILL.md`**: Chat skill (registered via
   `contributes.chatSkills`, gated on `weld.agent.enable`) that tells the model
   to prefer the `weld_*` language model tools over raw git/grep when
   resolving conflicts, and how to read/order calls across them.
 - **`agentConflicts.ts`**: Shared conflict lookup and classification for
-  `weld_list_conflicts` and `weld_get_conflict`. The list tool enumerates every
-  open workspace Git repository and returns each conflicted file's kind, Weld
-  conflict count, base/local/remote commit identifiers (hash, exact branch/tag
-  ref when one names the commit, title), and `strayMarkers`: git marker syntax
-  and Weld `(??)` sentinel lines found on disk, ranges only, as the post-merge
-  verification signal. When every conflict in the workspace fits the inline
-  budget, the rendered blocks are attached to the listing directly. The get
-  tool returns a selected `[first, last]` range (or all) of a file's conflicts
-  as generated diff3-style blocks: local/base/remote alternatives from the Git
-  stages via the shared `conflictSnapshot.ts` comparison models (never an
-  independent re-diff), wrapped in context lines read from the file on disk,
-  with the disk replace-range stated on the opening marker label. Context
-  stops at marker-like or sentinel lines; `(??)` never appears in a response.
+  `weld_list_conflicts`, `weld_get_conflict`, and `weld_stage_resolved`. The
+  list tool enumerates every open workspace Git repository and returns each
+  conflicted file's kind, Weld conflict count, base/local/remote commit
+  identifiers (hash, exact branch/tag ref when one names the commit, title),
+  and `strayMarkers`: git marker syntax and Weld `(??)` sentinel lines found on
+  disk, ranges only, as the post-merge verification signal. When every
+  conflict in the workspace fits the inline budget, the rendered blocks are
+  attached to the listing directly. The get tool returns a selected `[first,
+  last]` range (or all) of a file's conflicts as generated diff3-style
+  blocks: local/base/remote alternatives from the Git stages via the shared
+  `conflictSnapshot.ts` comparison models (never an independent re-diff),
+  wrapped in context lines read from the file on disk, with the disk
+  replace-range stated on the opening marker label. Context stops at
+  marker-like or sentinel lines; `(??)` never appears in a response.
   Oversized sections are elided in the middle with explicit line numbers. An
   opt-in `includeBaseDiffs` request flag adds `localDiff`/`remoteDiff`: Base
   vs. Local and Base vs. Remote unified diffs scoped to the same region, via
-  the shared two-way comparison model `buildBaseDiffPayload` also uses.
-  When the disk context differs from the auto-merge result, `autoMergeView`
+  the shared two-way comparison model `buildBaseDiffPayload` also uses. When
+  the disk context differs from the auto-merge result, `autoMergeView`
   carries the same alternatives with the expected auto-merged surroundings;
   when a conflict no longer maps to the disk file, a `note` replaces `range`
   rather than fabricating a location. `bothAdded` blocks omit the BASE
   section (no common ancestor). Non-text conflicts retain typed
-  binary/delete/submodule results. Agent tools run in-process in the
+  binary/delete/submodule results. `weld_stage_resolved` shares the same
+  per-file inspection (`inspectConflictItem`) the list tool uses and gates
+  staging on the absence of stray markers, not on Weld's own conflict count —
+  see the function's own comment for why. Agent tools run in-process in the
   workspace extension host, are prompt-referenceable through `package.json`,
   and intentionally do not expose MCP/stdio integration. See
   `agent-tools-schema.md` for the formal wire-schema spec.

@@ -194,6 +194,9 @@ use them, e.g. "rebase onto origin/main using Weld Merge tools":
 - `weld_get_conflict` - Returns a file's remaining conflicts as diff3-style
   blocks with surrounding context and disk line ranges, so the agent can edit
   the file directly without needing to re-derive the conflict boundaries itself.
+- `weld_stage_resolved` - Verifies given files have no leftover conflict markers
+  and `git add`s each one that is clean, in one call. Cheaper than a full
+  `weld_list_conflicts` re-call.
 
 A chat skill,
 [`resolve-merge-conflicts`](skills/resolve-merge-conflicts/SKILL.md), gives

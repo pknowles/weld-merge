@@ -104,6 +104,15 @@ async function main(): Promise<void> {
 	const launchTelemetryWorkspace = createLaunchTelemetryWorkspace();
 	const workspacePath = createTestWorkspace();
 
+	// Forces X11 regardless of the host session type: on a Wayland desktop,
+	// Electron/Chromium's Ozone auto-detection picks the real Wayland
+	// compositor over the DISPLAY xvfb just started (unsetting
+	// WAYLAND_DISPLAY/XDG_SESSION_TYPE is not reliable enough to stop this),
+	// which would render the test window on the actual desktop instead of
+	// the hidden virtual display xvfb provides.
+	const ozoneArgs =
+		process.platform === "linux" ? ["--ozone-platform=x11"] : [];
+
 	try {
 		await runTests({
 			extensionDevelopmentPath,
@@ -114,6 +123,7 @@ async function main(): Promise<void> {
 				"--disable-extensions",
 				"--skip-welcome",
 				"--skip-release-notes",
+				...ozoneArgs,
 			],
 		});
 		await runTests({
@@ -125,6 +135,7 @@ async function main(): Promise<void> {
 				"--disable-extensions",
 				"--skip-welcome",
 				"--skip-release-notes",
+				...ozoneArgs,
 			],
 		});
 	} finally {

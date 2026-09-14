@@ -317,6 +317,56 @@ type NonTextConflictResult = {
 };
 ```
 
+## `weld_stage_resolved`
+
+Input: `repositoryRoot` and a non-empty `paths` array of repository-relative
+conflicted paths, e.g. files the agent just edited.
+
+```ts
+type StageResolvedResult = { files: StagedFile[] };
+type StagedFile =
+  | { path: string; staged: true }
+  | {
+      path: string;
+      staged: false;
+      reason: "strayMarkers" | "notStageableKind" | "stagingFailed";
+      kind: ConflictKind;
+      conflictCount: number;
+      strayMarkers?: StrayMarker[];
+      strayMarkersTruncated?: true;
+    };
+```
+
+This is the narrow verify-then-act counterpart to `weld_list_conflicts`'s
+post-merge verification step: instead of re-listing every conflicted file in
+the workspace (conflict content, commit identifiers, kind) just to check
+whether the files an agent just edited are clean, it checks exactly the given
+paths and, for each one that is clean, runs `git add` — collapsing the
+"did that work, and if so lock it in" round trip into one call with a much
+smaller response.
+
+"Clean" is gated on the **absence of stray markers**, not on `conflictCount`.
+`conflictCount` (Weld's own count, from diffing the git index stages the same
+way `weld_list_conflicts` does) reflects whether Weld's auto-merge algorithm
+could reconcile base/local/remote — it says nothing about arbitrary text an
+agent writes by hand. A correctly hand-resolved file routinely still reports
+`conflictCount > 0`, because the underlying base/local/remote stages never
+agreed automatically; that is expected, not a sign of a bad resolution. The
+only signal that generalizes to hand-written text is the same one
+`weld_list_conflicts` already documents as the verification step: no leftover
+`<<<<<<<`/`|||||||`/`=======`/`>>>>>>>` marker syntax or Weld `(??)` sentinel
+on disk. `conflictCount` is still returned on a skip for context.
+
+- `reason: "strayMarkers"` — marker or sentinel text remains; `strayMarkers`
+  carries the same ranges `weld_list_conflicts` would report. Fix and call
+  again.
+- `reason: "notStageableKind"` — binary, delete/modify, both-deleted, and
+  submodule conflicts are never staged by this tool (there is no hand-edited
+  text to verify); resolve via `git add`/`git rm` or the submodule UI as
+  `weld_list_conflicts`'s `kind` indicates.
+- `reason: "stagingFailed"` — the file was clean but `git add` itself failed
+  (rare); see the extension's log output.
+
 ## Examples
 
 Illustrative only; the integration tests enforce exact shapes and sizes.
@@ -366,6 +416,8 @@ Illustrative only; the integration tests enforce exact shapes and sizes.
 - `src/conflictSnapshot.ts`: shared two-way and three-way comparison models.
 - `src/webview/diffPayload.ts`: GUI payloads built from those models.
 - `src/agentConflicts.ts`: conflict block rendering, disk mapping, stray
-  marker scan, commit identifiers.
+  marker scan, commit identifiers, `weld_stage_resolved`'s verify-then-`git
+  add` logic (reusing `webview/autoMerge.ts`'s `stageIfClean`).
 - `test/vscode/suite/agent-tools.test.ts`: block format, GUI parity, disk
-  mapping, elision, stray markers, inline listing, response-size budgets.
+  mapping, elision, stray markers, inline listing, response-size budgets,
+  stage-resolved verification and staging.

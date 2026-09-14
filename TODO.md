@@ -337,6 +337,53 @@ Gemini's summary of jscpd (currently thresholded in `.jscpd.json`):
 
 Rename _mergeCache. It's more of a "current merged change list" than a cache. Maybe mergedDiffChunks?
 
+## Test helpers should await `repository.status()` instead of racing `onDidChange` with a timeout
+
+`waitForMergeChanges` and `waitForRepoClose` in `test/vscode/suite/helpers.ts` wait for
+`repo.state.onDidChange` to eventually report the expected `mergeChanges` count/repo-closed
+state, with a 10s timeout as a backstop. Investigated while debugging a stale
+`expectedConflictCount` that caused a real 10s stall (see the `8544d4a9`/`8f18d5de` fixups on
+`pknowles/lm-tools`): confirmed by reading VS Code's bundled git extension source
+(`extensions/git/dist/main.js`) that `GitApiRepository.status()` (already exposed on our own
+`GitApiRepository` type in `repoContext.ts`) internally does `await this.run(Status)`, and
+`run()` awaits `updateModelState()` — which rebuilds `mergeChanges` — before returning, on both
+the success and failure paths. So `await repo.status()` is a real, correlated awaitable for
+"the status refresh this call triggered has finished", not a fire-and-forget call — the
+passive `onDidChange`-listening pattern with a timeout is unnecessary for any wait where we
+are the ones triggering the change (after `makeConflictFn` sets up a repo, after an edit,
+after `git.close`). A timeout is still the right tool for `openRepoInGitExtension`'s initial
+discovery, where VS Code's own filesystem watcher decides when to notice the workspace was
+opened and we have no call to await.
+
+Fix: rewrite `waitForMergeChanges`/`waitForRepoClose` (or their call sites) to `await
+repo.status()` (or the equivalent close-triggering call) directly instead of racing an event
+listener against a timeout, for every case where the test itself performs the triggering
+action. Keep a short timeout only around genuinely external, uncontrolled latency.
+
+## Marker-detection duplication: `getUnresolvedReasons` vs `scanMarkers`
+
+Found the same investigation as above, while checking `weld_stage_resolved`'s factoring
+against the existing UI "Stage Resolved" path (`handleSmartAdd` in `extension.ts`). Two
+independent, pre-existing implementations of "does this text contain leftover conflict-marker
+syntax":
+
+- `getUnresolvedReasons` (`gitUtils.ts`): used by `handleSmartAdd`/the UI's Stage Resolved
+  button. Requires an exact 7-char `<<<<<<<`/`=======`/`>>>>>>>`/`|||||||` at line start;
+  `(??)` only matches at line start too. Returns coarse reason strings, no locations.
+- `scanMarkers` (`agentConflicts.ts`): used by `weld_list_conflicts` and `weld_stage_resolved`.
+  Matches any run of 1+ of the marker character followed by whitespace/EOL (more permissive —
+  e.g. a lone stray `<` at line start would match), and catches `(??)` anywhere in the line.
+  Returns exact `StrayMarker[]` ranges, needed by the agent tools' response shape.
+
+They can disagree on edge-case marker text, so the UI's Stage Resolved button and
+`weld_stage_resolved` could reach different verdicts on the same file. Agreed with the user
+(2026-09-14) to unify in a dedicated follow-up patch, not bundled into the `weld_stage_resolved`
+change: extract one canonical range-producing scanner — keep `scanMarkers`'s ranged output
+shape (agent tools need locations) but tighten its regexes to the UI's stricter exact-marker-
+length rule (avoid new false positives on the interactive staging gate) — and make
+`getUnresolvedReasons` a thin wrapper over it (map ranges → reason strings). Touches
+`gitUtils.ts`, `extension.ts`, `meldWebviewPanel.ts`, and their existing tests.
+
 ## Testing Improvements
 
 Add tests for opening deleted-by-us and deleted-by-them conflicts that have been resolved as deleting. Currently I think we still try to open these files even though they don't exist on disk.

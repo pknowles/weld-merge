@@ -355,6 +355,39 @@
 						"path"
 					]
 				}
+			},
+			{
+				"name": "weld_stage_resolved",
+				"toolReferenceName": "weldStageResolved",
+				"displayName": "Weld: Stage resolved files",
+				"userDescription": "Verify that edited conflicted files are actually clean, and git add each one that is.",
+				"modelDescription": "Verifies each given repository-relative path is actually clean and stages it with git add if so, in one call — the narrow check-then-add step for files you just finished editing, cheaper than a full weld_list_conflicts re-call since it returns only staging status per requested file, not conflict content or commit info for the whole workspace. \"Clean\" means no stray marker syntax or Weld (??) sentinel left on disk — the same post-merge verification signal weld_list_conflicts reports; a file's conflictCount (Weld's own count from diffing the git stages) commonly stays above zero even after a correct hand resolution, so it is informational here, not the staging gate. Returns { files } where each entry is { path, staged: true } once staged, or { path, staged: false, reason, kind, conflictCount, strayMarkers? } when it was not: \"strayMarkers\" (leftover <<<<<<< / ||||||| / ======= / >>>>>>> marker syntax or a Weld (??) sentinel remains on disk — remove it and call again), \"notStageableKind\" (binary, delete/modify, both-deleted, or submodule conflicts are never staged by this tool; resolve via git add/git rm or the submodule UI as weld_list_conflicts' conflict kind indicates), or \"stagingFailed\" (the file was clean but git add itself failed, rare). Only available when weld.agent.enable is true.",
+				"canBeReferencedInPrompt": true,
+				"when": "config.weld.agent.enable",
+				"inputSchema": {
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"repositoryRoot": {
+							"type": "string",
+							"minLength": 1,
+							"description": "Repository root URI returned by weld_list_conflicts."
+						},
+						"paths": {
+							"type": "array",
+							"items": {
+								"type": "string",
+								"minLength": 1
+							},
+							"minItems": 1,
+							"description": "Repository-relative conflicted paths to verify and stage, returned by weld_list_conflicts."
+						}
+					},
+					"required": [
+						"repositoryRoot",
+						"paths"
+					]
+				}
 			}
 		],
 		"keybindings": [

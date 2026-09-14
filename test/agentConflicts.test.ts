@@ -5,6 +5,7 @@ import {
 	type BaseDiffInput,
 	createNonTextConflictResult,
 	normalizeGetConflictInput,
+	normalizeStageResolvedInput,
 	renderBaseDiff,
 } from "../src/agentConflicts.ts";
 import type { DiffChunk } from "../src/matchers/myers.ts";
@@ -12,6 +13,9 @@ import type { DiffChunk } from "../src/matchers/myers.ts";
 const NONNEGATIVE_SAFE_INTEGER_REGEX = /nonnegative safe integer/u;
 const CONFLICT_RANGE_ERROR_REGEX = /first, last/u;
 const MISSING_CONFLICT_CHANGE_REGEX = /Could not find the conflict change/u;
+const NON_EMPTY_URI_ERROR_REGEX = /repositoryRoot must be a non-empty URI/u;
+const NON_EMPTY_PATHS_ERROR_REGEX =
+	/paths must be a non-empty array of non-empty strings/u;
 
 describe("normalizeGetConflictInput", () => {
 	it("defaults omitted options and selects all conflicts", () => {
@@ -97,6 +101,48 @@ describe("normalizeGetConflictInput", () => {
 					...testCase,
 				}),
 			).toThrow(NONNEGATIVE_SAFE_INTEGER_REGEX);
+		});
+	}
+});
+
+describe("normalizeStageResolvedInput", () => {
+	it("accepts a repository root with one or more paths", () => {
+		expect(
+			normalizeStageResolvedInput({
+				repositoryRoot: "file:///repo",
+				paths: ["tracked.txt", "other.txt"],
+			}),
+		).toEqual({
+			repositoryRoot: "file:///repo",
+			paths: ["tracked.txt", "other.txt"],
+		});
+	});
+
+	it("rejects an empty repositoryRoot", () => {
+		expect(() =>
+			normalizeStageResolvedInput({
+				repositoryRoot: "",
+				paths: ["tracked.txt"],
+			}),
+		).toThrow(NON_EMPTY_URI_ERROR_REGEX);
+	});
+
+	const invalidPathsCases: { name: string; paths: string[] }[] = [
+		{ name: "an empty paths array", paths: [] },
+		{ name: "a paths entry that is an empty string", paths: [""] },
+		{
+			name: "a non-string paths entry",
+			paths: [42] as unknown as string[],
+		},
+	];
+	for (const testCase of invalidPathsCases) {
+		it(`rejects ${testCase.name}`, () => {
+			expect(() =>
+				normalizeStageResolvedInput({
+					repositoryRoot: "file:///repo",
+					paths: testCase.paths,
+				}),
+			).toThrow(NON_EMPTY_PATHS_ERROR_REGEX);
 		});
 	}
 });

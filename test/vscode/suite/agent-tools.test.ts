@@ -17,6 +17,7 @@ import type {
 	ConflictList,
 	GetConflictResult,
 	ListedConflict,
+	StageResolvedResult,
 } from "../../../src/agentConflicts.ts";
 import { getGitApi } from "../../../src/repoContext.ts";
 import {
@@ -28,6 +29,7 @@ import {
 	getConflictedItem,
 	lsFilesStages,
 	makeAdjacentResolvedChangeConflict,
+	makeAllConflictKindsRepo,
 	makeBinaryConflict,
 	makeBothAddedConflict,
 	makeBothDeletedConflict,
@@ -136,6 +138,18 @@ async function invokeApplyAutomerge(
 	);
 	assert.ok("staged" in parsed && typeof parsed.staged === "boolean");
 	return parsed as ApplyAutomergeResult;
+}
+
+async function invokeStageResolved(
+	input: object,
+): Promise<StageResolvedResult> {
+	const parsed: unknown = JSON.parse(
+		await invokeTextTool("weld_stage_resolved", input),
+	);
+	assert.ok(parsed && typeof parsed === "object", "expected result object");
+	assert.ok("files" in parsed, "expected files property");
+	assert.ok(Array.isArray(parsed.files), "expected files array");
+	return parsed as StageResolvedResult;
 }
 
 async function withListToolEnabled(test: () => Promise<void>): Promise<void> {
@@ -479,6 +493,226 @@ describe("Agent Tools: Auto-merge staging", () => {
 						lsFilesStages(repoPath, "tracked.txt"),
 						new Set(),
 						"expected the fully auto-merged file to be staged",
+					);
+				});
+			},
+			{ closeBeforeCleanup: true },
+		));
+});
+
+describe("Agent Tools: Stage resolved files", () => {
+	it("stages a file once its conflict is manually resolved on disk", () =>
+		withConflictRepo(
+			"weld-agent-stage-resolved-",
+			makeConflict,
+			async (repoPath) => {
+				await workspace.fs.writeFile(
+					Uri.file(join(repoPath, "tracked.txt")),
+					new TextEncoder().encode("resolved\n"),
+				);
+				await withListToolEnabled(async () => {
+					const result = await invokeStageResolved({
+						repositoryRoot: Uri.file(repoPath).toString(),
+						paths: ["tracked.txt"],
+					});
+					assert.deepEqual(result.files, [
+						{ path: "tracked.txt", staged: true },
+					]);
+					assert.deepEqual(
+						lsFilesStages(repoPath, "tracked.txt"),
+						new Set(),
+						"expected the resolved file to be staged",
+					);
+				});
+			},
+			{ closeBeforeCleanup: true },
+		));
+
+	it("does not stage a file whose conflict markers remain untouched", () =>
+		withConflictRepo(
+			"weld-agent-stage-unresolved-",
+			makeConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					const result = await invokeStageResolved({
+						repositoryRoot: Uri.file(repoPath).toString(),
+						paths: ["tracked.txt"],
+					});
+					assert.equal(result.files.length, 1);
+					const file = result.files[0];
+					assert.ok(file);
+					assert.equal(file.staged, false);
+					assert.ok(
+						"reason" in file && file.reason === "strayMarkers",
+					);
+					assert.ok(
+						"conflictCount" in file && file.conflictCount === 1,
+					);
+					assert.deepEqual(
+						lsFilesStages(repoPath, "tracked.txt"),
+						new Set([1, 2, 3]),
+						"expected the unresolved file to remain unstaged",
+					);
+				});
+			},
+			{ closeBeforeCleanup: true },
+		));
+
+	it("does not stage a file that still has stray marker text even once Weld's own conflict count reaches zero", () =>
+		withConflictRepo(
+			"weld-agent-stage-stray-marker-",
+			makeConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					await invokeApplyAutomerge({
+						repositoryRoot: Uri.file(repoPath).toString(),
+						path: "tracked.txt",
+						force: true,
+					});
+					const document = await workspace.openTextDocument(
+						Uri.file(join(repoPath, "tracked.txt")),
+					);
+					await workspace.fs.writeFile(
+						Uri.file(join(repoPath, "tracked.txt")),
+						new TextEncoder().encode(
+							`${document.getText()}\n=======\n`,
+						),
+					);
+
+					const result = await invokeStageResolved({
+						repositoryRoot: Uri.file(repoPath).toString(),
+						paths: ["tracked.txt"],
+					});
+					assert.equal(result.files.length, 1);
+					const file = result.files[0];
+					assert.ok(file);
+					assert.equal(file.staged, false);
+					assert.ok(
+						"reason" in file && file.reason === "strayMarkers",
+					);
+					assert.ok(
+						"strayMarkers" in file &&
+							Array.isArray(file.strayMarkers),
+					);
+					assert.deepEqual(
+						lsFilesStages(repoPath, "tracked.txt"),
+						new Set([1, 2, 3]),
+						"expected the file with a stray marker to remain unstaged",
+					);
+				});
+			},
+			{ closeBeforeCleanup: true },
+		));
+});
+
+describe("Agent Tools: Stage resolved files, mixed and invalid requests", () => {
+	it("reports Weld's own conflict count for context even though it is not the staging gate", () =>
+		withConflictRepo(
+			"weld-agent-stage-multi-",
+			makeTwoHunkConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					const result = await invokeStageResolved({
+						repositoryRoot: Uri.file(repoPath).toString(),
+						paths: ["tracked.txt"],
+					});
+					assert.equal(result.files.length, 1);
+					const file = result.files[0];
+					assert.ok(file);
+					assert.equal(file.staged, false);
+					assert.ok(
+						"reason" in file && file.reason === "strayMarkers",
+					);
+					assert.ok(
+						"conflictCount" in file && file.conflictCount === 2,
+					);
+				});
+			},
+			{ closeBeforeCleanup: true },
+		));
+
+	it("stages the clean file and skips the unresolved one in the same call", () =>
+		withConflictRepo(
+			"weld-agent-stage-mixed-",
+			makeAllConflictKindsRepo,
+			async (repoPath) => {
+				await workspace.fs.writeFile(
+					Uri.file(join(repoPath, "tracked.txt")),
+					new TextEncoder().encode("resolved\n"),
+				);
+				await withListToolEnabled(async () => {
+					const result = await invokeStageResolved({
+						repositoryRoot: Uri.file(repoPath).toString(),
+						paths: ["tracked.txt", "added.txt"],
+					});
+					assert.equal(result.files.length, 2);
+					const resolved = result.files.find(
+						(file) => file.path === "tracked.txt",
+					);
+					const unresolved = result.files.find(
+						(file) => file.path === "added.txt",
+					);
+					assert.ok(resolved);
+					assert.ok(unresolved);
+					assert.equal(resolved.staged, true);
+					assert.equal(unresolved.staged, false);
+					assert.deepEqual(
+						lsFilesStages(repoPath, "tracked.txt"),
+						new Set(),
+						"expected only the resolved file to be staged",
+					);
+					assert.deepEqual(
+						// added.txt is bothAdded (both branches create it fresh,
+						// no common ancestor) so it never has a stage 1/base.
+						lsFilesStages(repoPath, "added.txt"),
+						new Set([2, 3]),
+						"expected the unresolved file to remain unstaged",
+					);
+				});
+			},
+			{ closeBeforeCleanup: true, expectedConflictCount: 6 },
+		));
+
+	it("never stages a non-text conflict kind, even without markers", () =>
+		withConflictRepo(
+			"weld-agent-stage-binary-",
+			makeBinaryConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					const result = await invokeStageResolved({
+						repositoryRoot: Uri.file(repoPath).toString(),
+						paths: ["conflict.bin"],
+					});
+					assert.equal(result.files.length, 1);
+					const file = result.files[0];
+					assert.ok(file);
+					assert.equal(file.staged, false);
+					assert.ok(
+						"reason" in file && file.reason === "notStageableKind",
+					);
+					assert.ok("kind" in file && file.kind === "binary");
+					assert.deepEqual(
+						lsFilesStages(repoPath, "conflict.bin"),
+						new Set([1, 2, 3]),
+						"expected the binary conflict to remain unstaged",
+					);
+				});
+			},
+			{ closeBeforeCleanup: true },
+		));
+
+	it("rejects a path that is not an active conflict", () =>
+		withConflictRepo(
+			"weld-agent-stage-stale-",
+			makeConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					await assert.rejects(
+						invokeStageResolved({
+							repositoryRoot: Uri.file(repoPath).toString(),
+							paths: ["does-not-exist.txt"],
+						}),
+						ACTIVE_CONFLICT_ERROR_REGEX,
 					);
 				});
 			},

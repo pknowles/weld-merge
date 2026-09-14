@@ -647,6 +647,11 @@ function makeAllConflictKindsRepo(repoPath: string): void {
 // Waits for the git extension to fire onDidCloseRepository for repoPath.
 // Subscribe BEFORE deleting the repo directory so no events are missed.
 // Returns immediately if the repo is not currently registered.
+// TODO: see the matching note on waitForMergeChanges — closeBeforeCleanup
+// callers trigger the close themselves via `commands.executeCommand
+// ("git.close", repo)`; check whether that command's own promise already
+// resolves after the repository is unregistered before keeping this as a
+// separate race against onDidCloseRepository.
 function waitForRepoClose(repoPath: string, timeoutMs = 10_000): Promise<void> {
 	const gitApi = getGitApi();
 	if (!gitApi.getRepository(Uri.file(repoPath))) {
@@ -673,6 +678,13 @@ function waitForRepoClose(repoPath: string, timeoutMs = 10_000): Promise<void> {
 
 // Waits until repo.state.mergeChanges.length === expectedCount.
 // Uses onDidChange events rather than polling; falls back to a timeout.
+// TODO: most callers trigger the status refresh themselves (after
+// makeConflictFn writes conflicting files, after an edit). For those,
+// `await repo.status()` is a real awaitable for "this refresh finished" —
+// GitApiRepository.status() awaits updateModelState() (which rebuilds
+// mergeChanges) before returning, confirmed by reading vscode's bundled git
+// extension source — so this passive listen-and-timeout race is unnecessary
+// there. See TODO.md "Test helpers should await repository.status()...".
 function waitForMergeChanges(
 	repo: GitApiRepository,
 	expectedCount: number,

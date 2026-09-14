@@ -16,6 +16,8 @@ import {
 	type ListConflictsToolInput,
 	listConflicts,
 	normalizeGetConflictInput,
+	type StageResolvedToolInput,
+	stageResolved,
 } from "./agentConflicts.ts";
 import { getWeldLogChannel } from "./log.ts";
 import type {
@@ -118,14 +120,32 @@ function registerEnabledTools(
 			},
 		},
 	);
+	const stageResolvedDisposable = lm.registerTool<StageResolvedToolInput>(
+		"weld_stage_resolved",
+		{
+			async invoke(options) {
+				const result = await stageResolved(options.input);
+				const stagedCount = result.files.filter(
+					(file) => file.staged,
+				).length;
+				getWeldLogChannel().info(
+					`Weld agent tool weld_stage_resolved: staged ${stagedCount} of ${result.files.length} file(s)`,
+				);
+				return new LanguageModelToolResult([
+					new LanguageModelTextPart(JSON.stringify(result)),
+				]);
+			},
+		},
+	);
 	getWeldLogChannel().info(
-		"Registered Weld agent tools weld_apply_automerge_all, weld_apply_automerge, weld_list_conflicts, weld_get_conflict",
+		"Registered Weld agent tools weld_apply_automerge_all, weld_apply_automerge, weld_list_conflicts, weld_get_conflict, weld_stage_resolved",
 	);
 	return VscodeDisposable.from(
 		applyAllDisposable,
 		applySingleDisposable,
 		listDisposable,
 		getDisposable,
+		stageResolvedDisposable,
 	);
 }
 
