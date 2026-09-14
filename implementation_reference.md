@@ -31,6 +31,10 @@ Entry point and Git integration.
   auto-merge); they intentionally do not let the model write arbitrary or
   chosen content into files — that stays with the editor's native file-editing
   tools once Weld has supplied the conflict data.
+- **`skills/resolve-merge-conflicts/SKILL.md`**: Chat skill (registered via
+  `contributes.chatSkills`, gated on `weld.agent.enable`) that tells the model
+  to prefer the `weld_*` language model tools over raw git/grep when
+  resolving conflicts, and how to read/order calls across them.
 - **`agentConflicts.ts`**: Shared conflict lookup and classification for
   `weld_list_conflicts` and `weld_get_conflict`. The list tool enumerates every
   open workspace Git repository and returns each conflicted file's kind, Weld

@@ -26,7 +26,8 @@ developer experience.
 
 Weld Merge enables better AI merge conflict resolution, exposing the same
 features through vscode's [Language Model Tool
-API](https://code.visualstudio.com/api/extension-guides/ai/tools).
+API](https://code.visualstudio.com/api/extension-guides/ai/tools) and a small
+skill file for using them.
 
 You might think manual conflict resolution is a thing of the past, but tools
 still have value to AI. Similarly to an MCP server, coding agents can be given
@@ -194,8 +195,12 @@ use them, e.g. "rebase onto origin/main using Weld Merge tools":
   blocks with surrounding context and disk line ranges, so the agent can edit
   the file directly without needing to re-derive the conflict boundaries itself.
 
-These tools are only registered when the `weld.agent.enable` setting is `true`
-(the default).
+A chat skill,
+[`resolve-merge-conflicts`](skills/resolve-merge-conflicts/SKILL.md), gives
+agents some guidance for the tools and generic tips to resolve conflicts.
+
+These tools and skill are only registered when the `weld.agent.enable` setting
+is `true` (the default).
 
 ## How It Works
 
