@@ -5,15 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "@jest/globals";
 import { Uri } from "vscode";
+import { fetchConflictStages } from "../src/conflictSnapshot.ts";
 import { readIndexStageContent } from "../src/gitUtils.ts";
 import { GitTextMerger } from "../src/matchers/gitTextMerger.ts";
 import { Merger } from "../src/matchers/merge.ts";
 import type { GitApiRepository } from "../src/repoContext.ts";
 import { extractConflictLabels } from "../src/webview/conflictLabels.ts";
-import {
-	buildInitialConflictedState,
-	fetchConflictStages,
-} from "../src/webview/diffPayload.ts";
+import { buildInitialConflictedState } from "../src/webview/diffPayload.ts";
 import { runGit } from "./runGit.ts";
 
 // These tests force Git's CRLF checkout-conversion path in a temp repo rather
@@ -104,20 +102,20 @@ function fakeRepository(rootFsPath: string): GitApiRepository & {
 async function readStages(repoPath: string) {
 	const repository = fakeRepository(repoPath);
 	const file = Uri.file(join(repoPath, "tracked.txt"));
-	const [base, local, incoming] = await Promise.all([
+	const [base, local, remote] = await Promise.all([
 		readIndexStageContent(repository, file, GIT_STAGE_BASE),
 		readIndexStageContent(repository, file, GIT_STAGE_LOCAL),
 		readIndexStageContent(repository, file, GIT_STAGE_REMOTE),
 	]);
 	expect(repository.showCalls).toEqual([]);
-	return { base, local, incoming };
+	return { base, local, remote };
 }
 
-function runMergers(stages: { base: string; local: string; incoming: string }) {
+function runMergers(stages: { base: string; local: string; remote: string }) {
 	const sequences = [
 		stages.local.split("\n"),
 		stages.base.split("\n"),
-		stages.incoming.split("\n"),
+		stages.remote.split("\n"),
 	];
 	const merger = new Merger();
 	merger.initialize(sequences, sequences);
@@ -243,8 +241,8 @@ describe("Windows line-ending conversion: stage fetch", () => {
 			expect(crlf.local.replace(CARRIAGE_RETURN_REGEX, "")).toBe(
 				lf.local,
 			);
-			expect(crlf.incoming.replace(CARRIAGE_RETURN_REGEX, "")).toBe(
-				lf.incoming,
+			expect(crlf.remote.replace(CARRIAGE_RETURN_REGEX, "")).toBe(
+				lf.remote,
 			);
 			expect(crlf.local).toContain("\r\n");
 

@@ -32,6 +32,45 @@ import {
 
 const CONFLICT_PREFIX_REGEX = /^#?\t/;
 
+function isConflictHeader(trimmed: string): boolean {
+	return trimmed === "Conflicts:" || trimmed === "# Conflicts:";
+}
+
+function isConflictEntry(line: string): boolean {
+	return line.startsWith("\t") || line.startsWith("#\t");
+}
+
+function shouldStopConflictParsing(line: string, trimmed: string): boolean {
+	return trimmed !== "" && !line.startsWith("#");
+}
+
+function parseMergeMsgConflicts(lines: string[]): string[] {
+	const originallyConflicted: string[] = [];
+	const seenPaths = new Set<string>();
+	let inConflicts = false;
+
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (isConflictHeader(trimmed)) {
+			inConflicts = true;
+			continue;
+		}
+		if (!inConflicts) {
+			continue;
+		}
+		if (isConflictEntry(line)) {
+			const relativePath = line.replace(CONFLICT_PREFIX_REGEX, "").trim();
+			if (relativePath.length > 0 && !seenPaths.has(relativePath)) {
+				seenPaths.add(relativePath);
+				originallyConflicted.push(relativePath);
+			}
+		} else if (shouldStopConflictParsing(line, trimmed)) {
+			break;
+		}
+	}
+	return originallyConflicted;
+}
+
 function getTreeErrorMessage(error: unknown): string {
 	if (error instanceof Error) {
 		const messages: string[] = [];
@@ -322,7 +361,7 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 		const mergeMsgPath = Uri.joinPath(gitDirUri, "MERGE_MSG");
 		const mergeMsgBytes = await workspace.fs.readFile(mergeMsgPath);
 		const msg = new TextDecoder("utf-8").decode(mergeMsgBytes);
-		const relativePaths = this._parseMergeMsgConflicts(msg.split("\n"));
+		const relativePaths = parseMergeMsgConflicts(msg.split("\n"));
 		const unmergedFileStrings = new Set(
 			unmergedFiles.map((f) => f.toString()),
 		);
@@ -330,41 +369,11 @@ class ConflictedFilesProvider implements TreeDataProvider<ConflictedTreeItem> {
 			.map((path) => this._createFileUri(repository.rootUri, path))
 			.filter((fileUri) => !unmergedFileStrings.has(fileUri.toString()));
 	}
-
-	private _parseMergeMsgConflicts(lines: string[]): string[] {
-		const originallyConflicted: string[] = [];
-		let inConflicts = false;
-
-		for (const line of lines) {
-			const trimmed = line.trim();
-			if (this._isConflictHeader(trimmed)) {
-				inConflicts = true;
-				continue;
-			}
-			if (inConflicts) {
-				if (this._isConflictEntry(line)) {
-					originallyConflicted.push(
-						line.replace(CONFLICT_PREFIX_REGEX, "").trim(),
-					);
-				} else if (this._shouldStopParsing(line, trimmed)) {
-					break;
-				}
-			}
-		}
-		return originallyConflicted;
-	}
-
-	private _isConflictHeader(trimmed: string): boolean {
-		return trimmed === "Conflicts:" || trimmed === "# Conflicts:";
-	}
-
-	private _isConflictEntry(line: string): boolean {
-		return line.startsWith("\t") || line.startsWith("#\t");
-	}
-
-	private _shouldStopParsing(line: string, trimmed: string): boolean {
-		return trimmed !== "" && !line.startsWith("#");
-	}
 }
 
-export { ConflictedFilesProvider, ErrorTreeItem, GitFile };
+export {
+	ConflictedFilesProvider,
+	ErrorTreeItem,
+	GitFile,
+	parseMergeMsgConflicts,
+};

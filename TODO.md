@@ -2,6 +2,56 @@
 
 ## New Ideas and Features
 
+### Agent / LLM Integration
+
+Expose weld-merge to VS Code Agent Mode / Copilot through VS Code Language
+Model Tools (`contributes.languageModelTools`), gated behind `weld.agent.enable`
+(default off) since some users won't want AI/agent interaction. Already
+implemented for `weld_apply_automerge_all`, `weld_apply_automerge`,
+`weld_list_conflicts`, and `weld_get_conflict`.
+
+No MCP integration for now. Weld's useful agent operations depend on VS Code
+extension-host APIs such as the Git API, `workspace.applyEdit`, and editor UI.
+An MCP version would need either a separate headless implementation or a socket
+bridge back into the extension host, which adds remote-development and
+multi-instance complexity without helping the primary Copilot-in-VS-Code
+workflow.
+
+Design principle: Weld's tools are shortcuts for information/computation an
+agent could otherwise only get by running Weld's own deterministic algorithms
+(listing conflicts, reading conflict regions, running Weld's auto-merge). They
+must not become a channel for the model to write arbitrary or model-chosen
+content into files — that belongs to the editor's native file-editing tools,
+which already work fine once an agent has the conflict info Weld provides. Do
+not add a "resolve/apply this specific text" tool; if a tool would let the
+model author the replacement content (a full text override, or even a
+side-selection edit that a native edit could just as easily perform once
+`weld_get_conflict` has supplied exact line ranges and content), that's out of
+scope for weld-merge's LM tools.
+
+Remaining Language Model Tools:
+- `weld_open_3view` — open the 3-view diff editor for a file (read-only, no
+  state changes); requires design work to support opening without an active
+  conflict in git state (see annoyance note about re-opening the 3-view editor)
+
+#### `weld_get_conflict` / `weld_list_conflicts` (implemented)
+
+The shipped response shape is the diff3-style block design documented in
+`agent-tools-schema.md` (see its "Purpose and Intent" and `## weld_get_conflict`
+sections for the authoritative contract) — `ConflictBlock` with `range`/`note`/
+`text`/`autoMergeView`, opt-in `includeBaseDiffs`, and `weld_list_conflicts`'
+`strayMarkers`/commit-identifier fields. An earlier draft of this design
+(`current`/`unresolvedHunks`/`rawGitAccess`/`maxStageLines`/a separate
+"auto-merge suggestions" tier) was superseded before shipping and no longer
+exists in the code; do not resurrect that vocabulary.
+
+Scenario coverage (adversarial disk edits, marker-style variation, truncation,
+elision budgets, both-added/deleted/submodule kinds) lives in real-repo
+fixtures in `test/vscode/suite/agent-tools.test.ts` and
+`test/vscode/suite/helpers.ts` — see that file for what's covered.
+
+### Take-all Buttons
+
 Buttons to copy local or remote into merged would avoid having to copy/paste.
 
 ## Annoyances
@@ -255,7 +305,7 @@ Track as a dedicated refactor; do not fold into unrelated changes.
 Gemini's summary of jscpd (currently thresholded in `.jscpd.json`):
 
 - src/matchers/myers.ts: Contains 4 separate clones (10-13 lines each), mostly within the core diffing logic.
-- src/webview/ui/diffCurtainButtons.test.tsx: Has a significant 31-line internal clone of test setup/logic.
+- test/webview/ui/diffCurtainButtons.test.tsx: Has a significant 31-line internal clone of test setup/logic.
 - src/extension.ts ↔ src/treeView.ts: Shares an 18-line block and a 9-line block, likely related to command registration or VS Code utility logic.
 - src/webview/ui/editorActions.ts: Contains internal clones of 18 and 15 lines in action handlers.
 - src/webview/ui/appHooks.ts ↔ highlightUtil.ts: Shares a 10-line logic block.
@@ -286,6 +336,53 @@ Gemini's summary of jscpd (currently thresholded in `.jscpd.json`):
   - *Ratchet render-count baselines after the real fix*: `test/webview_render_count.test.tsx` pins today's App-level render counts via React's `Profiler` API. Observed today: mount + `loadDiff` = 5 commits; single user edit in merged = 1 commit. The per-edit number is already optimal — but it's only that low because the test runs a single edit inside one `act()` batch; multi-pane scroll sync, layout change cascades, and the `renderTrigger` global invalidator (every Monaco `onDidChangeContent` / `onDidLayoutChange` bumps App) will show up as soon as realistic scenarios are tested. Add scenarios (initial scroll, `fullSync`, compare-with-base toggle, typing with layout changes) as `renderTrigger` is removed, and lower the `EXPECTED_*` constants at the top of that file each time. Do not raise a baseline to accommodate a new regression.
 
 Rename _mergeCache. It's more of a "current merged change list" than a cache. Maybe mergedDiffChunks?
+
+## Test helpers should await `repository.status()` instead of racing `onDidChange` with a timeout
+
+`waitForMergeChanges` and `waitForRepoClose` in `test/vscode/suite/helpers.ts` wait for
+`repo.state.onDidChange` to eventually report the expected `mergeChanges` count/repo-closed
+state, with a 10s timeout as a backstop. Investigated while debugging a stale
+`expectedConflictCount` that caused a real 10s stall (see the `8544d4a9`/`8f18d5de` fixups on
+`pknowles/lm-tools`): confirmed by reading VS Code's bundled git extension source
+(`extensions/git/dist/main.js`) that `GitApiRepository.status()` (already exposed on our own
+`GitApiRepository` type in `repoContext.ts`) internally does `await this.run(Status)`, and
+`run()` awaits `updateModelState()` — which rebuilds `mergeChanges` — before returning, on both
+the success and failure paths. So `await repo.status()` is a real, correlated awaitable for
+"the status refresh this call triggered has finished", not a fire-and-forget call — the
+passive `onDidChange`-listening pattern with a timeout is unnecessary for any wait where we
+are the ones triggering the change (after `makeConflictFn` sets up a repo, after an edit,
+after `git.close`). A timeout is still the right tool for `openRepoInGitExtension`'s initial
+discovery, where VS Code's own filesystem watcher decides when to notice the workspace was
+opened and we have no call to await.
+
+Fix: rewrite `waitForMergeChanges`/`waitForRepoClose` (or their call sites) to `await
+repo.status()` (or the equivalent close-triggering call) directly instead of racing an event
+listener against a timeout, for every case where the test itself performs the triggering
+action. Keep a short timeout only around genuinely external, uncontrolled latency.
+
+## Marker-detection duplication: `getUnresolvedReasons` vs `scanMarkers`
+
+Found the same investigation as above, while checking `weld_stage_resolved`'s factoring
+against the existing UI "Stage Resolved" path (`handleSmartAdd` in `extension.ts`). Two
+independent, pre-existing implementations of "does this text contain leftover conflict-marker
+syntax":
+
+- `getUnresolvedReasons` (`gitUtils.ts`): used by `handleSmartAdd`/the UI's Stage Resolved
+  button. Requires an exact 7-char `<<<<<<<`/`=======`/`>>>>>>>`/`|||||||` at line start;
+  `(??)` only matches at line start too. Returns coarse reason strings, no locations.
+- `scanMarkers` (`agentConflicts.ts`): used by `weld_list_conflicts` and `weld_stage_resolved`.
+  Matches any run of 1+ of the marker character followed by whitespace/EOL (more permissive —
+  e.g. a lone stray `<` at line start would match), and catches `(??)` anywhere in the line.
+  Returns exact `StrayMarker[]` ranges, needed by the agent tools' response shape.
+
+They can disagree on edge-case marker text, so the UI's Stage Resolved button and
+`weld_stage_resolved` could reach different verdicts on the same file. Agreed with the user
+(2026-09-14) to unify in a dedicated follow-up patch, not bundled into the `weld_stage_resolved`
+change: extract one canonical range-producing scanner — keep `scanMarkers`'s ranged output
+shape (agent tools need locations) but tighten its regexes to the UI's stricter exact-marker-
+length rule (avoid new false positives on the interactive staging gate) — and make
+`getUnresolvedReasons` a thin wrapper over it (map ranges → reason strings). Touches
+`gitUtils.ts`, `extension.ts`, `meldWebviewPanel.ts`, and their existing tests.
 
 ## Testing Improvements
 

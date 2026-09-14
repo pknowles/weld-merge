@@ -11,12 +11,63 @@ Found in `src/matchers/`. High-performance, side-effect-free TypeScript logic.
 Entry point and Git integration.
 - **`extension.ts`**: Extension lifecycle, command registrations, and workspace event handling.
 - **`repoContext.ts`**: Resolves per-file Git repository context via `vscode.git`. Custom-editor startup uses typed acquisition helpers that activate/wait for the Git API, open the requested repository, await the repository's first status-backed state event through a shared acquisition promise, and then return fully usable objects (`ReadyRepository`/`ConflictedItem`) or throw typed errors; editor startup code does not consume nullable Git API results directly.
-- **`gitUtils.ts`**: Shared git helpers for subprocess-backed commands plus URI-safe `.git` resolution and conflict-state detection via `workspace.fs`.
+- **`gitUtils.ts`**: Shared git helpers for subprocess-backed commands, validated repository-relative paths, URI-safe `.git` resolution, and conflict-state detection via `workspace.fs`.
+- **`conflictSnapshot.ts`**: Shared text-conflict boundary used by both the merge editor and agent tools. It reads base/local/remote stages, builds the canonical `Merger` snapshot and conflict indexes, inspects unmerged index-stage shape, and asks Git's diff machinery to classify binary content.
+  `createTwoWayComparison()` and `createThreeWayComparison()` are the
+  canonical comparison source models: the GUI's Base/three-way views and the
+  agent's compact summaries share their source lines and change chunks, while
+  each surface chooses its own presentation scope.
 - **`submoduleConflict.ts`**: Submodule conflict domain boundary. Uses VS Code Git API merge changes for discovery, then path-scoped raw Git for gitlink stage/object/index plumbing that the Git API cannot expose. It also contains read-only submodule history queries for the resolver graph/search/file list. This intentionally avoids `git ls-files`.
 - **`log.ts`**: Shared `LogOutputChannel` initialization/access for extension-host diagnostics.
 - **`treeView.ts`**: Implementation of the "Conflicted Files" view in the SCM panel, including resolved-file parsing from `MERGE_MSG` through `workspace.fs`.
 - **`webview/meldWebviewPanel.ts`**: Manages the custom editor lifecycle, lifecycle of the Webview, and message passing.
 - **`webview/submoduleConflictEditor.ts`**: Readonly custom editor for submodule conflicts. The editor URI stores only repository root URI and repo-relative submodule path; every open/reload recomputes live state from Git, so no serializer or saved conflict snapshot is needed.
+- **`agentTools.ts`**: Registers VS Code Language Model Tools
+  (`weld_apply_automerge_all`, `weld_apply_automerge`, `weld_list_conflicts`,
+  `weld_get_conflict`, `weld_stage_resolved`) when `weld.agent.enable` is true
+  and serializes typed results for the LM boundary. These tools are
+  read/compute shortcuts for information or algorithms an agent could
+  otherwise only reach by running Weld's own logic (conflict listing, region
+  inspection, Weld's deterministic auto-merge); they intentionally do not let
+  the model write arbitrary or chosen content into files — that stays with
+  the editor's native file-editing tools once Weld has supplied the conflict
+  data. `weld_stage_resolved` is the one exception that acts rather than only
+  reporting: it `git add`s files it has itself verified are clean.
+- **`skills/resolve-merge-conflicts/SKILL.md`**: Chat skill (registered via
+  `contributes.chatSkills`, gated on `weld.agent.enable`) that tells the model
+  to prefer the `weld_*` language model tools over raw git/grep when
+  resolving conflicts, and how to read/order calls across them.
+- **`agentConflicts.ts`**: Shared conflict lookup and classification for
+  `weld_list_conflicts`, `weld_get_conflict`, and `weld_stage_resolved`. The
+  list tool enumerates every open workspace Git repository and returns each
+  conflicted file's kind, Weld conflict count, base/local/remote commit
+  identifiers (hash, exact branch/tag ref when one names the commit, title),
+  and `strayMarkers`: git marker syntax and Weld `(??)` sentinel lines found on
+  disk, ranges only, as the post-merge verification signal. When every
+  conflict in the workspace fits the inline budget, the rendered blocks are
+  attached to the listing directly. The get tool returns a selected `[first,
+  last]` range (or all) of a file's conflicts as generated diff3-style
+  blocks: local/base/remote alternatives from the Git stages via the shared
+  `conflictSnapshot.ts` comparison models (never an independent re-diff),
+  wrapped in context lines read from the file on disk, with the disk
+  replace-range stated on the opening marker label. Context stops at
+  marker-like or sentinel lines; `(??)` never appears in a response.
+  Oversized sections are elided in the middle with explicit line numbers. An
+  opt-in `includeBaseDiffs` request flag adds `localDiff`/`remoteDiff`: Base
+  vs. Local and Base vs. Remote unified diffs scoped to the same region, via
+  the shared two-way comparison model `buildBaseDiffPayload` also uses. When
+  the disk context differs from the auto-merge result, `autoMergeView`
+  carries the same alternatives with the expected auto-merged surroundings;
+  when a conflict no longer maps to the disk file, a `note` replaces `range`
+  rather than fabricating a location. `bothAdded` blocks omit the BASE
+  section (no common ancestor). Non-text conflicts retain typed
+  binary/delete/submodule results. `weld_stage_resolved` shares the same
+  per-file inspection (`inspectConflictItem`) the list tool uses and gates
+  staging on the absence of stray markers, not on Weld's own conflict count —
+  see the function's own comment for why. Agent tools run in-process in the
+  workspace extension host, are prompt-referenceable through `package.json`,
+  and intentionally do not expose MCP/stdio integration. See
+  `agent-tools-schema.md` for the formal wire-schema spec.
 
 ## Webview UI (React Frontend)
 Located in `src/webview/ui/`.
@@ -38,9 +89,10 @@ Located in `src/webview/ui/`.
 ## Testing
 
 - Unit test what we can in ./test/test_*
-- Webview mocking in ./test/webview_*
-- For e2e vscode interaction, use ./test/vscode/*
-- For e2e browser interaction and benchmarks, use playwrite, e.g. in ./test/benchmarking/
+- Webview mocking in ./test/webview_* and ./test/webview/*
+- For VS Code integration tests, use ./test/vscode/*
+- For browser webview integration tests, use ./test/webview-integration/*
+- For browser benchmarks, use Playwright with ./test/benchmarking/
 - xvfb may be used if real windows MUST be displayed
 - `test/vscode/launchTelemetrySuite/launch_telemetry.test.ts` runs in its own
   VS Code extension host with two conflicted repositories already in the
@@ -63,8 +115,38 @@ Located in `src/webview/ui/`.
   and counts tree refreshes, Git state changes, meld state events, and
   submodule snapshot posts so restored-tab behavior cannot silently add
   repeated runtime work.
+- `test/vscode/suite/agent-tools.test.ts` exercises the agent conflict tool in
+  a real extension host, including disk-only conflict-region deletion,
+  replacement, adversarial copied-context edits, truncation, whole-file
+  replacement, variable-width merge/diff3/zdiff3 marker scans, and bounded
+  stage/current result responses for a real large conflict.
 
 Test coverage with jest, mutations with stryker, fuzz testing with jazzer should be kept up to date.
+
+- `scripts/collect_coverage.ts` is the `npm run coverage` entrypoint. It builds
+  the extension and webview bundles with source maps, runs Jest coverage, runs
+  VS Code integration tests and restored-tabs tests with raw V8 coverage,
+  instruments the browser webview bundle with Istanbul, runs browser webview
+  integration tests with Playwright, merges the LCOV files, and ratchets the
+  checked-in coverage thresholds. The VS Code c8 conversion must include
+  `out/extension.js`, not `src/**`: the VS Code extension host executes the
+  bundled extension, and c8 uses `out/extension.js.map` to remap that execution
+  back to files such as `src/webview/meldWebviewPanel.ts`. Browser webview
+  coverage is different: Playwright reads `window.__coverage__` from the
+  Istanbul-instrumented `out/webview/index.js`, then
+  `istanbul-lib-source-maps` remaps that coverage back to `src/webview/ui/**`.
+- Generated test/tool output should be written under the visible repo-root
+  `test-output/` directory when the owning tool allows it. Jest coverage,
+  Stryker temp/report files, Playwright artifacts, and benchmark metrics are
+  configured there; VS Code download caches and fuzz corpora/crash artifacts
+  remain tool-owned exceptions.
+- `scripts/run_stryker_guarded.ts` is the `npm run test:mutate` entrypoint. It
+  runs Stryker in the active checkout, refuses to start with unmerged index
+  entries, and fails after mutation testing if tracked Git status changed.
+- `test/runGit.ts` gates test Git commands to paths under `tmpdir()`. VS Code
+  integration helpers and the Remote-SSH runner use this guard so conflict
+  fixtures cannot accidentally run mutating Git commands in the project
+  checkout.
 
 ## Benchmarking Telemetry
 
@@ -73,18 +155,62 @@ Granular performance telemetry is **opt-in only** and has zero production impact
 - **`src/matchers/diffutil.ts`** — `Differ.changeSequence()`: records total diff engine wall time per call to `diffTimes[]`.
 - **`src/webview/ui/CodePane.tsx`** — `useCodePaneLogic`: the `isMiddle`-gated `onDidChangeModelContent` listener stamps `inputStartTimeRef.current` on each user edit. The decoration `useEffect` times `ed.deltaDecorations(...)` into `highlightJsTimes[]`, then schedules a single rAF to record end-to-end latency (from model change to after Monaco's next repaint opportunity) into `fullRenderTimes[]`.
 - **`src/webview/ui/DiffCurtain.tsx`** — `useFilteredDiffs` `useMemo`: records visible-chunk computation time into `curtainRenderTimes[]`.
+- **`test/benchmarking/config.ts`** — owns benchmark paths. The HTML fixture stays in `test/benchmarking/benchmark.html`; generated benchmark metrics and CPU profiles go to `test-output/benchmarking/results/`.
 - **`test/benchmarking/ui_stress.test.ts`**: The "massive 50k document" test injects the stats gate, types 150 keystrokes with a double-rAF yield between each, then extracts avg/max for all four metrics. Also post-processes the `.cpuprofile` via exact function-name matching (`changeSequence`, `useFilteredDiffs`, `deltaDecorations`). **Verify these names against a real `.cpuprofile` run** — if they change (minification/rename), the profile metrics silently report `0`.
+
+## Auto-Merge Candidate Classification
+
+- `src/webview/autoMerge.ts`
+  - `performAutoMerge()` runs the 3-way text merge and applies the result
+    via a `WorkspaceEdit`, refusing (`skippedWouldClobber`, unless `force`)
+    to overwrite a file whose live content is neither the pre-merge
+    conflict markers nor already the auto-merge result, and staging the
+    file once `remainingConflicts` is 0. It assumes its caller already
+    confirmed the file is a text-merge candidate — a delete/modify or
+    both-deleted conflict has no readable stage 2 or 3, and fetching it
+    unconditionally throws deep in Git's plumbing instead of failing
+    clearly. It is the single implementation shared by `src/extension.ts`
+    (tree/command auto-merge, `autoMergeAll`, the `weld_apply_automerge*`
+    agent tools) and `MeldCustomEditorProvider._maybeApplyAutoMerge` in
+    `src/webview/meldWebviewPanel.ts` (auto-merge on editor open) — it
+    lives under `src/webview/` rather than in `extension.ts` because the
+    editor path cannot import from `src/extension` (`.dependency-cruiser.js`
+    forbids it).
+- `src/extension.ts`
+  - `requireTextMergeable()` is the single classification path (via
+    `ConflictedItem.conflictStatus()`, the same classifier
+    `handleOpenMeldDiff` uses) shared by every auto-merge entry point, so
+    they can never disagree about what is mergeable. The single-file paths
+    (`handleAutoMerge`, `handleApplyAutomergeSingle`) call it and let it
+    throw — an explicit request naming one file has no "skip and continue"
+    to fall back to.
+  - `collectAutoMergeableFiles()` is `handleAutoMergeAll`'s upfront filter:
+    it narrows the batch's candidate list to `conflictStatus()`'s
+    `bothModified` before `performAutoMerge` is ever called, so an
+    ineligible file is never attempted rather than attempted-then-caught.
+    `weld_list_conflicts` and the tree view are unaffected by this filter —
+    they still enumerate every `ConflictKind` (`agentConflicts.ts`); only
+    auto-merge's own candidate selection is narrowed.
+  - Every outcome carries `remainingConflicts`; `"autoResolutionsAlreadyApplied"`
+    means the live file already equalled the auto-merge result (nothing
+    written this call) — not the same as "fully resolved", which
+    `remainingConflicts === 0` states explicitly.
 
 ## Delete/Modify Conflict Restore
 
 - `src/extension.ts`
   - `restoreConflictedFile()` first uses `git checkout -m` for both-modified conflicts.
   - `restoreDeleteModifyConflict()` restores delete/modify conflicts by checking out the surviving side's content, then recreating unmerged index stages with `git update-index --index-info`.
-  - `getRepoRelativePath()` converts an absolute VS Code file URI path into the repository-relative path required by Git index plumbing.
+  - `repositoryRelativePath()` in `gitUtils.ts` converts an absolute VS Code file URI into the validated repository-relative path required by Git index plumbing.
   - Command handlers take a concrete `ConflictedItem`; command dispatchers use the `ConflictedItem` carried by tree rows when present, and only resolve from a URI for active-editor/webview entrypoints.
 
 - `src/treeView.ts`
   - `GitFile.conflictedItem` keeps the VS Code Git API repository context attached to conflict-tree command arguments, so commands do not rediscover the repository from the URI.
+  - `parseMergeMsgConflicts()` parses the conflict block from `.git/MERGE_MSG`
+    for resolved-file recovery. It accepts Git's commented `#\tpath` entries
+    and un-commented `\tpath` entries, ignores malformed indentation, stops at
+    the first non-comment non-empty line after the conflict block begins, and
+    deduplicates paths while preserving first-seen order.
 
 - `src/gitUtils.ts`
   - `execGit()` runs Git commands and returns stdout.
@@ -150,16 +276,17 @@ Granular performance telemetry is **opt-in only** and has zero production impact
     can restore that URI after reload, and Weld rebuilds the current snapshot
     from Git instead of saving conflict data.
   - VS Code's Git API remains the source for repository lifecycle and conflict
-    path discovery. Raw Git is isolated to `submoduleConflict.ts` and
-    `gitUtils.ts::readIndexStageContent`. Mutating raw Git is limited to
-    gitlink stage/index operations because `repository.show(":2", path)`
-    cannot read submodule gitlink stages and the Git API cannot write
-    unmerged gitlink index entries. The resolver also uses read-only Git
-    commands inside the submodule repo for graph/search/file-list data
-    because the Git API does not expose those queries for an arbitrary
-    nested repository. `readIndexStageContent` is the other read-only
-    exception: `repository.show` returns the raw, unfiltered index blob for
-    a conflict stage, but the editor needs content filtered through
+    path discovery. Submodule-specific raw Git is isolated to
+    `submoduleConflict.ts`. Mutating raw Git is limited to gitlink stage/index
+    operations because
+    `repository.show(":2", path)` cannot read submodule gitlink stages and the
+    Git API cannot write unmerged gitlink index entries. The resolver also uses
+    read-only Git commands inside the submodule repo for graph/search/file-list
+    data because the Git API does not expose those queries for an arbitrary
+    nested repository. `gitUtils.ts::readIndexStageContent` is a separate
+    read-only exception used wherever conflict-stage content is read (not just
+    submodules): `repository.show` returns the raw, unfiltered index blob for
+    a conflict stage, but callers need content filtered through
     `core.autocrlf`/`.gitattributes`/smudge filters the way Git's checkout
     would produce it, since that's what the on-disk conflicted file actually
     contains (see the CRLF fix — conflict stages must match worktree line

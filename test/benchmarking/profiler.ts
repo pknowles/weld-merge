@@ -1,10 +1,8 @@
 import fs from "node:fs";
 import inspector from "node:inspector";
-import path from "node:path";
-import process from "node:process";
 
 export async function withProfiling<T>(
-	outputName: string,
+	profilePath: string,
 	fn: () => Promise<T>,
 ): Promise<{ result: T; profilePath: string }> {
 	const session = new inspector.Session();
@@ -34,10 +32,6 @@ export async function withProfiling<T>(
 					reject(err);
 					return;
 				}
-				const profilePath = path.resolve(
-					process.cwd(),
-					`${outputName}.cpuprofile`,
-				);
 				fs.writeFileSync(profilePath, JSON.stringify(profile));
 				session.disconnect();
 				resolve({ result, profilePath });

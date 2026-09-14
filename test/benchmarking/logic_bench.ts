@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import process from "node:process";
 import { Bench } from "tinybench";
 import { Differ } from "../../src/matchers/diffutil.ts";
 import { Merger } from "../../src/matchers/merge.ts";
@@ -46,17 +45,11 @@ async function runLogicBenchmark() {
 		merger.merge3Files();
 	});
 
-	// Use our withProfiling utility which correctly handles the CPU profile
-	await withProfiling("logic", async () => {
+	// Use our withProfiling utility which correctly handles the CPU profile.
+	await withProfiling(profilePath, async () => {
 		await bench.run();
 		return bench;
 	});
-
-	// Move the profile to the correct location
-	const tempProfile = path.resolve(process.cwd(), "logic.cpuprofile");
-	if (fs.existsSync(tempProfile)) {
-		fs.renameSync(tempProfile, profilePath);
-	}
 
 	// biome-ignore lint/suspicious/noConsole: benchmark reporter
 	console.table(bench.table());

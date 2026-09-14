@@ -3,6 +3,7 @@
 ## Communication & Planning
 - **Discuss First:** If there are design conflicts, unknown unknowns, or risky shortcuts, present pros/cons and a recommendation. Wait for user approval before implementing.
 - **Answer Directly:** If the user asks a question, answer it and wait. Do not start implementing immediately.
+- **Before answering:** Do you have sufficient evidence and data or is it a guess? Say in your answer.
 
 ## Coding
 

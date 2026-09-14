@@ -5,8 +5,8 @@ import { Uri } from "vscode";
 import {
 	execGit,
 	execGitWithInput,
-	getRepoRelativePath,
 	readConflictState,
+	repositoryRelativePath,
 } from "./gitUtils.ts";
 import type { GitApiRepository } from "./repoContext.ts";
 
@@ -127,7 +127,7 @@ class SubmoduleConflict {
 		repository: GitApiRepository,
 		submoduleUri: Uri,
 	): Promise<SubmoduleConflict> {
-		const repoRelativePath = getRepoRelativePath(
+		const repoRelativePath = repositoryRelativePath(
 			repository.rootUri,
 			submoduleUri,
 		);
@@ -159,7 +159,7 @@ class SubmoduleConflict {
 		repository: GitApiRepository,
 		submoduleUri: Uri,
 	): Promise<void> {
-		const repoRelativePath = getRepoRelativePath(
+		const repoRelativePath = repositoryRelativePath(
 			repository.rootUri,
 			submoduleUri,
 		);
@@ -256,7 +256,7 @@ async function isSubmoduleGitlinkChange(
 	repository: GitApiRepository,
 	submoduleUri: Uri,
 ): Promise<boolean> {
-	const repoRelativePath = getRepoRelativePath(
+	const repoRelativePath = repositoryRelativePath(
 		repository.rootUri,
 		submoduleUri,
 	);
@@ -282,7 +282,7 @@ async function isActiveSubmoduleGitlinkConflict(
 	if (!mergeChange) {
 		return false;
 	}
-	const repoRelativePath = getRepoRelativePath(
+	const repoRelativePath = repositoryRelativePath(
 		repository.rootUri,
 		submoduleUri,
 	);
@@ -305,7 +305,7 @@ async function isKnownSubmoduleConflictPath(
 	// local gitlink, so classification cannot rely on the current index diff.
 	// MERGE_MSG gives us the original path; the active operation refs tell us
 	// whether that path was a gitlink in the conflict being resolved.
-	const repoRelativePath = getRepoRelativePath(
+	const repoRelativePath = repositoryRelativePath(
 		repository.rootUri,
 		submoduleUri,
 	);
@@ -816,6 +816,9 @@ export {
 	isKnownSubmoduleConflictPath,
 	isSubmoduleGitlinkChange,
 	parentRefForCommit,
+	parseCommitBlob,
+	parseCommitLogOutput,
+	parseShaLines,
 	parseSubmoduleConflictUri,
 	readCommitFiles,
 	readSubmoduleCommit,

@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { Uri } from "vscode";
+import { commands, Uri } from "vscode";
 import type {
 	ConflictedItem,
 	GitApiRepository,
@@ -12,13 +12,21 @@ import {
 	createConflictedItemFromUri,
 	getGitApi,
 } from "../../../src/repoContext.ts";
-import { runGit } from "../../runGit.ts";
+import { assertSafeGitCwd, runGit } from "../../runGit.ts";
 
 const LS_FILES_STAGE_REGEX = /^\S+ \S+ (\d+)\t/;
 
 interface TempRepoFixture {
 	repoPath: string;
 	cleanupPath: string;
+}
+
+interface WithConflictRepoOptions {
+	closeBeforeCleanup?: boolean;
+	// Number of merge changes makeConflictFn produces. Defaults to 1; pass
+	// the real count for a fixture that conflicts several paths at once
+	// (e.g. makeAllConflictKindsRepo), or waitForMergeChanges never resolves.
+	expectedConflictCount?: number;
 }
 
 function assertUnmergedPaths(repoPath: string, expectedPaths: string[]): void {
@@ -237,6 +245,196 @@ function makeConflict(repoPath: string): void {
 	assertUnmergedPaths(repoPath, ["tracked.txt"]);
 }
 
+function makeContextConflict(repoPath: string): void {
+	const fileName = "tracked.txt";
+	writeFileSync(
+		join(repoPath, fileName),
+		"before one\nbefore two\nbase\nafter one\nafter two\n",
+	);
+	runGit(["commit", "-am", "expand base context"], repoPath);
+	runGit(["checkout", "-b", "other"], repoPath);
+	writeFileSync(
+		join(repoPath, fileName),
+		"before one\nbefore two\nremote\nafter one\nafter two\n",
+	);
+	runGit(["commit", "-am", "remote context change"], repoPath);
+	runGit(["checkout", "-"], repoPath);
+	writeFileSync(
+		join(repoPath, fileName),
+		"before one\nbefore two\nlocal\nafter one\nafter two\n",
+	);
+	runGit(["commit", "-am", "local context change"], repoPath);
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits 1 for a conflict — expected
+	}
+	assertUnmergedPaths(repoPath, [fileName]);
+}
+
+function makeContextConflictWithMarkerStyle(
+	style: "merge" | "diff3" | "zdiff3",
+	markerLength: number,
+): (repoPath: string) => void {
+	return (repoPath) => {
+		runGit(["config", "merge.conflictStyle", style], repoPath);
+		writeFileSync(
+			join(repoPath, ".gitattributes"),
+			`tracked.txt conflict-marker-size=${markerLength}\n`,
+		);
+		runGit(["add", ".gitattributes"], repoPath);
+		runGit(["commit", "-m", "configure conflict marker length"], repoPath);
+		makeContextConflict(repoPath);
+	};
+}
+
+// Creates a single-file conflict with two independent hunks so conflict
+// ranges [0, 0] and [1, 1] are both valid inputs to weld_get_conflict.
+// File layout (base): "A\nB\nMID\nC\nD\n"
+// Local changes B→LOCAL-B and C→LOCAL-C; remote changes B→REMOTE-B and C→REMOTE-C.
+function makeTwoHunkConflict(repoPath: string): void {
+	const fileName = "tracked.txt";
+	writeFileSync(join(repoPath, fileName), "A\nB\nMID\nC\nD\n");
+	runGit(["commit", "-am", "two-hunk base"], repoPath);
+	runGit(["checkout", "-b", "other"], repoPath);
+	writeFileSync(join(repoPath, fileName), "A\nREMOTE-B\nMID\nREMOTE-C\nD\n");
+	runGit(["commit", "-am", "remote two-hunk change"], repoPath);
+	runGit(["checkout", "-"], repoPath);
+	writeFileSync(join(repoPath, fileName), "A\nLOCAL-B\nMID\nLOCAL-C\nD\n");
+	runGit(["commit", "-am", "local two-hunk change"], repoPath);
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits 1 for a conflict — expected
+	}
+	assertUnmergedPaths(repoPath, [fileName]);
+}
+
+// Two conflicts surround a deletion both sides agree on. The shared deletion
+// must not be reported as context for either requested conflict.
+function makeAdjacentResolvedChangeConflict(repoPath: string): void {
+	const fileName = "tracked.txt";
+	writeFileSync(join(repoPath, fileName), "A\nB\nRESOLVED\nC\nD\n");
+	runGit(["commit", "-am", "adjacent resolved base"], repoPath);
+	runGit(["checkout", "-b", "other"], repoPath);
+	writeFileSync(join(repoPath, fileName), "A\nREMOTE-B\nREMOTE-C\nD\n");
+	runGit(["commit", "-am", "remote changes"], repoPath);
+	runGit(["checkout", "-"], repoPath);
+	writeFileSync(join(repoPath, fileName), "A\nLOCAL-B\nLOCAL-C\nD\n");
+	runGit(["commit", "-am", "local changes"], repoPath);
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits 1 for a conflict — expected
+	}
+	assertUnmergedPaths(repoPath, [fileName]);
+}
+
+// Git conflicts when Local deletes C while Remote inserts beside it; Weld's
+// three-way differ can resolve the pair without leaving a Weld conflict hunk.
+function makeWeldResolvableConflict(repoPath: string): void {
+	const fileName = "tracked.txt";
+	writeFileSync(join(repoPath, fileName), "A\nB\nC\nD\n");
+	runGit(["commit", "-am", "Weld-resolvable base"], repoPath);
+	runGit(["checkout", "-b", "other"], repoPath);
+	writeFileSync(join(repoPath, fileName), "A\nB\nC\nREMOTE\nD\n");
+	runGit(["commit", "-am", "remote inserts beside C"], repoPath);
+	runGit(["checkout", "-"], repoPath);
+	writeFileSync(join(repoPath, fileName), "A\nB\nD\n");
+	runGit(["commit", "-am", "local deletes C"], repoPath);
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits 1 for the expected marker conflict.
+	}
+	assertUnmergedPaths(repoPath, [fileName]);
+}
+
+function makeLargeConflict(repoPath: string): void {
+	const fileName = "tracked.txt";
+	const base = Array.from(
+		{ length: 40 },
+		(_, index) => `base ${String(index + 1).padStart(2, "0")}`,
+	).join("\n");
+	const local = Array.from(
+		{ length: 40 },
+		(_, index) => `local ${String(index + 1).padStart(2, "0")}`,
+	).join("\n");
+	const remote = Array.from(
+		{ length: 40 },
+		(_, index) => `remote ${String(index + 1).padStart(2, "0")}`,
+	).join("\n");
+	writeFileSync(join(repoPath, fileName), `${base}\n`);
+	runGit(["commit", "-am", "large conflict base"], repoPath);
+	runGit(["checkout", "-b", "other"], repoPath);
+	writeFileSync(join(repoPath, fileName), `${remote}\n`);
+	runGit(["commit", "-am", "large remote replacement"], repoPath);
+	runGit(["checkout", "-"], repoPath);
+	writeFileSync(join(repoPath, fileName), `${local}\n`);
+	runGit(["commit", "-am", "large local replacement"], repoPath);
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits 1 for the expected marker conflict.
+	}
+	assertUnmergedPaths(repoPath, [fileName]);
+}
+
+// Creates two text conflicts in one repo: small.txt (a one-line conflict,
+// tiny either way) and large.txt (the same 40-line-per-side shape as
+// makeLargeConflict). Used to verify that listConflicts' inline budget is
+// decided per file, not by summing every file's conflict size together —
+// small.txt should inline even when large.txt alone busts the budget.
+function makeSmallAndLargeConflictRepo(repoPath: string): void {
+	const large = (label: string) =>
+		Array.from(
+			{ length: 40 },
+			(_, index) => `${label} ${String(index + 1).padStart(2, "0")}`,
+		).join("\n");
+	writeFileSync(join(repoPath, "small.txt"), "base\n");
+	writeFileSync(join(repoPath, "large.txt"), `${large("base")}\n`);
+	runGit(["add", "--", "small.txt", "large.txt"], repoPath);
+	runGit(["commit", "-m", "add conflict bases"], repoPath);
+
+	runGit(["checkout", "-b", "other"], repoPath);
+	writeFileSync(join(repoPath, "small.txt"), "remote\n");
+	writeFileSync(join(repoPath, "large.txt"), `${large("remote")}\n`);
+	runGit(["commit", "-am", "remote changes"], repoPath);
+
+	runGit(["checkout", "-"], repoPath);
+	writeFileSync(join(repoPath, "small.txt"), "local\n");
+	writeFileSync(join(repoPath, "large.txt"), `${large("local")}\n`);
+	runGit(["commit", "-am", "local changes"], repoPath);
+
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits 1 for the expected conflicts
+	}
+	assertUnmergedPaths(repoPath, ["large.txt", "small.txt"]);
+}
+
+function makeBinaryConflict(repoPath: string): void {
+	const fileName = "conflict.bin";
+	writeFileSync(join(repoPath, fileName), "base\0content\n");
+	runGit(["add", "--", fileName], repoPath);
+	runGit(["commit", "-m", "add binary base"], repoPath);
+	runGit(["checkout", "-b", "other"], repoPath);
+	writeFileSync(join(repoPath, fileName), "remote\0content\n");
+	runGit(["add", "--", fileName], repoPath);
+	runGit(["commit", "-m", "remote binary change"], repoPath);
+	runGit(["checkout", "-"], repoPath);
+	writeFileSync(join(repoPath, fileName), "local\0content\n");
+	runGit(["add", "--", fileName], repoPath);
+	runGit(["commit", "-m", "local binary change"], repoPath);
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits 1 for a binary conflict — expected
+	}
+	assertUnmergedPaths(repoPath, [fileName]);
+}
+
 // Creates a second conflict on the same repo after makeConflict + merge --abort.
 // At that point HEAD = "local change" commit (tracked.txt = "local\n").
 // This function:
@@ -321,6 +519,7 @@ function makeBothAddedConflict(repoPath: string): void {
 // auto-resolve this case, so write the unmerged index directly: remove the
 // resolved stage-0 entry and leave only stage 1 for the original path.
 function makeBothDeletedConflict(repoPath: string): void {
+	assertSafeGitCwd(repoPath);
 	const fileName = "tracked.txt";
 	const blob = execFileSync(
 		"git",
@@ -347,9 +546,112 @@ function makeBothDeletedConflict(repoPath: string): void {
 	}
 }
 
+// Builds every ConflictKind agentConflicts.ts distinguishes in one repo from
+// one `git merge`, so tests exercising multiple kinds pay Git's setup cost
+// once instead of once per kind. Deliberately excludes submodule conflicts
+// (they need a second source repo — see makeSubmoduleConflictRepo) and
+// bothDeleted (git auto-resolves that case inside a normal merge; it is
+// added afterwards as a synthetic index state, same as makeBothDeletedConflict).
+//
+// Resulting paths and kinds (see agentConflicts.ts's inspectConflict):
+//   text.txt          text          — both sides modify the tracked base file
+//   added.txt         bothAdded     — both sides add it fresh, no common ancestor
+//   local-deletes.txt deletedByUs   — local deletes, remote modifies
+//   remote-deletes.txt deletedByThem — remote deletes, local modifies
+//   binary.bin        binary        — both sides modify, contains a NUL byte
+//   both-deleted.txt  bothDeleted   — added synthetically after the merge
+function makeAllConflictKindsRepo(repoPath: string): void {
+	writeFileSync(join(repoPath, "local-deletes.txt"), "shared\n");
+	writeFileSync(join(repoPath, "remote-deletes.txt"), "shared\n");
+	writeFileSync(join(repoPath, "binary.bin"), "base\0content\n");
+	runGit(
+		["add", "--", "local-deletes.txt", "remote-deletes.txt", "binary.bin"],
+		repoPath,
+	);
+	runGit(["commit", "-m", "add shared files"], repoPath);
+
+	runGit(["checkout", "-b", "other"], repoPath);
+	writeFileSync(join(repoPath, "tracked.txt"), "remote\n");
+	writeFileSync(join(repoPath, "added.txt"), "remote version\n");
+	runGit(["rm", "--", "local-deletes.txt"], repoPath);
+	writeFileSync(join(repoPath, "remote-deletes.txt"), "remote edit\n");
+	writeFileSync(join(repoPath, "binary.bin"), "remote\0content\n");
+	runGit(
+		[
+			"add",
+			"--",
+			"tracked.txt",
+			"added.txt",
+			"remote-deletes.txt",
+			"binary.bin",
+		],
+		repoPath,
+	);
+	runGit(["commit", "-m", "remote changes"], repoPath);
+
+	runGit(["checkout", "-"], repoPath);
+	writeFileSync(join(repoPath, "tracked.txt"), "local\n");
+	writeFileSync(join(repoPath, "added.txt"), "local version\n");
+	writeFileSync(join(repoPath, "local-deletes.txt"), "local edit\n");
+	runGit(["rm", "--", "remote-deletes.txt"], repoPath);
+	writeFileSync(join(repoPath, "binary.bin"), "local\0content\n");
+	runGit(
+		[
+			"add",
+			"--",
+			"tracked.txt",
+			"added.txt",
+			"local-deletes.txt",
+			"binary.bin",
+		],
+		repoPath,
+	);
+	runGit(["commit", "-m", "local changes"], repoPath);
+
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits 1 for the expected conflicts
+	}
+	const conflictedPaths = [
+		"tracked.txt",
+		"added.txt",
+		"local-deletes.txt",
+		"remote-deletes.txt",
+		"binary.bin",
+	];
+	assertUnmergedPaths(repoPath, conflictedPaths);
+
+	// Layer a both-deleted file on top, the same way makeBothDeletedConflict
+	// does: git auto-resolves an actual both-deleted merge, so the unmerged
+	// index state has to be written directly.
+	assertSafeGitCwd(repoPath);
+	const fileName = "both-deleted.txt";
+	const blob = execFileSync(
+		"git",
+		["-C", repoPath, "hash-object", "-w", "--stdin"],
+		{
+			input: "base\n",
+			encoding: "utf8",
+			stdio: ["pipe", "pipe", "pipe"],
+		},
+	).trim();
+	execFileSync("git", ["-C", repoPath, "update-index", "--index-info"], {
+		input: `0 0000000000000000000000000000000000000000 0\t${fileName}\n100644 ${blob} 1\t${fileName}\n`,
+		encoding: "utf8",
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	assertUnmergedPaths(repoPath, [...conflictedPaths, fileName]);
+}
+
 // Waits for the git extension to fire onDidCloseRepository for repoPath.
 // Subscribe BEFORE deleting the repo directory so no events are missed.
 // Returns immediately if the repo is not currently registered.
+// TODO: see the matching note on waitForMergeChanges — closeBeforeCleanup
+// callers trigger the close themselves via `commands.executeCommand
+// ("git.close", repo)`; check whether that command's own promise already
+// resolves after the repository is unregistered before keeping this as a
+// separate race against onDidCloseRepository.
 function waitForRepoClose(repoPath: string, timeoutMs = 10_000): Promise<void> {
 	const gitApi = getGitApi();
 	if (!gitApi.getRepository(Uri.file(repoPath))) {
@@ -376,6 +678,13 @@ function waitForRepoClose(repoPath: string, timeoutMs = 10_000): Promise<void> {
 
 // Waits until repo.state.mergeChanges.length === expectedCount.
 // Uses onDidChange events rather than polling; falls back to a timeout.
+// TODO: most callers trigger the status refresh themselves (after
+// makeConflictFn writes conflicting files, after an edit). For those,
+// `await repo.status()` is a real awaitable for "this refresh finished" —
+// GitApiRepository.status() awaits updateModelState() (which rebuilds
+// mergeChanges) before returning, confirmed by reading vscode's bundled git
+// extension source — so this passive listen-and-timeout race is unnecessary
+// there. See TODO.md "Test helpers should await repository.status()...".
 function waitForMergeChanges(
 	repo: GitApiRepository,
 	expectedCount: number,
@@ -409,21 +718,38 @@ async function withConflictRepo(
 	prefix: string,
 	makeConflictFn: (repoPath: string) => void,
 	testFn: (repoPath: string, repo: GitApiRepository) => Promise<void>,
+	options: WithConflictRepoOptions = {},
 ): Promise<void> {
 	const repoPath = await makeRepo(prefix);
 	makeConflictFn(repoPath);
-	await openRepoInGitExtension(repoPath);
-	const repo = getGitApi().getRepository(Uri.file(repoPath));
-	if (!repo) {
-		throw new Error(`Expected git repository at ${repoPath}`);
-	}
-	await waitForMergeChanges(repo, 1);
+	// openRepoInGitExtension and waitForMergeChanges both register the repo
+	// with the live Git extension; if either throws (e.g. a wrong
+	// expectedConflictCount timing out), the repo would otherwise leak open
+	// for the rest of the run and pollute every later test that lists
+	// conflicts across all open repositories. Covering them by the same
+	// try/finally as testFn ensures cleanup always runs.
 	try {
+		await openRepoInGitExtension(repoPath);
+		const repo = getGitApi().getRepository(Uri.file(repoPath));
+		if (!repo) {
+			throw new Error(`Expected git repository at ${repoPath}`);
+		}
+		await waitForMergeChanges(repo, options.expectedConflictCount ?? 1);
 		await testFn(repoPath, repo);
 	} finally {
 		const closePromise = waitForRepoClose(repoPath);
-		await rm(repoPath, { recursive: true, force: true });
-		await closePromise;
+		const repo = getGitApi().getRepository(Uri.file(repoPath));
+		if (options.closeBeforeCleanup && repo) {
+			// An auto-merge edits the worktree and causes the Git extension to
+			// schedule refresh work. Close its repository before deletion so that
+			// work cannot start git with a removed working directory.
+			await commands.executeCommand("git.close", repo);
+			await closePromise;
+			await rm(repoPath, { recursive: true, force: true });
+		} else {
+			await rm(repoPath, { recursive: true, force: true });
+			await closePromise;
+		}
 	}
 }
 
@@ -469,18 +795,27 @@ export {
 	cleanupTempFixture,
 	getConflictedItem,
 	lsFilesStages,
+	makeAdjacentResolvedChangeConflict,
+	makeAllConflictKindsRepo,
+	makeBinaryConflict,
 	makeBothAddedConflict,
 	makeBothDeletedConflict,
 	makeConflict,
+	makeContextConflict,
+	makeContextConflictWithMarkerStyle,
 	makeDeletedByThemConflict,
 	makeDeletedByUsConflict,
+	makeLargeConflict,
 	makeRepo,
 	makeRepoFile,
 	makeRepoFixture,
 	makeSecondConflict,
+	makeSmallAndLargeConflictRepo,
 	makeSubmoduleAndTextConflictRepo,
 	makeSubmoduleConflictFixture,
 	makeSubmoduleConflictRepo,
+	makeTwoHunkConflict,
+	makeWeldResolvableConflict,
 	openRepoInGitExtension,
 	waitForMergeChanges,
 	waitForRepoClose,
