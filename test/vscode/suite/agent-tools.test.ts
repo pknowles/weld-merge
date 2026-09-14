@@ -1457,6 +1457,43 @@ describe("Agent Tools: Whole-file conflict detection", () => {
 				},
 			));
 	}
+
+	for (const testCase of [
+		{ name: "deleted-by-us", make: makeDeletedByUsConflict },
+		{ name: "deleted-by-them", make: makeDeletedByThemConflict },
+	]) {
+		it(`reports stray markers left on disk for ${testCase.name}`, () =>
+			withConflictRepo(
+				`weld-agent-${testCase.name}-stray-`,
+				testCase.make,
+				async (repoPath) => {
+					const uri = Uri.file(`${repoPath}/tracked.txt`);
+					const surviving = await workspace.fs.readFile(uri);
+					await workspace.fs.writeFile(
+						uri,
+						Buffer.concat([
+							surviving,
+							Buffer.from("\n<<<<<<< stray marker"),
+						]),
+					);
+					await withListToolEnabled(async () => {
+						const conflict = findConflict(
+							await invokeListConflicts(),
+							Uri.file(repoPath),
+							"tracked.txt",
+						);
+						assert.equal(
+							conflict.strayMarkers?.some(
+								(marker) => marker.kind === "gitMarker",
+							),
+							true,
+							"expected the appended stray marker to be reported " +
+								`for ${testCase.name}`,
+						);
+					});
+				},
+			));
+	}
 });
 
 describe("Agent Tools: Special conflict detection", () => {

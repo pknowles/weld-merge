@@ -312,10 +312,13 @@ async function inspectConflict(
 }
 
 // Kinds whose working-tree file exists as readable text; the other kinds have
-// no file on disk (deleted/both-deleted), are binary, or are a directory.
+// no file on disk (both-deleted), are binary, or are a directory.
+// deletedByUs/deletedByThem both leave the surviving side's content on disk
+// (git checks it out), so both are disk-readable, symmetrically.
 const DISK_READABLE_KINDS = new Set<ConflictKind>([
 	"text",
 	"bothAdded",
+	"deletedByUs",
 	"deletedByThem",
 ]);
 
@@ -823,16 +826,20 @@ function buildConflictBlock(
 	return block;
 }
 
-async function fileConflictBlocks(
-	item: ConflictedItem,
+// diskContent is always required, never fetched internally: every caller
+// already knows (from DISK_READABLE_KINDS) whether disk content applies to
+// this conflict's kind, and listConflicts needs the same read shared with
+// strayMarkerReport rather than read twice.
+function fileConflictBlocks(
 	inspection: TextConflictInspection,
+	diskContent: string,
 	range: [number, number] | null,
 	options: {
 		contextLines: number;
 		maxSectionLines: number;
 		includeBaseDiffs: boolean;
 	},
-): Promise<ConflictBlock[]> {
+): ConflictBlock[] {
 	const count = inspection.snapshot.conflictChangeIndexes.length;
 	const [first, last] = range ?? [0, count - 1];
 	if (range !== null && last >= count) {
@@ -846,7 +853,7 @@ async function fileConflictBlocks(
 	const context = fileConflictContext(
 		inspection.snapshot,
 		inspection.kind,
-		await readDiskContent(item),
+		diskContent,
 		options,
 	);
 	return Array.from({ length: last - first + 1 }, (_, offset) =>
@@ -854,17 +861,23 @@ async function fileConflictBlocks(
 	);
 }
 
-async function strayMarkerReport(
-	item: ConflictedItem,
+// diskContent is null exactly when kind is not in DISK_READABLE_KINDS (no
+// file on disk to scan) — callers already have this value on hand from
+// resolving fileConflictBlocks' input, so it is passed in rather than
+// re-derived or re-read here.
+function strayMarkerReport(
 	kind: ConflictKind,
-): Promise<Pick<ListedConflict, "strayMarkers" | "strayMarkersTruncated">> {
-	if (!DISK_READABLE_KINDS.has(kind)) {
+	diskContent: string | null,
+): Pick<ListedConflict, "strayMarkers" | "strayMarkersTruncated"> {
+	if (diskContent === null) {
 		return {};
 	}
-	const markers = bounded(
-		scanMarkers(await readDiskContent(item)),
-		STRAY_MARKER_LIMIT,
-	);
+	if (!DISK_READABLE_KINDS.has(kind)) {
+		throw new Error(
+			`Unexpected disk content for non-disk-readable conflict kind "${kind}".`,
+		);
+	}
+	const markers = bounded(scanMarkers(diskContent), STRAY_MARKER_LIMIT);
 	return {
 		...(markers.items.length === 0 ? {} : { strayMarkers: markers.items }),
 		...(markers.truncated ? { strayMarkersTruncated: true } : {}),
@@ -912,16 +925,26 @@ async function listConflicts(
 					commits,
 				);
 				const inspection = await inspectConflict(item);
-				const isText =
+				const diskContent = DISK_READABLE_KINDS.has(inspection.kind)
+					? await readDiskContent(item)
+					: null;
+				let blocks: ConflictBlock[] = [];
+				if (
 					inspection.kind === "text" ||
-					inspection.kind === "bothAdded";
-				const blocks = isText
-					? await fileConflictBlocks(item, inspection, null, {
-							contextLines: DEFAULT_CONTEXT_LINES,
-							maxSectionLines: DEFAULT_MAX_SECTION_LINES,
-							includeBaseDiffs: false,
-						})
-					: [];
+					inspection.kind === "bothAdded"
+				) {
+					if (diskContent === null) {
+						// Unreachable: text/bothAdded is always DISK_READABLE_KINDS.
+						throw new Error(
+							`Expected disk content for conflict kind "${inspection.kind}".`,
+						);
+					}
+					blocks = fileConflictBlocks(inspection, diskContent, null, {
+						contextLines: DEFAULT_CONTEXT_LINES,
+						maxSectionLines: DEFAULT_MAX_SECTION_LINES,
+						includeBaseDiffs: false,
+					});
+				}
 				return {
 					listed: {
 						repositoryRoot: item.repository.rootUri.toString(),
@@ -929,10 +952,14 @@ async function listConflicts(
 							item.repository.rootUri,
 							item.uri,
 						),
-						conflictCount: isText ? blocks.length : 1,
+						conflictCount:
+							inspection.kind === "text" ||
+							inspection.kind === "bothAdded"
+								? blocks.length
+								: 1,
 						kind: inspection.kind,
 						commits: await commits,
-						...(await strayMarkerReport(item, inspection.kind)),
+						...strayMarkerReport(inspection.kind, diskContent),
 					} satisfies ListedConflict,
 					blocks,
 				};
@@ -1029,9 +1056,9 @@ async function getConflict(
 		repositoryRoot: request.repositoryRoot,
 		path: request.path,
 		conflictCount: inspection.snapshot.conflictChangeIndexes.length,
-		conflicts: await fileConflictBlocks(
-			item,
+		conflicts: fileConflictBlocks(
 			inspection,
+			await readDiskContent(item),
 			request.conflicts,
 			request,
 		),

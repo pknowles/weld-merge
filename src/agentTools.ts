@@ -18,56 +18,22 @@ import {
 	normalizeGetConflictInput,
 } from "./agentConflicts.ts";
 import { getWeldLogChannel } from "./log.ts";
+import type {
+	AutoMergeAllResult,
+	AutoMergeResult,
+} from "./webview/autoMerge.ts";
 
 interface ApplyAutomergeAllInput {
 	force?: boolean;
 }
-// Mirrors extension.ts's AutoMergeAllEntry: one entry per file the batch
-// attempted, in the same repositoryRoot/path shape every other tool uses to
-// identify a file, so a skipped entry can be fed straight into
-// weld_apply_automerge with force. remainingConflicts is always present —
-// including on "skippedWouldClobber", where it describes what auto-merge
-// would produce, not the live file's actual state, since the merge was
-// never applied. "merged" wrote the 3-way merge (remainingConflicts left as
-// <<<<<<< markers is opportunistic, not guaranteed zero); nothing here
-// asserts the file is fully resolved — check remainingConflicts for that.
-// "skippedWouldClobber" means the file's live content had already changed
-// since the conflict was created, so it was left untouched rather than
-// discarding that change — never a batch-aborting failure, and never
-// produced when force is set. staged is true only when remainingConflicts
-// was 0 and `git add` actually succeeded — false covers both "conflicts
-// remain, so staging was never attempted" and "staging was attempted but
-// failed"; a caller must not infer staged from remainingConflicts alone.
-type ApplyAutomergeAllEntry = ConflictLocation & {
-	remainingConflicts: number;
-	staged: boolean;
-} & (
-		| { outcome: "merged" }
-		| { outcome: "autoResolutionsAlreadyApplied" }
-		| { outcome: "skippedWouldClobber" }
-	);
-interface ApplyAutomergeAllResult {
-	files: ApplyAutomergeAllEntry[];
-	totalCount: number;
-}
+type ApplyAutomergeAllResult = AutoMergeAllResult;
 type ApplyAutomergeAll = (
 	input: ApplyAutomergeAllInput,
 ) => Promise<ApplyAutomergeAllResult>;
-// Mirrors extension.ts's AutoMergeResult: "merged" wrote the 3-way merge;
-// "autoResolutionsAlreadyApplied" means the live file already equalled the
-// auto-merge result, so this call had nothing left to write — not the same
-// as "fully resolved" (see remainingConflicts). performAutoMerge refuses
-// (throws WouldClobberEditError) rather than overwrite a file that has
-// diverged from both the pre-merge conflict markers and the auto-merge
-// result, unless the caller passes force. staged is true only when
-// remainingConflicts was 0 and `git add` actually succeeded.
-type ApplyAutomergeResult =
-	| { kind: "merged"; remainingConflicts: number; staged: boolean }
-	| {
-			kind: "autoResolutionsAlreadyApplied";
-			remainingConflicts: number;
-			staged: boolean;
-	  };
+type ApplyAutomergeResult = Exclude<
+	AutoMergeResult,
+	{ kind: "skippedWouldClobber" }
+>;
 type ApplyAutomergeSingleInput = ConflictLocation & { force?: boolean };
 type ApplyAutomergeSingle = (
 	input: ApplyAutomergeSingleInput,

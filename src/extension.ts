@@ -44,6 +44,9 @@ import {
 import { SubmoduleConflict } from "./submoduleConflict.ts";
 import { ConflictedFilesProvider, GitFile } from "./treeView.ts";
 import {
+	AutoMergeAllAbortedError,
+	type AutoMergeAllEntry,
+	type AutoMergeAllResult,
 	type AutoMergeResult,
 	performAutoMerge,
 	WouldClobberEditError,
@@ -640,48 +643,15 @@ async function collectAutoMergeableFiles(): Promise<ConflictedFileEntry[]> {
 	return eligible.filter((entry) => entry !== null);
 }
 
-// One file's outcome from an auto-merge-all run, in the same
-// repositoryRoot/path shape weld_list_conflicts and weld_get_conflict use to
-// identify files, so an agent can feed a skipped entry straight into
-// weld_apply_automerge with force without reformatting anything.
-// remainingConflicts is always present, on every outcome — including
-// "skippedWouldClobber", where it describes what auto-merge would produce,
-// not the live file's actual state, since the merge was never applied — so
-// "this outcome fixed nothing" is never confused with "there is nothing
-// left to fix": a caller must read remainingConflicts, not the outcome
-// label alone, to know whether the file still needs attention. staged is
-// true only when remainingConflicts was 0 and `git add` actually succeeded —
-// see performAutoMerge.
-type AutoMergeAllEntry = ConflictLocation & {
-	remainingConflicts: number;
-	staged: boolean;
-} & ( // Wrote the 3-way merge result to the file this call.
-		| { outcome: "merged" }
-		// Auto-merge was not able to do anything this call: the live file
-		// already held exactly the auto-merge result, so nothing was
-		// written. Not the same as "resolved" — remainingConflicts still
-		// names what, if anything, is left.
-		| { outcome: "autoResolutionsAlreadyApplied" }
-		// Applying the merge would have discarded an edit already made to
-		// this file (WouldClobberEditError) — never an abort reason for
-		// the batch, and never produced when force is set. Needs
-		// weld_apply_automerge with force, or a manual resolution.
-		| { outcome: "skippedWouldClobber" }
-	);
-
-interface AutoMergeAllResult {
-	files: AutoMergeAllEntry[];
-	totalCount: number;
-}
-
 // Auto-merges every text-mergeable conflicted file in every tracked
 // repository. A file whose live content would be discarded by the merge
 // (WouldClobberEditError) is skipped, not a batch-aborting failure — see
 // WouldClobberEditError; force applies to every file the batch attempts, so
 // nothing is ever skipped for this reason when it is set. Any other error
-// still fails the batch fast (rethrows with the failing file's name and
-// successful count as context). Returns one result per file the batch
-// attempted, plus the files it skipped and the total considered.
+// still fails the batch fast, throwing AutoMergeAllAbortedError with the
+// files attempted so far and the failing file's name as context. Returns
+// one result per file the batch attempted, plus the files it skipped and
+// the total considered.
 async function handleAutoMergeAll(
 	conflictedFilesProvider: ConflictedFilesProvider,
 	options: { force?: boolean } = {},
@@ -716,9 +686,13 @@ async function handleAutoMergeAll(
 					options,
 				);
 			} catch (error: unknown) {
-				throw new Error(
-					`Weld Auto-Merge All stopped at ${entry.change.uri} after ${files.length} successful merge(s): ${getErrorMessage(error)}`,
-					{ cause: error },
+				throw new AutoMergeAllAbortedError(
+					`Weld Auto-Merge All stopped at ${entry.change.uri} after ` +
+						`${files.length} file(s) attempted (result may still have ` +
+						`conflicts left to resolve): ${getErrorMessage(error)}`,
+					files,
+					totalCount,
+					error,
 				);
 			}
 			files.push({
