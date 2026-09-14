@@ -610,6 +610,7 @@ describe("Agent Tools: Conflict listing inline budget", () => {
 					);
 				});
 			},
+			{ expectedConflictCount: 2 },
 		));
 });
 
