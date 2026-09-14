@@ -380,6 +380,40 @@ function makeLargeConflict(repoPath: string): void {
 	assertUnmergedPaths(repoPath, [fileName]);
 }
 
+// Creates two text conflicts in one repo: small.txt (a one-line conflict,
+// tiny either way) and large.txt (the same 40-line-per-side shape as
+// makeLargeConflict). Used to verify that listConflicts' inline budget is
+// decided per file, not by summing every file's conflict size together —
+// small.txt should inline even when large.txt alone busts the budget.
+function makeSmallAndLargeConflictRepo(repoPath: string): void {
+	const large = (label: string) =>
+		Array.from(
+			{ length: 40 },
+			(_, index) => `${label} ${String(index + 1).padStart(2, "0")}`,
+		).join("\n");
+	writeFileSync(join(repoPath, "small.txt"), "base\n");
+	writeFileSync(join(repoPath, "large.txt"), `${large("base")}\n`);
+	runGit(["add", "--", "small.txt", "large.txt"], repoPath);
+	runGit(["commit", "-m", "add conflict bases"], repoPath);
+
+	runGit(["checkout", "-b", "other"], repoPath);
+	writeFileSync(join(repoPath, "small.txt"), "remote\n");
+	writeFileSync(join(repoPath, "large.txt"), `${large("remote")}\n`);
+	runGit(["commit", "-am", "remote changes"], repoPath);
+
+	runGit(["checkout", "-"], repoPath);
+	writeFileSync(join(repoPath, "small.txt"), "local\n");
+	writeFileSync(join(repoPath, "large.txt"), `${large("local")}\n`);
+	runGit(["commit", "-am", "local changes"], repoPath);
+
+	try {
+		runGit(["merge", "other"], repoPath);
+	} catch {
+		// git exits 1 for the expected conflicts
+	}
+	assertUnmergedPaths(repoPath, ["large.txt", "small.txt"]);
+}
+
 function makeBinaryConflict(repoPath: string): void {
 	const fileName = "conflict.bin";
 	writeFileSync(join(repoPath, fileName), "base\0content\n");
@@ -757,6 +791,7 @@ export {
 	makeRepoFile,
 	makeRepoFixture,
 	makeSecondConflict,
+	makeSmallAndLargeConflictRepo,
 	makeSubmoduleAndTextConflictRepo,
 	makeSubmoduleConflictFixture,
 	makeSubmoduleConflictRepo,

@@ -38,6 +38,7 @@ import {
 	makeDeletedByUsConflict,
 	makeLargeConflict,
 	makeRepo,
+	makeSmallAndLargeConflictRepo,
 	makeSubmoduleConflictFixture,
 	makeTwoHunkConflict,
 	makeWeldResolvableConflict,
@@ -513,6 +514,42 @@ describe("Agent Tools: Conflict listing", () => {
 			});
 		}));
 
+	it("lists a Weld-resolvable Git conflict with zero conflicts to decide", () =>
+		withConflictRepo(
+			"weld-agent-resolvable-",
+			makeWeldResolvableConflict,
+			async (repoPath) => {
+				await withListToolEnabled(async () => {
+					const conflict = findConflict(
+						await invokeListConflicts(),
+						Uri.file(repoPath),
+						"tracked.txt",
+					);
+					assert.equal(conflict.kind, "text");
+					assert.equal(conflict.conflictCount, 0);
+					assert.equal(conflict.conflicts, undefined);
+					// Git's markers are still on disk until auto-merge runs.
+					assert.equal(
+						conflict.strayMarkers?.some(
+							(marker) => marker.kind === "gitMarker",
+						),
+						true,
+					);
+
+					const detail = expectTextResult(
+						await invokeGetConflict({
+							repositoryRoot: Uri.file(repoPath).toString(),
+							path: "tracked.txt",
+						}),
+					);
+					assert.equal(detail.conflictCount, 0);
+					assert.deepEqual(detail.conflicts, []);
+				});
+			},
+		));
+});
+
+describe("Agent Tools: Conflict listing inline budget", () => {
 	it("inlines small conflicts with the listing", () =>
 		withConflictRepo(
 			"weld-agent-inline-",
@@ -544,36 +581,33 @@ describe("Agent Tools: Conflict listing", () => {
 			},
 		));
 
-	it("lists a Weld-resolvable Git conflict with zero conflicts to decide", () =>
+	it("inlines a small file's conflict even when another file's conflict is too large", () =>
 		withConflictRepo(
-			"weld-agent-resolvable-",
-			makeWeldResolvableConflict,
+			"weld-agent-inline-mixed-",
+			makeSmallAndLargeConflictRepo,
 			async (repoPath) => {
 				await withListToolEnabled(async () => {
-					const conflict = findConflict(
-						await invokeListConflicts(),
+					const result = await invokeListConflicts();
+					const small = findConflict(
+						result,
 						Uri.file(repoPath),
-						"tracked.txt",
+						"small.txt",
 					);
-					assert.equal(conflict.kind, "text");
-					assert.equal(conflict.conflictCount, 0);
-					assert.equal(conflict.conflicts, undefined);
-					// Git's markers are still on disk until auto-merge runs.
+					const large = findConflict(
+						result,
+						Uri.file(repoPath),
+						"large.txt",
+					);
 					assert.equal(
-						conflict.strayMarkers?.some(
-							(marker) => marker.kind === "gitMarker",
-						),
-						true,
+						small.conflicts?.length,
+						1,
+						"expected small.txt's conflict to be inlined",
 					);
-
-					const detail = expectTextResult(
-						await invokeGetConflict({
-							repositoryRoot: Uri.file(repoPath).toString(),
-							path: "tracked.txt",
-						}),
+					assert.equal(
+						large.conflicts,
+						undefined,
+						"expected large.txt's conflict to stay out of the inline budget",
 					);
-					assert.equal(detail.conflictCount, 0);
-					assert.deepEqual(detail.conflicts, []);
 				});
 			},
 		));

@@ -111,7 +111,7 @@ interface ListedConflict extends ConflictLocation {
 	 */
 	strayMarkers?: StrayMarker[];
 	strayMarkersTruncated?: true;
-	/** Present when every conflict fit the inline budget. */
+	/** Present when this file's own conflicts fit the inline budget. */
 	conflicts?: ConflictBlock[];
 }
 
@@ -944,18 +944,17 @@ async function listConflicts(
 			}
 		}),
 	);
-	// Opportunistic inline: when every conflict in the workspace fits the
-	// budget together, one list call carries everything a resolution needs.
-	const totalLines = files.reduce(
-		(total, file) => total + blockLineCount(file.blocks),
-		0,
-	);
-	const inline = totalLines > 0 && totalLines <= inlineConflictLines;
+	// Opportunistic inline: a file whose own conflicts fit the budget carries
+	// them in this call, sparing a weld_get_conflict follow-up for that file.
 	return {
-		files: files.map(({ listed, blocks }) => ({
-			...listed,
-			...(inline && blocks.length > 0 ? { conflicts: blocks } : {}),
-		})),
+		files: files.map(({ listed, blocks }) => {
+			const lines = blockLineCount(blocks);
+			const inline = lines > 0 && lines <= inlineConflictLines;
+			return {
+				...listed,
+				...(inline ? { conflicts: blocks } : {}),
+			};
+		}),
 	};
 }
 

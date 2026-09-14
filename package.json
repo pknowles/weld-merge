@@ -289,7 +289,7 @@
 							"type": "integer",
 							"minimum": 0,
 							"default": 40,
-							"description": "Inline each file's conflict blocks into the listing when the total rendered line count across the workspace is at or below this budget."
+							"description": "Inline a file's conflict blocks into the listing when that file's own rendered line count is at or below this budget."
 						}
 					}
 				}
