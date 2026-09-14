@@ -5,6 +5,7 @@ import { describe, it } from "mocha";
 import sinon from "sinon";
 import {
 	commands,
+	type Event,
 	EventEmitter,
 	extensions,
 	Uri,
@@ -33,7 +34,7 @@ const PER_REPO_LABEL_REGEX = /Failed to list conflicts for/;
 const PER_REPO_FILENOTFOUND_REGEX =
 	/(FileNotFound|ENOENT|cannot find|MERGE_MSG)/;
 const AUTO_MERGE_ALL_FAILURE_REGEX =
-	/Weld Auto-Merge All stopped at .*tracked\.txt after 0 successful merge\(s\): .*forced repository\.show failure/;
+	/Weld Auto-Merge All stopped at .*tracked\.txt after 0 file\(s\) attempted.*forced repository\.show failure/;
 
 // Reproduces the Compare feature's initial-conflict URI round-trip using the
 // real VS Code host. setInitialConflictContent stores the original conflicted
@@ -147,6 +148,61 @@ describe("error propagation and tree UI errors (VS Code host)", () => {
 	});
 });
 
+// Shared by the error-propagation test below: patches ext.exports.getAPI
+// (which is shared across all calls to extensions.getExtension, so this
+// survives wrapper churn and can be cleanly restored via the returned
+// stub's .restore()) so repository.show() fails on the injected conflict
+// file while stages 2/3 keep resolving normally.
+function stubFailingRepositoryShow(
+	workspaceUri: Uri,
+	mockRepo: {
+		rootUri: Uri;
+		state: {
+			mergeChanges: { uri: Uri; status: number }[];
+			onDidChange: Event<void>;
+		};
+		show: (ref: string) => Promise<string>;
+		getCommit: () => Promise<never>;
+		getMergeBase: () => Promise<never>;
+		add: () => Promise<never>;
+	},
+	getRepositoryCalls: string[],
+): sinon.SinonStub {
+	const gitExt = extensions.getExtension("vscode.git");
+	assert.ok(gitExt, "Git extension must be available");
+	const origGetAPI = gitExt.exports.getAPI.bind(gitExt.exports);
+	return sinon
+		.stub(gitExt.exports, "getAPI")
+		.callsFake((...args: unknown[]) => {
+			const realApi = origGetAPI(args[0] as number);
+			Object.defineProperty(realApi, "repositories", {
+				get: () => [mockRepo],
+				configurable: true,
+			});
+			// Stage content is read via `git cat-file --filters`
+			// (readIndexStageContent in gitUtils.ts), not repository.show(),
+			// on the happy path. Pointing the resolved git executable at a
+			// nonexistent binary forces a spawn-level (ENOENT) failure, which
+			// is the one case readIndexStageContent falls back to
+			// repository.show() — exercising this test's injected failure via
+			// the real fallback path instead of a path production code no
+			// longer takes.
+			Object.defineProperty(realApi, "git", {
+				value: { path: "weld-test-nonexistent-git-binary" },
+				configurable: true,
+			});
+			const origGetRepo = realApi.getRepository.bind(realApi);
+			realApi.getRepository = (uri: Uri) => {
+				getRepositoryCalls.push(uri.toString());
+				if (uri.toString() === workspaceUri.toString()) {
+					return mockRepo;
+				}
+				return origGetRepo(uri);
+			};
+			return realApi;
+		});
+}
+
 // Verifies that autoMergeAll failures propagate with file context and cause,
 // rather than being silently swallowed. Uses mock injection via extensions.getExtension
 // patch to force repository.show() to fail on the first file.
@@ -162,18 +218,11 @@ describe("autoMergeAll command error propagation (VS Code host)", () => {
 		);
 		const workspaceUri = workspaceFolder.uri;
 
-		// Patch ext.exports.getAPI directly — ext.exports is shared across all
-		// calls to extensions.getExtension, so this survives wrapper churn and
-		// can be cleanly restored in finally (unlike patching getExtension itself).
 		const conflictUri = Uri.joinPath(workspaceUri, "tracked.txt");
 		const changeEmitter = new EventEmitter<void>();
 
 		let injectedFailureCalls = 0;
 		const getRepositoryCalls: string[] = [];
-
-		const gitExt = extensions.getExtension("vscode.git");
-		assert.ok(gitExt, "Git extension must be available");
-		const origGetAPI = gitExt.exports.getAPI.bind(gitExt.exports);
 
 		const mockRepo = {
 			rootUri: workspaceUri,
@@ -204,36 +253,11 @@ describe("autoMergeAll command error propagation (VS Code host)", () => {
 			add: () => Promise.reject(new Error("not used")),
 		};
 
-		const getAPIStub = sinon
-			.stub(gitExt.exports, "getAPI")
-			.callsFake((...args: unknown[]) => {
-				const realApi = origGetAPI(args[0] as number);
-				Object.defineProperty(realApi, "repositories", {
-					get: () => [mockRepo],
-					configurable: true,
-				});
-				// Stage content is read via `git cat-file --filters`
-				// (readIndexStageContent in gitUtils.ts), not repository.show(),
-				// on the happy path. Pointing the resolved git executable at a
-				// nonexistent binary forces a spawn-level (ENOENT) failure, which
-				// is the one case readIndexStageContent falls back to
-				// repository.show() — exercising this test's injected failure via
-				// the real fallback path instead of a path production code no
-				// longer takes.
-				Object.defineProperty(realApi, "git", {
-					value: { path: "weld-test-nonexistent-git-binary" },
-					configurable: true,
-				});
-				const origGetRepo = realApi.getRepository.bind(realApi);
-				realApi.getRepository = (uri: Uri) => {
-					getRepositoryCalls.push(uri.toString());
-					if (uri.toString() === workspaceUri.toString()) {
-						return mockRepo;
-					}
-					return origGetRepo(uri);
-				};
-				return realApi;
-			});
+		const getAPIStub = stubFailingRepositoryShow(
+			workspaceUri,
+			mockRepo,
+			getRepositoryCalls,
+		);
 
 		try {
 			let commandError: unknown;
