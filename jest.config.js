@@ -1,3 +1,12 @@
+import { readFileSync } from "node:fs";
+
+const coverageThresholds = JSON.parse(
+	readFileSync(
+		new URL("./jest.coverage.config.json", import.meta.url),
+		"utf8",
+	),
+);
+
 export default {
 	preset: "ts-jest",
 	testEnvironment: "jsdom",
@@ -11,19 +20,14 @@ export default {
 		"!src/extension.ts", // Extension entry point often hard to test without vscode-test
 	],
 	coverageThreshold: {
-		global: {
-			branches: 62,
-			functions: 72,
-			lines: 72,
-			statements: 72,
-		},
+		global: coverageThresholds,
 	},
 	testPathIgnorePatterns: [
 		"/node_modules/",
 		"/test/benchmarking/",
 		"/test/vscode/", // vscode integration tests (not jest)
 		"/test/vscode-remote-ssh/", // manual Remote-SSH integration test (not jest)
-		"/test/e2e/", // playwrite end to end tests (not jest)
+		"/test/webview-integration/", // playwright browser webview integration tests (not jest)
 	],
 	// Keep Jest's haste-map out of @vscode/test-electron's downloaded VS Code
 	// trees. Each install ships ~70 built-in extensions whose package.json
