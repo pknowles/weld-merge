@@ -1,8 +1,11 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
 import { describe, it, test } from "@jest/globals";
-import { mapLineAcrossChunks, mapLineAcrossPanes } from "./scrollMapping.ts";
-import type { DiffChunk } from "./types.ts";
+import {
+	mapLineAcrossChunks,
+	mapLineAcrossPanes,
+} from "../../../src/webview/ui/scrollMapping.ts";
+import type { DiffChunk } from "../../../src/webview/ui/types.ts";
 
 describe("mapLineAcrossChunks (Smooth Mapping Only)", () => {
 	describe("basic functionality", () => {

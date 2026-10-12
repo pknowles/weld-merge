@@ -4,10 +4,10 @@ import { afterAll, beforeAll, describe, it, jest } from "@jest/globals";
 import "@testing-library/jest-dom";
 import { render } from "@testing-library/react";
 import type { editor } from "monaco-editor";
-import { DiffCurtain } from "./DiffCurtain.tsx";
-import { getBounds } from "./diffCurtainUtils.ts";
-import { mapLineAcrossPanes } from "./scrollMapping.ts";
-import type { DiffChunk } from "./types.ts";
+import { DiffCurtain } from "../../../src/webview/ui/DiffCurtain.tsx";
+import { getBounds } from "../../../src/webview/ui/diffCurtainUtils.ts";
+import { mapLineAcrossPanes } from "../../../src/webview/ui/scrollMapping.ts";
+import type { DiffChunk } from "../../../src/webview/ui/types.ts";
 
 const OUT_OF_BOUNDS_REGEX = /DiffCurtain connection out of bounds/;
 

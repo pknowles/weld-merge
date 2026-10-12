@@ -8,7 +8,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import path from "node:path";
+import path, { isAbsolute, relative, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { runTests, runVSCodeCommand } from "@vscode/test-electron";
@@ -68,7 +68,25 @@ function run(
 }
 
 function runGit(args: string[], cwd: string): string {
+	assertSafeGitCwd(cwd);
 	return run("git", args, { cwd });
+}
+
+function assertSafeGitCwd(cwd: string): void {
+	const absoluteCwd = resolve(cwd);
+	const absoluteTempRoot = resolve(tmpdir());
+	const tempRelativePath = relative(absoluteTempRoot, absoluteCwd);
+	if (
+		tempRelativePath.length > 0 &&
+		!tempRelativePath.startsWith("..") &&
+		!isAbsolute(tempRelativePath)
+	) {
+		return;
+	}
+
+	throw new Error(
+		`Refusing to run test Git command outside temp dir: ${cwd}`,
+	);
 }
 
 function createConflictedRepo(): string {

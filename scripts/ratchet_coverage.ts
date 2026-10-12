@@ -66,6 +66,8 @@ function ratchetJestCoverage(): boolean {
 	try {
 		const coverageSummaryPath = join(
 			cwd(),
+			"test-output",
+			"jest",
 			"coverage",
 			"coverage-summary.json",
 		);
@@ -154,8 +156,9 @@ function ratchetStrykerScore(): boolean {
 	try {
 		const mutationSummaryPath = join(
 			cwd(),
+			"test-output",
+			"stryker",
 			"reports",
-			"mutation",
 			"mutation.json",
 		);
 		if (!existsSync(mutationSummaryPath)) {

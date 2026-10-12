@@ -3,7 +3,7 @@ export default {
 	testEnvironment: "jsdom",
 	setupFilesAfterEnv: ["<rootDir>/src/jest.setup.ts"],
 	collectCoverage: true,
-	coverageDirectory: "coverage",
+	coverageDirectory: "test-output/jest/coverage",
 	coverageReporters: ["text", "lcov", "clover", "json-summary"],
 	collectCoverageFrom: [
 		"src/**/*.{ts,tsx}",
@@ -28,7 +28,10 @@ export default {
 	// Keep Jest's haste-map out of @vscode/test-electron's downloaded VS Code
 	// trees. Each install ships ~70 built-in extensions whose package.json
 	// names collide across versions (e.g. "diff"), breaking module resolution.
-	modulePathIgnorePatterns: ["<rootDir>/.vscode-test/"],
+	modulePathIgnorePatterns: [
+		"<rootDir>/.vscode-test/",
+		"<rootDir>/test-output/",
+	],
 	moduleNameMapper: {
 		"^vscode$": "<rootDir>/test/mockVscode.ts",
 	},
