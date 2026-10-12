@@ -1,20 +1,17 @@
 // Copyright (C) 2026 Pyarelal Knowles
 
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "@jest/globals";
 import { Uri } from "vscode";
+import { fetchConflictStages } from "../src/conflictSnapshot.ts";
 import { readIndexStageContent } from "../src/gitUtils.ts";
 import { GitTextMerger } from "../src/matchers/gitTextMerger.ts";
 import { Merger } from "../src/matchers/merge.ts";
 import type { GitApiRepository } from "../src/repoContext.ts";
 import { extractConflictLabels } from "../src/webview/conflictLabels.ts";
-import {
-	buildInitialConflictedState,
-	fetchConflictStages,
-} from "../src/webview/diffPayload.ts";
-import { runGit } from "./runGit.ts";
+import { buildInitialConflictedState } from "../src/webview/diffPayload.ts";
+import { mkdtempUnderTestRoot, runGit } from "./runGit.ts";
 
 // These tests force Git's CRLF checkout-conversion path in a temp repo rather
 // than relying on running on Windows: setting core.autocrlf=true makes Git
@@ -38,7 +35,7 @@ const CARRIAGE_RETURN_REGEX = /\r/g;
 // a "\r" from (see merge.ts::_handleConflictInMerger's empty-region branch
 // and gitTextMerger.ts's literal marker pushes).
 async function makeCrlfConflictRepo(autocrlf: boolean): Promise<string> {
-	const repoPath = await mkdtemp(join(tmpdir(), "weld-crlf-"));
+	const repoPath = await mkdtempUnderTestRoot("weld-crlf-");
 	runGit(["init", "-b", "main"], repoPath);
 	runGit(["config", "user.name", "Weld Test"], repoPath);
 	runGit(["config", "user.email", "weld-test@example.com"], repoPath);
@@ -104,20 +101,20 @@ function fakeRepository(rootFsPath: string): GitApiRepository & {
 async function readStages(repoPath: string) {
 	const repository = fakeRepository(repoPath);
 	const file = Uri.file(join(repoPath, "tracked.txt"));
-	const [base, local, incoming] = await Promise.all([
+	const [base, local, remote] = await Promise.all([
 		readIndexStageContent(repository, file, GIT_STAGE_BASE),
 		readIndexStageContent(repository, file, GIT_STAGE_LOCAL),
 		readIndexStageContent(repository, file, GIT_STAGE_REMOTE),
 	]);
 	expect(repository.showCalls).toEqual([]);
-	return { base, local, incoming };
+	return { base, local, remote };
 }
 
-function runMergers(stages: { base: string; local: string; incoming: string }) {
+function runMergers(stages: { base: string; local: string; remote: string }) {
 	const sequences = [
 		stages.local.split("\n"),
 		stages.base.split("\n"),
-		stages.incoming.split("\n"),
+		stages.remote.split("\n"),
 	];
 	const merger = new Merger();
 	merger.initialize(sequences, sequences);
@@ -197,9 +194,8 @@ describe("Windows line-ending conversion: stage fetch", () => {
 			// before it can take effect; delete and re-checkout to force Git to
 			// re-smudge with the now-active conversion (`checkout -f` and
 			// `checkout -- path` are no-ops while Git sees no diff to resolve).
-			const scratchPath = await mkdtemp(
-				join(tmpdir(), "weld-crlf-scratch-"),
-			);
+			const scratchPath =
+				await mkdtempUnderTestRoot("weld-crlf-scratch-");
 			try {
 				runGit(["clone", repoPath, scratchPath], scratchPath);
 				runGit(["config", "core.autocrlf", "true"], scratchPath);
@@ -243,8 +239,8 @@ describe("Windows line-ending conversion: stage fetch", () => {
 			expect(crlf.local.replace(CARRIAGE_RETURN_REGEX, "")).toBe(
 				lf.local,
 			);
-			expect(crlf.incoming.replace(CARRIAGE_RETURN_REGEX, "")).toBe(
-				lf.incoming,
+			expect(crlf.remote.replace(CARRIAGE_RETURN_REGEX, "")).toBe(
+				lf.remote,
 			);
 			expect(crlf.local).toContain("\r\n");
 

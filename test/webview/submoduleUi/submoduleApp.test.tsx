@@ -2,8 +2,11 @@
 
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { SubmoduleApp } from "./SubmoduleApp.tsx";
-import type { CommitInfo, SubmoduleConflictSnapshot } from "./types.ts";
+import { SubmoduleApp } from "../../../src/webview/submoduleUi/SubmoduleApp.tsx";
+import type {
+	CommitInfo,
+	SubmoduleConflictSnapshot,
+} from "../../../src/webview/submoduleUi/types.ts";
 
 const originalScrollIntoView = Element.prototype.scrollIntoView;
 const CHANGED_FILE_BUTTON_NAME = /M src\/file.cpp/u;

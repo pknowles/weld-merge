@@ -1,17 +1,14 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { runTests } from "@vscode/test-electron";
 import Xvfb from "xvfb";
-import { runGit } from "../runGit.ts";
+import { mkdtempUnderTestRootSync, runGit } from "../runGit.ts";
 
 function createTestWorkspace(): string {
-	const workspacePath = mkdtempSync(
-		path.join(tmpdir(), "weld-vscode-workspace-"),
-	);
+	const workspacePath = mkdtempUnderTestRootSync("weld-vscode-workspace-");
 	runGit(["init"], workspacePath);
 	runGit(["config", "user.name", "Weld Test"], workspacePath);
 	runGit(["config", "user.email", "weld-test@example.com"], workspacePath);
@@ -52,8 +49,8 @@ interface LaunchTelemetryWorkspace {
 }
 
 function createLaunchTelemetryWorkspace(): LaunchTelemetryWorkspace {
-	const workspaceRoot = mkdtempSync(
-		path.join(tmpdir(), "weld-vscode-launch-telemetry-"),
+	const workspaceRoot = mkdtempUnderTestRootSync(
+		"weld-vscode-launch-telemetry-",
 	);
 	const repoA = createConflictedRepo(workspaceRoot, "repo-a");
 	const repoB = createConflictedRepo(workspaceRoot, "repo-b");
@@ -97,34 +94,66 @@ async function main(): Promise<void> {
 		xvfb.startSync();
 	}
 
-	const userDataDir = mkdtempSync(path.join(tmpdir(), "weld-vscode-test-"));
-	const launchTelemetryUserDataDir = mkdtempSync(
-		path.join(tmpdir(), "weld-vscode-launch-telemetry-test-"),
+	const userDataDir = mkdtempUnderTestRootSync("weld-vscode-test-");
+	const launchTelemetryUserDataDir = mkdtempUnderTestRootSync(
+		"weld-vscode-launch-telemetry-test-",
 	);
 	const launchTelemetryWorkspace = createLaunchTelemetryWorkspace();
 	const workspacePath = createTestWorkspace();
+
+	// Forces X11 regardless of the host session type: on a Wayland desktop,
+	// Electron/Chromium's Ozone auto-detection can still pick the real Wayland
+	// compositor over the DISPLAY xvfb just started, which would render the
+	// test window on the actual desktop instead of the hidden virtual display
+	// xvfb provides. --ozone-platform=x11 alone is not reliable enough to stop
+	// this (confirmed by observing a real test window on the desktop with only
+	// this flag set) — runTests() spawns VS Code with a full copy of this
+	// process's own environment (@vscode/test-electron's innerRunTests does
+	// `{...process.env, ...testRunnerEnv}`), so unless testRunnerEnv is passed
+	// to explicitly override WAYLAND_DISPLAY/XDG_SESSION_TYPE for the spawned
+	// process specifically, the child still inherits this driver's real
+	// Wayland session, and Ozone's own auto-detection can still find and
+	// prefer it over the CLI flag. Both layers together (clear the env vars
+	// for the child, still pass the flag as an explicit fallback) is the fix;
+	// neither alone has been reliable.
+	const ozoneArgs =
+		process.platform === "linux" ? ["--ozone-platform=x11"] : [];
+	const linuxDisplayEnv = {
+		// biome-ignore lint/style/useNamingConvention: env var names are dictated by X11/Wayland/Electron
+		WAYLAND_DISPLAY: undefined,
+		// biome-ignore lint/style/useNamingConvention: env var names are dictated by X11/Wayland/Electron
+		XDG_SESSION_TYPE: "x11",
+	};
+	const testRunnerEnvArgs =
+		process.platform === "linux"
+			? { extensionTestsEnv: linuxDisplayEnv }
+			: {};
 
 	try {
 		await runTests({
 			extensionDevelopmentPath,
 			extensionTestsPath: launchTelemetryTestsPath,
+			...testRunnerEnvArgs,
 			launchArgs: [
 				launchTelemetryWorkspace.workspacePath,
 				`--user-data-dir=${launchTelemetryUserDataDir}`,
 				"--disable-extensions",
 				"--skip-welcome",
 				"--skip-release-notes",
+				...ozoneArgs,
 			],
 		});
 		await runTests({
 			extensionDevelopmentPath,
 			extensionTestsPath,
+			...testRunnerEnvArgs,
 			launchArgs: [
 				workspacePath,
 				`--user-data-dir=${userDataDir}`,
 				"--disable-extensions",
 				"--skip-welcome",
 				"--skip-release-notes",
+				...ozoneArgs,
 			],
 		});
 	} finally {

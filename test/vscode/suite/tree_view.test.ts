@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, it } from "mocha";
 import { Uri } from "vscode";
 import { getGitApi } from "../../../src/repoContext.ts";
 import { ConflictedFilesProvider, GitFile } from "../../../src/treeView.ts";
-import { runGit } from "../../runGit.ts";
+import { mkdtempUnderTestRoot, runGit } from "../../runGit.ts";
 import {
 	makeConflict,
 	makeRepo,
@@ -71,7 +70,7 @@ describe("ConflictedFilesProvider — conflict detection (VS Code host)", () => 
 		// Tree view test 2: start with an empty directory, git init it, then make
 		// a conflict. Simulates the user running `git init` in a folder that VS
 		// Code was already watching.
-		const dirPath = await mkdtemp(join(tmpdir(), "weld-tv-git-init-"));
+		const dirPath = await mkdtempUnderTestRoot("weld-tv-git-init-");
 		try {
 			runGit(["init"], dirPath);
 			runGit(["config", "user.name", "Weld Test"], dirPath);

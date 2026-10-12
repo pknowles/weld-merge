@@ -1,17 +1,10 @@
 import { spawn } from "node:child_process";
-import {
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { downloadAndUnzipVSCode } from "@vscode/test-electron";
 import Xvfb from "xvfb";
-import { runGit } from "../test/runGit.ts";
+import { mkdtempUnderTestRootSync, runGit } from "../test/runGit.ts";
 
 interface WorkspaceFixture {
 	readonly rootPath: string;
@@ -114,9 +107,7 @@ function createMixedConflictRepo(parentPath: string, name: string): string {
 }
 
 function createWorkspace(): WorkspaceFixture {
-	const rootPath = mkdtempSync(
-		path.join(tmpdir(), "weld-restore-tabs-workspace-"),
-	);
+	const rootPath = mkdtempUnderTestRootSync("weld-restore-tabs-workspace-");
 	const repoA = createMixedConflictRepo(rootPath, "repo-a");
 	const repoB = createMixedConflictRepo(rootPath, "repo-b");
 	const workspacePath = path.join(rootPath, "launch.code-workspace");
@@ -389,7 +380,7 @@ function assertAtMost(actual: number, ceiling: number, label: string): void {
 
 async function main(): Promise<void> {
 	const executablePath = await downloadAndUnzipVSCode();
-	const rootPath = mkdtempSync(path.join(tmpdir(), "weld-restore-tabs-"));
+	const rootPath = mkdtempUnderTestRootSync("weld-restore-tabs-");
 	const workspace = createWorkspace();
 	const userDataDir = path.join(rootPath, "user-data");
 	const extensionsDir = path.join(rootPath, "extensions");

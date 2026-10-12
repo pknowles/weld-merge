@@ -1,4 +1,107 @@
-import { readFileSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+
+type CommandCallback = (...args: unknown[]) => unknown;
+type MessageImplementation = (
+	message: string,
+	...items: unknown[]
+) => Promise<unknown>;
+type ProgressTask = (progress: {
+	report: (value: { message?: string }) => void;
+}) => Promise<unknown>;
+type OpenTextDocumentImplementation = (uri: Uri) => Promise<unknown>;
+type ApplyEditImplementation = (edit: WorkspaceEdit) => Promise<boolean>;
+type FsReadFileImplementation = (uri: Uri) => Promise<Uint8Array>;
+type FsWriteFileImplementation = (
+	uri: Uri,
+	content: Uint8Array,
+) => Promise<void>;
+
+interface MockTextDocument {
+	readonly uri: Uri;
+	readonly isUntitled: boolean;
+	getText(): string;
+	positionAt(offset: number): unknown;
+	save(): Promise<boolean>;
+}
+
+const registeredCommands = new Map<string, CommandCallback>();
+const progressReports: Array<{ message?: string }> = [];
+const saveTextDocumentListeners: Array<(document: unknown) => void> = [];
+
+const mockLogChannel = {
+	errors: [] as string[],
+	infos: [] as string[],
+	warnings: [] as string[],
+	debugs: [] as string[],
+	traces: [] as string[],
+	shown: 0,
+	error(message: string): void {
+		this.errors.push(message);
+	},
+	info(message: string): void {
+		this.infos.push(message);
+	},
+	warn(message: string): void {
+		this.warnings.push(message);
+	},
+	debug(message: string): void {
+		this.debugs.push(message);
+	},
+	trace(message: string): void {
+		this.traces.push(message);
+	},
+	append(): void {
+		return;
+	},
+	appendLine(): void {
+		return;
+	},
+	clear(): void {
+		this.errors = [];
+		this.infos = [];
+		this.warnings = [];
+		this.debugs = [];
+		this.traces = [];
+	},
+	show(): void {
+		this.shown += 1;
+	},
+	hide(): void {
+		return;
+	},
+	dispose(): void {
+		return;
+	},
+	replace(): void {
+		return;
+	},
+	name: "Weld",
+	logLevel: 0,
+	onDidChangeLogLevel: () => ({ dispose: () => undefined }),
+};
+
+let showInformationMessageImpl: MessageImplementation = () =>
+	Promise.resolve(undefined);
+let showWarningMessageImpl: MessageImplementation = () =>
+	Promise.resolve(undefined);
+let showErrorMessageImpl: MessageImplementation = () =>
+	Promise.resolve(undefined);
+let executeCommandImpl: CommandCallback = () => Promise.resolve(undefined);
+let openTextDocumentImpl: OpenTextDocumentImplementation = () =>
+	Promise.reject(new Error("not implemented"));
+let applyEditImpl: ApplyEditImplementation = () => Promise.resolve(false);
+// workspace.fs.readFile/writeFile default to real disk I/O: several existing
+// callers (agentConflicts.ts, gitUtils.ts) genuinely read real fixture files
+// their tests create on disk. A test whose fixture paths are fake (e.g.
+// "/work/repo/a.txt") must opt in via mockVscodeSetFsReadFile/WriteFile
+// instead of silently hitting ENOENT against a path that was never real.
+let fsReadFileImpl: FsReadFileImplementation = (uri) => readFile(uri.fsPath);
+let fsWriteFileImpl: FsWriteFileImplementation = () =>
+	Promise.reject(new Error("not implemented"));
+let configurationValues = new Map<string, unknown>();
+let activeTextEditorValue: unknown;
+let getExtensionImpl: (extensionId: string) => unknown;
 
 class Uri {
 	readonly scheme: string;
@@ -30,6 +133,14 @@ class Uri {
 
 	static from(value: { scheme: string; path: string; query?: string }): Uri {
 		return new Uri(value.scheme, value.path, value.query ?? "");
+	}
+
+	with(change: { scheme?: string; path?: string; query?: string }): Uri {
+		return new Uri(
+			change.scheme ?? this.scheme,
+			change.path ?? this.path,
+			change.query ?? this.query,
+		);
 	}
 
 	static joinPath(base: Uri, ...segments: string[]): Uri {
@@ -95,11 +206,18 @@ class EventEmitter<T> {
 	readonly listeners: Array<(event: T) => void> = [];
 	readonly event = (listener: (event: T) => void) => {
 		this.listeners.push(listener);
-		return { dispose: () => undefined };
+		return {
+			dispose: () => {
+				const index = this.listeners.indexOf(listener);
+				if (index !== -1) {
+					this.listeners.splice(index, 1);
+				}
+			},
+		};
 	};
 
 	fire(event: T): void {
-		for (const listener of this.listeners) {
+		for (const listener of [...this.listeners]) {
 			listener(event);
 		}
 	}
@@ -128,103 +246,121 @@ const workspace = {
 				return Promise.reject(error);
 			}
 		},
-		readFile: (uri: Uri) => Promise.resolve(readFileSync(uri.fsPath)),
+		readFile: (uri: Uri) => fsReadFileImpl(uri),
+		writeFile: (uri: Uri, content: Uint8Array) =>
+			fsWriteFileImpl(uri, content),
 		delete: () => Promise.reject(new Error("not implemented")),
 	},
-	onDidSaveTextDocument: () => ({ dispose: () => undefined }),
+	onDidSaveTextDocument: (listener: (document: unknown) => void) => {
+		saveTextDocumentListeners.push(listener);
+		return {
+			dispose: () => {
+				const index = saveTextDocumentListeners.indexOf(listener);
+				if (index !== -1) {
+					saveTextDocumentListeners.splice(index, 1);
+				}
+			},
+		};
+	},
 	onDidCloseTextDocument: () => ({ dispose: () => undefined }),
 	registerTextDocumentContentProvider: () => ({ dispose: () => undefined }),
-	openTextDocument: () => Promise.reject(new Error("not implemented")),
-	applyEdit: () => Promise.resolve(false),
-	getConfiguration: () => ({ get: () => undefined }),
+	openTextDocument: (uri: Uri) => openTextDocumentImpl(uri),
+	applyEdit: (edit: WorkspaceEdit) => applyEditImpl(edit),
+	getConfiguration: (section: string) => ({
+		get: (key: string) => configurationValues.get(`${section}.${key}`),
+	}),
+	onDidChangeConfiguration: (_callback: (e: unknown) => void) => ({
+		dispose: () => undefined,
+	}),
 };
 
 const window = {
 	registerTreeDataProvider: () => ({ dispose: () => undefined }),
 	registerCustomEditorProvider: () => ({ dispose: () => undefined }),
-	createOutputChannel: () => ({
-		error: () => undefined,
-		info: () => undefined,
-		warn: () => undefined,
-		debug: () => undefined,
-		trace: () => undefined,
-		append: () => undefined,
-		appendLine: () => undefined,
-		clear: () => undefined,
-		show: () => undefined,
-		hide: () => undefined,
-		dispose: () => undefined,
-		replace: () => undefined,
-		name: "Weld",
-		logLevel: 0,
-		onDidChangeLogLevel: () => ({ dispose: () => undefined }),
-	}),
-	showInformationMessage: () => Promise.resolve(undefined),
-	showWarningMessage: () => Promise.resolve(undefined),
-	showErrorMessage: () => Promise.resolve(undefined),
-	showTextDocument: () => Promise.resolve(undefined),
-	withProgress: (
-		_options: unknown,
-		task: (progress: {
-			report: (value: { message?: string }) => void;
-		}) => Promise<void>,
-	) => task({ report: () => undefined }),
-	activeTextEditor: undefined,
+	createOutputChannel: () => mockLogChannel,
+	showInformationMessage: (message: string, ...items: unknown[]) =>
+		showInformationMessageImpl(message, ...items),
+	showWarningMessage: (message: string, ...items: unknown[]) =>
+		showWarningMessageImpl(message, ...items),
+	showErrorMessage: (message: string, ...items: unknown[]) =>
+		showErrorMessageImpl(message, ...items),
+	showTextDocument: (uri: Uri) => Promise.resolve(uri),
+	withProgress: (_options: unknown, task: ProgressTask) =>
+		task({
+			report: (value: { message?: string }) => {
+				progressReports.push(value);
+			},
+		}),
+	get activeTextEditor(): unknown {
+		return activeTextEditorValue;
+	},
+	set activeTextEditor(value: unknown) {
+		activeTextEditorValue = value;
+	},
 };
 
 const commands = {
-	executeCommand: () => Promise.resolve(undefined),
-	registerCommand: () => ({ dispose: () => undefined }),
-};
-
-const extensions = {
-	getExtension: () => {
-		const gitExtension = {
-			enabled: true,
-			onDidChangeEnablement: () => ({ dispose: () => undefined }),
-			getAPI: () => ({
-				git: { path: "git" },
-				state: "initialized",
-				repositories: [],
-				onDidChangeState: () => ({ dispose: () => undefined }),
-				onDidOpenRepository: () => ({ dispose: () => undefined }),
-				onDidCloseRepository: () => ({ dispose: () => undefined }),
-				getRepository: () => null,
-				getRepositoryRoot: () => Promise.resolve(null),
-				openRepository: () => Promise.resolve(null),
-				toGitUri: (uri: Uri) => uri,
-			}),
-		};
+	executeCommand: (command: string, ...args: unknown[]) =>
+		executeCommandImpl(command, ...args),
+	registerCommand: (command: string, callback: CommandCallback) => {
+		registeredCommands.set(command, callback);
 		return {
-			isActive: true,
-			exports: gitExtension,
-			activate: () => Promise.resolve(gitExtension),
+			dispose: () => {
+				registeredCommands.delete(command);
+			},
 		};
 	},
 };
 
+function defaultGetExtension(_extensionId: string): unknown {
+	const gitExtension = {
+		enabled: true,
+		onDidChangeEnablement: () => ({ dispose: () => undefined }),
+		getAPI: () => ({
+			git: { path: "git" },
+			state: "initialized",
+			repositories: [],
+			onDidChangeState: () => ({ dispose: () => undefined }),
+			onDidOpenRepository: () => ({ dispose: () => undefined }),
+			onDidCloseRepository: () => ({ dispose: () => undefined }),
+			getRepository: () => null,
+			getRepositoryRoot: () => Promise.resolve(null),
+			openRepository: () => Promise.resolve(null),
+			toGitUri: (uri: Uri) => uri,
+		}),
+	};
+	return {
+		isActive: true,
+		exports: gitExtension,
+		activate: () => Promise.resolve(gitExtension),
+	};
+}
+
+getExtensionImpl = defaultGetExtension;
+
+const extensions = {
+	getExtension: (extensionId: string) => getExtensionImpl(extensionId),
+};
+
 class WorkspaceEdit {
-	replace(): void {
-		return;
+	readonly replacements: Array<{
+		uri: Uri;
+		range: Range;
+		text: string;
+	}> = [];
+
+	replace(uri: Uri, range: Range, text: string): void {
+		this.replacements.push({ uri, range, text });
 	}
 }
 
 class Range {
-	readonly startLine: number;
-	readonly startCharacter: number;
-	readonly endLine: number;
-	readonly endCharacter: number;
+	readonly start: unknown;
+	readonly end: unknown;
 
-	constructor(
-		startLine: number,
-		startCharacter: number,
-		endLine: number,
-		endCharacter: number,
-	) {
-		this.startLine = startLine;
-		this.startCharacter = startCharacter;
-		this.endLine = endLine;
-		this.endCharacter = endCharacter;
+	constructor(start: unknown, end: unknown) {
+		this.start = start;
+		this.end = end;
 	}
 }
 
@@ -256,12 +392,122 @@ class Disposable {
 	}
 }
 
+function mockVscodeGetCommand(command: string): CommandCallback {
+	const callback = registeredCommands.get(command);
+	if (!callback) {
+		throw new Error(`Command was not registered: ${command}`);
+	}
+	return callback;
+}
+
+function mockVscodeSetInformationMessageResult(value: unknown): void {
+	showInformationMessageImpl = () => Promise.resolve(value);
+}
+
+function mockVscodeSetWarningMessageResult(value: unknown): void {
+	showWarningMessageImpl = () => Promise.resolve(value);
+}
+
+function mockVscodeSetErrorMessageResult(value: unknown): void {
+	showErrorMessageImpl = () => Promise.resolve(value);
+}
+
+function mockVscodeSetOpenTextDocument(
+	implementation: OpenTextDocumentImplementation,
+): void {
+	openTextDocumentImpl = implementation;
+}
+
+function mockVscodeSetApplyEdit(implementation: ApplyEditImplementation): void {
+	applyEditImpl = implementation;
+}
+
+function mockVscodeSetFsReadFile(
+	implementation: FsReadFileImplementation,
+): void {
+	fsReadFileImpl = implementation;
+}
+
+function mockVscodeSetFsWriteFile(
+	implementation: FsWriteFileImplementation,
+): void {
+	fsWriteFileImpl = implementation;
+}
+
+function mockVscodeSetExecuteCommand(implementation: CommandCallback): void {
+	executeCommandImpl = implementation;
+}
+
+function mockVscodeSetConfiguration(values: Map<string, unknown>): void {
+	configurationValues = new Map(values);
+}
+
+function mockVscodeSetActiveTextEditor(editor: unknown): void {
+	activeTextEditorValue = editor;
+}
+
+function mockVscodeSetGetExtension(
+	implementation: (extensionId: string) => unknown,
+): void {
+	getExtensionImpl = implementation;
+}
+
+function mockVscodeProgressReports(): Array<{ message?: string }> {
+	return progressReports;
+}
+
+function mockVscodeFireDidSaveTextDocument(document: unknown): void {
+	for (const listener of [...saveTextDocumentListeners]) {
+		listener(document);
+	}
+}
+
+function mockVscodeLogChannel(): typeof mockLogChannel {
+	return mockLogChannel;
+}
+
+function mockVscodeReset(): void {
+	registeredCommands.clear();
+	progressReports.length = 0;
+	saveTextDocumentListeners.length = 0;
+	mockLogChannel.clear();
+	mockLogChannel.shown = 0;
+	showInformationMessageImpl = () => Promise.resolve(undefined);
+	showWarningMessageImpl = () => Promise.resolve(undefined);
+	showErrorMessageImpl = () => Promise.resolve(undefined);
+	executeCommandImpl = () => Promise.resolve(undefined);
+	openTextDocumentImpl = () => Promise.reject(new Error("not implemented"));
+	applyEditImpl = () => Promise.resolve(false);
+	fsReadFileImpl = (uri) => readFile(uri.fsPath);
+	fsWriteFileImpl = () => Promise.reject(new Error("not implemented"));
+	configurationValues = new Map();
+	activeTextEditorValue = undefined;
+	getExtensionImpl = defaultGetExtension;
+}
+
 export {
 	commands,
 	Disposable,
 	EventEmitter,
 	extensions,
 	FileType,
+	type MockTextDocument,
+	mockVscodeFireDidSaveTextDocument,
+	mockVscodeGetCommand,
+	mockVscodeLogChannel,
+	mockVscodeProgressReports,
+	mockVscodeReset,
+	mockVscodeSetActiveTextEditor,
+	mockVscodeSetApplyEdit,
+	mockVscodeSetConfiguration,
+	mockVscodeSetErrorMessageResult,
+	mockVscodeSetExecuteCommand,
+	mockVscodeSetFsReadFile,
+	mockVscodeSetFsWriteFile,
+	mockVscodeSetGetExtension,
+	mockVscodeSetInformationMessageResult,
+	mockVscodeSetOpenTextDocument,
+	mockVscodeSetWarningMessageResult,
 	ProgressLocation,
 	Range,
 	ThemeIcon,

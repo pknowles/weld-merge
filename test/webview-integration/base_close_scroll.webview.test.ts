@@ -1,6 +1,7 @@
 import path from "node:path";
 import process from "node:process";
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
+import { test } from "./coverageFixture.ts";
 
 const htmlPath = () =>
 	`file://${path.resolve(process.cwd(), "test", "benchmarking", "benchmark.html")}`;
@@ -218,36 +219,19 @@ const lineNumberFromText = (line: string) => {
 	return lineNumber;
 };
 
-const scrollPaneUntilLineVisible = async (
+const scrollPaneToEnd = async (
 	page: Page,
 	paneIndex: number,
-	expectedLine: string,
+	expectedLastLine: string,
 ) => {
 	const editor = page.locator(".monaco-editor").nth(paneIndex);
 	await editor.click();
-	const box = await editor.boundingBox();
-	if (!box) {
-		throw new Error(`Monaco pane ${paneIndex} has no bounding box`);
-	}
-	await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-
-	const scrollUntilVisible = async (
-		remainingAttempts: number,
-	): Promise<void> => {
-		if (await paneContainsLine(page, paneIndex, expectedLine)) {
-			return;
-		}
-		if (remainingAttempts === 0) {
-			throw new Error(
-				`Expected ${expectedLine} to become visible in pane ${paneIndex}`,
-			);
-		}
-		await page.mouse.wheel(0, 2500);
-		await page.waitForTimeout(10);
-		await scrollUntilVisible(remainingAttempts - 1);
-	};
-
-	await scrollUntilVisible(320);
+	await page.keyboard.press(
+		process.platform === "darwin" ? "Meta+ArrowDown" : "Control+End",
+	);
+	await expect
+		.poll(() => paneContainsLine(page, paneIndex, expectedLastLine))
+		.toBe(true);
 };
 
 const existingPaneSnapshot = async (
@@ -475,11 +459,7 @@ test.describe("Base pane close scroll preservation", () => {
 			await loadInitialDiff(page);
 			await loadBaseDiff(page, side);
 
-			await scrollPaneUntilLineVisible(
-				page,
-				remoteDomIndex,
-				"remote line 0880",
-			);
+			await scrollPaneToEnd(page, remoteDomIndex, "remote line 1000");
 
 			// Invariant: every stable pane is scrolled down before close, so a
 			// reset to the top or any vertical nudge during close is observable.
@@ -523,12 +503,15 @@ test.describe("Right base pane open diagnostics", () => {
 	test("records right base open frames and verifies existing panes stay stable", async ({
 		page,
 	}, testInfo) => {
+		test.setTimeout(60_000);
 		const remotePaneIndex = 2;
-		const anchorLine = "remote line 0880";
+		const anchorLine = "remote line 1000";
 
 		await page.setViewportSize({ width: 1400, height: 800 });
 		await loadInitialDiff(page);
-		await scrollPaneUntilLineVisible(page, remotePaneIndex, anchorLine);
+		const scrollStartedAt = performance.now();
+		await scrollPaneToEnd(page, remotePaneIndex, anchorLine);
+		const scrollElapsedMs = performance.now() - scrollStartedAt;
 		const existingBeforeOpen = await existingPaneSnapshot(page);
 		const remoteFirstLine = await firstVisibleLineInPane(
 			page,
@@ -570,6 +553,7 @@ test.describe("Right base pane open diagnostics", () => {
 			body: JSON.stringify(
 				{
 					existingBeforeOpen,
+					scrollElapsedMs,
 					remoteFirstLine,
 					remoteFirstLineNumber,
 					firstRenderedLine: renderedFrames[0]?.firstLine,

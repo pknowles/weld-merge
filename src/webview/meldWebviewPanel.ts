@@ -21,6 +21,7 @@ import {
 	window,
 	workspace,
 } from "vscode";
+import { fetchConflictStages } from "../conflictSnapshot.ts";
 import {
 	describeConflictStatusEvidence,
 	getUnresolvedReasons,
@@ -40,15 +41,12 @@ import {
 	NotInRepositoryError,
 	RepositoryUnavailableError,
 } from "../repoContext.ts";
-import {
-	type ConflictLabels,
-	extractConflictLabels,
-} from "./conflictLabels.ts";
+import { performAutoMergeOnDisk } from "./autoMerge.ts";
+import { extractConflictLabels } from "./conflictLabels.ts";
 import {
 	buildBaseDiffPayload,
 	buildDiffPayload,
 	buildInitialConflictedState,
-	fetchConflictStages,
 } from "./diffPayload.ts";
 import {
 	classifyDocumentChange,
@@ -184,6 +182,11 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 	static readonly onRequestRefresh = new EventEmitter<Uri>();
 	static readonly onConflictStateChanged =
 		new EventEmitter<ConflictStateChangeEvent>();
+	// Fires once _maybeApplyAutoMerge's fire-and-forget run for a document
+	// settles (whatever the outcome), so tests can await the real completion
+	// signal instead of racing a document-change event that only fires for
+	// some outcomes (e.g. never for skippedWouldClobber).
+	static readonly onAutoMergeOnOpenSettled = new EventEmitter<Uri>();
 
 	private readonly extensionUri: Uri;
 
@@ -448,7 +451,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 				// it manually.
 				base: "",
 				local: "",
-				incoming: "",
+				remote: "",
 			}),
 		);
 
@@ -584,24 +587,6 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		}
 	}
 
-	private async _replaceDocumentContent(
-		document: TextDocument,
-		content: string | undefined,
-	): Promise<void> {
-		const docText = document.getText();
-		if (content === undefined || content === docText) {
-			return;
-		}
-
-		const edit = new WorkspaceEdit();
-		const fullRange = new Range(
-			document.positionAt(0),
-			document.positionAt(docText.length),
-		);
-		edit.replace(document.uri, fullRange, content);
-		await workspace.applyEdit(edit);
-	}
-
 	private async _buildSnapshotFromCurrentDocument(
 		ctx: {
 			document: TextDocument;
@@ -621,46 +606,23 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		return snapshot;
 	}
 
-	private _tryBuildInitialConflictText(
-		ctx: {
-			repoContext: ConflictedItem;
-		},
-		stages: Awaited<ReturnType<typeof fetchConflictStages>>,
-		labels: ConflictLabels,
-	): Promise<string> {
-		return buildInitialConflictedState(
-			ctx.repoContext.rootUri,
-			stages,
-			labels,
-		);
-	}
-
-	private async _buildAutoMergedContent(
-		ctx: {
-			repoContext: ConflictedItem;
-		},
-		stages: Awaited<ReturnType<typeof fetchConflictStages>>,
-	): Promise<string | undefined> {
-		const snapshot = await buildDiffPayload(ctx.repoContext, {
-			stages,
-		});
-		return snapshot.files[1]?.content;
-	}
-
 	/**
-	 * Decides whether to apply auto-merge and, if so, replaces the document content.
+	 * Decides whether to apply auto-merge and, if so, writes the result to
+	 * disk — via performAutoMergeOnDisk, the same write/clobber-check logic
+	 * extension.ts's commands, autoMergeAll, and the weld_apply_automerge*
+	 * agent tools all share, so this editor path can never disagree with
+	 * them about what is safe to overwrite. This never edits ctx.document
+	 * directly: VS Code's own external-file-change handling is what brings
+	 * the open document back in sync with the disk write.
 	 *
-	 * Auto-merge detection: We only auto-merge if the file matches what the user's
-	 * current Git config recreates from the conflict stages. An exact match means
-	 * the conflicted text is trivial to reproduce with Git, so it is safe to
-	 * replace with our auto-merged buffer. A mismatch means either the user edited
-	 * the file or their Git config changed; in both cases, preserve the file and
-	 * ask before replacing it.
-	 *
-	 * We still extract labels from the document's conflict markers because Git
-	 * does not persist the human-readable labels elsewhere, and those labels must
-	 * match for the byte-for-byte comparison to be meaningful. If conflict markers
-	 * are missing, the user has already resolved/edited the file manually.
+	 * performAutoMergeOnDisk itself is silent (no prompt): a
+	 * "skippedWouldClobber" outcome means disk is neither the raw pre-merge
+	 * conflict text nor already the auto-merge result, i.e. the user edited
+	 * the file or their Git config changed since the conflict was created.
+	 * Only then do we pay for reconstructing the pre-merge text and ask via
+	 * _checkAndPromptModification; "Continue (Replace)" re-runs with force,
+	 * which pre-agrees to the overwrite performAutoMergeOnDisk would
+	 * otherwise refuse.
 	 *
 	 * This runs concurrently with the "ready" handshake. The workspace.applyEdit
 	 * it performs (if any) is handled correctly regardless of timing — see the
@@ -673,37 +635,53 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		},
 		stagesPromise: ReturnType<typeof fetchConflictStages>,
 	): Promise<void> {
-		const stages = await stagesPromise;
-		const docText = ctx.document.getText();
+		try {
+			await this._maybeApplyAutoMergeInner(ctx, stagesPromise);
+		} finally {
+			MeldCustomEditorProvider.onAutoMergeOnOpenSettled.fire(
+				ctx.document.uri,
+			);
+		}
+	}
+
+	private async _maybeApplyAutoMergeInner(
+		ctx: {
+			document: TextDocument;
+			repoContext: ConflictedItem;
+		},
+		stagesPromise: ReturnType<typeof fetchConflictStages>,
+	): Promise<void> {
 		if (ctx.document.isDirty) {
 			// Already dirty: likely a hot exit restore or the user edited in another
 			// tab. They have unsaved changes they expect to keep — skip auto-merge.
 			return;
 		}
+		const stages = await stagesPromise;
 
-		// Extract conflict marker labels to verify the file is unchanged. If labels
-		// are missing, the user has already resolved/edited the file manually.
-		const labels = extractConflictLabels(docText);
-		if (!labels) {
+		const result = await performAutoMergeOnDisk(
+			ctx.repoContext,
+			ctx.document.uri,
+			false,
+		);
+		if (result.kind !== "skippedWouldClobber") {
 			return;
 		}
 
-		const initialGitState = await this._tryBuildInitialConflictText(
-			{ repoContext: ctx.repoContext },
+		// Reconstruct the pre-merge text only for this rarer path: the
+		// "Compare" prompt option needs it, and performAutoMerge itself has
+		// already made the safe/unsafe decision without it.
+		const docText = ctx.document.getText();
+		const labels = extractConflictLabels(docText);
+		if (!labels) {
+			// No markers to reconstruct against: the user has already
+			// resolved/edited the file manually. Nothing to prompt with.
+			return;
+		}
+		const initialGitState = await buildInitialConflictedState(
+			ctx.repoContext.rootUri,
 			stages,
 			labels,
 		);
-		if (docText === initialGitState) {
-			await this._replaceDocumentContent(
-				ctx.document,
-				await this._buildAutoMergedContent(
-					{ repoContext: ctx.repoContext },
-					stages,
-				),
-			);
-			return;
-		}
-
 		const modAction = await this._checkAndPromptModification(
 			ctx.document,
 			initialGitState,
@@ -711,13 +689,7 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		if (modAction !== "replace") {
 			return;
 		}
-		await this._replaceDocumentContent(
-			ctx.document,
-			await this._buildAutoMergedContent(
-				{ repoContext: ctx.repoContext },
-				stages,
-			),
-		);
+		await performAutoMergeOnDisk(ctx.repoContext, ctx.document.uri, true);
 	}
 
 	private async _checkAndPromptModification(
@@ -769,6 +741,107 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 		};
 	}
 
+	// Chains one edit/save step onto editState.editQueue. _handleMessage does
+	// not await "contentChanged"/"save" (see _setupPerEditorListeners's "no
+	// acknowledgment" point), so those steps cannot rely on _handleMessage's
+	// own try/catch — this reports a failed step directly to the webview,
+	// the same "error" message every other command's failure produces.
+	// Always resolves, never rejects: editQueue is later steps' own promise
+	// chain, and .then() on a rejected promise skips its callback, so a
+	// rejected step here would silently no-op every future edit and save on
+	// this document instead of just the one that actually failed.
+	private async _runQueuedEditStep(
+		editQueue: Promise<void>,
+		webviewPanel: WebviewPanel,
+		command: WebviewMessage["command"],
+		step: () => Promise<void>,
+	): Promise<void> {
+		await editQueue;
+		try {
+			await step();
+		} catch (error) {
+			await webviewPanel.webview.postMessage({
+				command: "error",
+				...MeldCustomEditorProvider._formatWebviewException(
+					error,
+					command,
+				),
+			});
+		}
+	}
+
+	// _handleMessage deliberately does not await this (see
+	// _setupPerEditorListeners's "no acknowledgment" point: the webview
+	// applies edits optimistically and isn't waiting on a reply), so it
+	// chains onto editState.editQueue itself via _runQueuedEditStep, which
+	// reports a failure directly rather than relying on _handleMessage's own
+	// try/catch — see that method's comment for why a failure here must
+	// resolve, not reject, the queue.
+	private _handleContentChanged(
+		msg: ContentChangedMessage,
+		ctx: {
+			document: TextDocument;
+			webviewPanel: WebviewPanel;
+			editState: EditState;
+		},
+	): void {
+		// Chain onto editQueue to serialize with other edits and saves. The
+		// callback is crucial: it ensures:
+		// 1. Previous edits complete before this one starts
+		// 2. ctx.document.version is read at EXECUTION time (after queue drains),
+		//    not at CALL time (when message arrives). This matters because if
+		//    multiple messages queue up, each needs the version AFTER the
+		//    previous edit applied, not the version when the message arrived.
+		ctx.editState.editQueue = this._runQueuedEditStep(
+			ctx.editState.editQueue,
+			ctx.webviewPanel,
+			msg.command,
+			() =>
+				processContentChanged({
+					changes: msg.changes,
+					msgVersion: msg.lastExternalChangeVersion,
+					editState: ctx.editState,
+					// Read document.version HERE, inside the callback, so it
+					// reflects any edits that completed earlier in the queue.
+					currentDocumentVersion: ctx.document.version,
+					applyEdit: async (changes) => {
+						// Convert Monaco 1-based ranges to VS Code 0-based ranges.
+						const edit = new WorkspaceEdit();
+						for (const change of changes) {
+							const vsRange = new Range(
+								change.range.startLineNumber - 1,
+								change.range.startColumn - 1,
+								change.range.endLineNumber - 1,
+								change.range.endColumn - 1,
+							);
+							edit.replace(
+								ctx.document.uri,
+								vsRange,
+								change.text,
+							);
+						}
+						// This fires onDidChangeTextDocument during the await.
+						// classifyDocumentChange will suppress it as our echo.
+						if (!(await workspace.applyEdit(edit))) {
+							throw new Error(
+								`Failed to apply edit to ${ctx.document.uri.fsPath}.`,
+							);
+						}
+					},
+					postFullSync: () => {
+						// Called when the webview's message was stale (based on
+						// outdated content). Send full document to resync.
+						ctx.webviewPanel.webview.postMessage({
+							command: "fullSync",
+							content: ctx.document.getText(),
+							lastExternalChangeVersion:
+								ctx.editState.lastExternalChangeVersion,
+						});
+					},
+				}),
+		);
+	}
+
 	private async _handleMessage(
 		msg: WebviewMessage,
 		ctx: {
@@ -782,65 +855,29 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 			case "ready":
 				// Handled in the outer listener closure.
 				break;
-			case "contentChanged": {
-				// Chain onto editQueue to serialize with other edits and saves.
-				// The .then() callback is crucial: it ensures:
-				// 1. Previous edits complete before this one starts
-				// 2. ctx.document.version is read at EXECUTION time (after queue drains),
-				//    not at CALL time (when message arrives). This matters because if
-				//    multiple messages queue up, each needs the version AFTER the
-				//    previous edit applied, not the version when the message arrived.
-				ctx.editState.editQueue = ctx.editState.editQueue.then(() =>
-					processContentChanged({
-						changes: msg.changes,
-						msgVersion: msg.lastExternalChangeVersion,
-						editState: ctx.editState,
-						// Read document.version HERE, inside the callback, so it reflects
-						// any edits that completed earlier in the queue.
-						currentDocumentVersion: ctx.document.version,
-						applyEdit: async (changes) => {
-							// Convert Monaco 1-based ranges to VS Code 0-based ranges.
-							const edit = new WorkspaceEdit();
-							for (const change of changes) {
-								const vsRange = new Range(
-									change.range.startLineNumber - 1,
-									change.range.startColumn - 1,
-									change.range.endLineNumber - 1,
-									change.range.endColumn - 1,
-								);
-								edit.replace(
-									ctx.document.uri,
-									vsRange,
-									change.text,
-								);
-							}
-							// This fires onDidChangeTextDocument during the await.
-							// classifyDocumentChange will suppress it as our echo.
-							await workspace.applyEdit(edit);
-						},
-						postFullSync: () => {
-							// Called when the webview's message was stale (based on
-							// outdated content). Send full document to resync.
-							ctx.webviewPanel.webview.postMessage({
-								command: "fullSync",
-								content: ctx.document.getText(),
-								lastExternalChangeVersion:
-									ctx.editState.lastExternalChangeVersion,
-							});
-						},
-					}),
-				);
+			case "contentChanged":
+				this._handleContentChanged(msg, ctx);
 				break;
-			}
 			case "save":
 				// Save goes through the same queue as edits. This ensures:
 				// - Pending edits complete before save writes to disk
 				// - User typing "abc" then Ctrl+S saves "abc", not partial content
 				// The webview intercepts Ctrl+S and sends this message, ensuring
-				// save is ordered with edits in the same FIFO channel.
-				ctx.editState.editQueue = ctx.editState.editQueue.then(
+				// save is ordered with edits in the same FIFO channel. See the
+				// "contentChanged" case above for why failures are reported via
+				// _runQueuedEditStep rather than this method's own try/catch.
+				ctx.editState.editQueue = this._runQueuedEditStep(
+					ctx.editState.editQueue,
+					ctx.webviewPanel,
+					msg.command,
 					async () => {
-						await ctx.document.save();
+						if (!(await ctx.document.save())) {
+							throw new Error(
+								`Failed to save ${ctx.document.uri.fsPath}. VS Code ` +
+									"detected an external change — resolve the save " +
+									"conflict and try again.",
+							);
+						}
 					},
 				);
 				break;
@@ -1198,7 +1235,10 @@ export class MeldCustomEditorProvider implements CustomTextEditorProvider {
 				`Cannot complete merge: file contains ${unresolvedReasons.join(" and ")}.`,
 			);
 		} else {
-			await document.save();
+			const saved = await document.save();
+			if (!saved) {
+				return;
+			}
 			const success = await commands.executeCommand(
 				"meld-auto-merge.smartAdd",
 				{ uri: document.uri },

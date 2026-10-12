@@ -56,7 +56,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
-import { RESULTS_DIR } from "./config.ts";
+import { BENCHMARK_HTML_URL, RESULTS_DIR } from "./config.ts";
 
 interface PerfStats {
 	diffTimes: number[];
@@ -82,7 +82,8 @@ interface CpuProfile {
 function generateText(lines: number): string {
 	let text = "";
 	for (let i = 0; i < lines; i++) {
-		text += `Line ${i}: ${Math.random().toString(36).slice(7)}\n`;
+		const variedPayload = Math.imul(i + 1, 2_654_435_761) >>> 0;
+		text += `Line ${i}: ${variedPayload.toString(36)}\n`;
 	}
 	return text;
 }
@@ -296,8 +297,7 @@ test.describe("Webview UI Stress Benchmark", () => {
 		const resultsDir = RESULTS_DIR;
 		// Avoid __dirname/import.meta to stay compatible with Playwright's
 		// default loader in this project.
-		const htmlPath = `file://${path.resolve(resultsDir, "..", "benchmark.html")}`;
-		await page.goto(htmlPath);
+		await page.goto(BENCHMARK_HTML_URL);
 		await expect(page.locator("#root")).toBeVisible();
 
 		const local = generateText(500);
@@ -354,8 +354,7 @@ test.describe("Webview UI Stress Benchmark", () => {
 		// React's render time. 150 * 50ms = 7.5s headroom; set 60s to be safe.
 		test.setTimeout(60_000);
 		const resultsDir = RESULTS_DIR;
-		const htmlPath = `file://${path.resolve(resultsDir, "..", "benchmark.html")}`;
-		await page.goto(htmlPath);
+		await page.goto(BENCHMARK_HTML_URL);
 		await expect(page.locator("#root")).toBeVisible();
 
 		const massiveText = generateText(100).repeat(500); // 50,000 lines
@@ -427,8 +426,7 @@ test.describe("Webview UI Stress Benchmark", () => {
 		// ~32ms × 150 = 4.8s minimum; 30s is generous headroom.
 		test.setTimeout(30_000);
 		const resultsDir = RESULTS_DIR;
-		const htmlPath = `file://${path.resolve(resultsDir, "..", "benchmark.html")}`;
-		await page.goto(htmlPath);
+		await page.goto(BENCHMARK_HTML_URL);
 		await expect(page.locator("#root")).toBeVisible();
 
 		const massiveText = generateText(100).repeat(500); // 50,000 lines
@@ -504,8 +502,7 @@ test.describe("Webview UI Stress Benchmark", () => {
 		page,
 	}) => {
 		const resultsDir = RESULTS_DIR;
-		const htmlPath = `file://${path.resolve(resultsDir, "..", "benchmark.html")}`;
-		await page.goto(htmlPath);
+		await page.goto(BENCHMARK_HTML_URL);
 		await expect(page.locator("#root")).toBeVisible();
 
 		const base = generateText(500);
