@@ -628,5 +628,6 @@ export {
 	RepositoryUnavailableError,
 	readyRepositoryForRoot,
 	registerRepository,
+	statusFromStages,
 	unregisterRepository,
 };
