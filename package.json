@@ -2,7 +2,7 @@
 	"name": "meld-auto-merge",
 	"displayName": "Weld Merge",
 	"description": "3-Way Git Merge Conflict Editor for VS Code, ported from GNOME Meld",
-	"version": "0.0.13",
+	"version": "0.0.14",
 	"icon": "images/icon.png",
 	"publisher": "pknowles",
 	"author": "Pyarelal Knowles",
@@ -28,7 +28,7 @@
 		"git conflict"
 	],
 	"engines": {
-		"vscode": "^1.109.0"
+		"vscode": "^1.137.0"
 	},
 	"categories": [
 		"Other"

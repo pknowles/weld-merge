@@ -1,6 +1,13 @@
 // Copyright (C) 2026 Pyarelal Knowles, GPL v2
 
-import { Range, type Uri, WorkspaceEdit, workspace } from "vscode";
+import { TextDecoder, TextEncoder } from "node:util";
+import {
+	Range,
+	type TextDocument,
+	type Uri,
+	WorkspaceEdit,
+	workspace,
+} from "vscode";
 import { fetchConflictStages } from "../conflictSnapshot.ts";
 import { getErrorMessage } from "../gitUtils.ts";
 import { getWeldLogChannel } from "../log.ts";
@@ -86,28 +93,6 @@ async function stageIfClean(conflictedItem: ConflictedItem): Promise<boolean> {
 	}
 }
 
-// Runs Weld's three-way merge for a single conflicted file and writes the
-// result back through a VS Code WorkspaceEdit. Throws on any operational
-// failure so every caller can surface the real reason instead of
-// swallowing it. Shared by extension.ts (tree/command auto-merge,
-// autoMergeAll, the weld_apply_automerge* agent tools) and
-// MeldCustomEditorProvider's auto-merge-on-open — both need identical
-// clobber/force/staging behavior, so this is the one implementation both
-// call rather than two that could drift apart. Callers must only pass a
-// file that is actually a 3-way text-merge candidate (both sides
-// modified it, common ancestor present); a delete/modify or both-deleted
-// conflict has no 3-way merge to compute and is filtered out by each
-// caller before this is ever reached.
-//
-// Never blindly overwrites the live document: the merge is computed from
-// Git's index stages, not from what is actually in the document, so an
-// edit applied without checking would silently destroy any change already
-// made to the file (by hand or by another tool) since the conflict was
-// created. Refuses (returns "skippedWouldClobber", unless force) when the
-// live text is neither the raw pre-merge conflict markers (safe — nothing
-// of the caller's is lost) nor already the auto-merge result (a no-op,
-// reported as "autoResolutionsAlreadyApplied" — not an error).
-//
 // remainingConflicts is the number of conflicts the merge could not
 // resolve (left as <<<<<<< markers in the document): differ.conflicts
 // (populated by initialize()'s three-way diff, one entry per conflicting
@@ -115,11 +100,7 @@ async function stageIfClean(conflictedItem: ConflictedItem): Promise<boolean> {
 // per marker *line* — the same distinction agentConflicts.ts's
 // conflictCount draws via conflictChangeIndexes vs. individual
 // DiffChunks).
-async function performAutoMerge(
-	conflictedItem: ConflictedItem,
-	documentUri: Uri,
-	options: { force?: boolean } = {},
-): Promise<AutoMergeResult> {
+async function createAutoMergeCandidate(conflictedItem: ConflictedItem) {
 	// Reuses fetchConflictStages rather than fetching git stage 1 directly:
 	// a both-added conflict has no stage 1 (no common ancestor), and
 	// git show :1: throws for it. fetchConflictStages already knows this
@@ -140,13 +121,109 @@ async function performAutoMerge(
 	const sequences = [localLines, baseLines, remoteLines];
 	merger.initialize(sequences, sequences);
 
-	const finalMergedText = merger.merge3FilesGit(true);
+	return {
+		stages,
+		finalMergedText: merger.merge3FilesGit(true),
+		remainingConflicts: merger.differ.conflicts.length,
+	};
+}
 
-	const remainingConflicts = merger.differ.conflicts.length;
+// The two things that differ between auto-merging the working tree and
+// auto-merging an already-open document: how to read the current text to
+// check against, and how to write the merge result back. Each of
+// performAutoMergeOnDisk/performAutoMergeOnDocument builds one of these and
+// hands it to the shared decision logic in runAutoMerge, so neither the
+// "disk" vs. "document" choice nor its read/write behavior is ever implicit.
+interface AutoMergeTarget {
+	read(): Promise<string>;
+	write(finalMergedText: string, currentText: string): Promise<void>;
+	// Persists the target to disk if it has an unsaved copy that read() might
+	// have returned (a dirty document). Called before staging on every path,
+	// including "already applied", since staging always reads from disk.
+	ensureSaved(): Promise<void>;
+}
 
-	const document = await workspace.openTextDocument(documentUri);
-	const docText = document.getText();
-	if (docText === finalMergedText) {
+function diskAutoMergeTarget(documentUri: Uri): AutoMergeTarget {
+	return {
+		async read() {
+			return new TextDecoder().decode(
+				await workspace.fs.readFile(documentUri),
+			);
+		},
+		async write(finalMergedText) {
+			await workspace.fs.writeFile(
+				documentUri,
+				new TextEncoder().encode(finalMergedText),
+			);
+		},
+		async ensureSaved() {
+			// Nothing to save: disk is already the source of truth.
+		},
+	};
+}
+
+function documentAutoMergeTarget(
+	document: TextDocument,
+	conflictedItem: ConflictedItem,
+): AutoMergeTarget {
+	const save = async () => {
+		if (!(await document.save())) {
+			throw new Error(
+				`Failed to save auto-merged text to ${conflictedItem.uri}; it was not staged.`,
+			);
+		}
+	};
+	return {
+		read() {
+			return Promise.resolve(document.getText());
+		},
+		async write(finalMergedText, currentText) {
+			const edit = new WorkspaceEdit();
+			edit.replace(
+				document.uri,
+				new Range(
+					document.positionAt(0),
+					document.positionAt(currentText.length),
+				),
+				finalMergedText,
+			);
+			if (!(await workspace.applyEdit(edit))) {
+				throw new Error(
+					`Failed to apply merged text to ${conflictedItem.uri}.`,
+				);
+			}
+			await save();
+		},
+		async ensureSaved() {
+			if (document.isDirty) {
+				await save();
+			}
+		},
+	};
+}
+
+// Runs Weld's three-way merge for a single conflicted file and writes the
+// result to whichever target the caller built. Throws on any operational
+// failure so every caller can surface the real reason instead of swallowing
+// it. Callers must only pass a file that is actually a 3-way text-merge
+// candidate (both sides modified it, common ancestor present); a
+// delete/modify or both-deleted conflict has no 3-way merge to compute and
+// is filtered out by each caller before this is ever reached.
+//
+// Never blindly overwrites its target: the merge is computed from Git's
+// index stages, so it refuses (returns "skippedWouldClobber", unless force)
+// when the target's current text is neither the raw pre-merge conflict
+// markers nor already the auto-merge result.
+async function runAutoMerge(
+	conflictedItem: ConflictedItem,
+	target: AutoMergeTarget,
+	force: boolean,
+): Promise<AutoMergeResult> {
+	const { stages, finalMergedText, remainingConflicts } =
+		await createAutoMergeCandidate(conflictedItem);
+	const targetText = await target.read();
+	if (targetText === finalMergedText) {
+		await target.ensureSaved();
 		const staged =
 			remainingConflicts === 0 && (await stageIfClean(conflictedItem));
 		return {
@@ -155,8 +232,8 @@ async function performAutoMerge(
 			staged,
 		};
 	}
-	if (!options.force) {
-		const labels = extractConflictLabels(docText);
+	if (!force) {
+		const labels = extractConflictLabels(targetText);
 		const initialGitState = labels
 			? await buildInitialConflictedState(
 					conflictedItem.rootUri,
@@ -164,7 +241,7 @@ async function performAutoMerge(
 					labels,
 				)
 			: null;
-		if (docText !== initialGitState) {
+		if (targetText !== initialGitState) {
 			return {
 				kind: "skippedWouldClobber",
 				remainingConflicts,
@@ -173,22 +250,41 @@ async function performAutoMerge(
 		}
 	}
 
-	const fullRange = new Range(
-		document.positionAt(0),
-		document.positionAt(docText.length),
-	);
-
-	const edit = new WorkspaceEdit();
-	edit.replace(documentUri, fullRange, finalMergedText);
-	const applied = await workspace.applyEdit(edit);
-	if (!applied) {
-		throw new Error(
-			`Failed to apply merged text to ${conflictedItem.uri}.`,
-		);
-	}
+	await target.write(finalMergedText, targetText);
 	const staged =
 		remainingConflicts === 0 && (await stageIfClean(conflictedItem));
 	return { kind: "merged", remainingConflicts, staged };
+}
+
+// Used by everything that treats the working tree as authoritative: agent
+// tools, tree actions, auto-merge-all, and auto-merge-on-open. Never inspects
+// a dirty VS Code document — see runAutoMerge's clobber check, which compares
+// against disk content only.
+function performAutoMergeOnDisk(
+	conflictedItem: ConflictedItem,
+	documentUri: Uri,
+	force: boolean,
+): Promise<AutoMergeResult> {
+	return runAutoMerge(
+		conflictedItem,
+		diskAutoMergeTarget(documentUri),
+		force,
+	);
+}
+
+// Used only by the explicit active-editor command, which intentionally
+// targets the user's open document instead of disk: it inspects and edits
+// `document` directly, then saves it through VS Code before staging.
+function performAutoMergeOnDocument(
+	conflictedItem: ConflictedItem,
+	document: TextDocument,
+	force: boolean,
+): Promise<AutoMergeResult> {
+	return runAutoMerge(
+		conflictedItem,
+		documentAutoMergeTarget(document, conflictedItem),
+		force,
+	);
 }
 
 // One file's outcome from an auto-merge-all run, in the same
@@ -251,7 +347,8 @@ class AutoMergeAllAbortedError extends Error {
 export type { AutoMergeAllEntry, AutoMergeAllResult, AutoMergeResult };
 export {
 	AutoMergeAllAbortedError,
-	performAutoMerge,
+	performAutoMergeOnDisk,
+	performAutoMergeOnDocument,
 	stageIfClean,
 	WouldClobberEditError,
 };

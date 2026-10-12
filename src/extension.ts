@@ -5,6 +5,7 @@ import {
 	type Disposable,
 	type ExtensionContext,
 	ProgressLocation,
+	type TextDocument,
 	Uri,
 	window,
 	workspace,
@@ -48,7 +49,8 @@ import {
 	type AutoMergeAllEntry,
 	type AutoMergeAllResult,
 	type AutoMergeResult,
-	performAutoMerge,
+	performAutoMergeOnDisk,
+	performAutoMergeOnDocument,
 	WouldClobberEditError,
 } from "./webview/autoMerge.ts";
 import { extractConflictLabels } from "./webview/conflictLabels.ts";
@@ -369,7 +371,7 @@ function isUriCommandArg(value: unknown): value is UriCommandArg {
 	);
 }
 
-function getActiveDocumentUri(): Uri | null {
+function getActiveDocument(): TextDocument | null {
 	const editor = window.activeTextEditor;
 	if (!editor) {
 		return null;
@@ -377,7 +379,11 @@ function getActiveDocumentUri(): Uri | null {
 	if (editor.document.isUntitled) {
 		return null;
 	}
-	return editor.document.uri;
+	return editor.document;
+}
+
+function getActiveDocumentUri(): Uri | null {
+	return getActiveDocument()?.uri ?? null;
 }
 
 async function resolveConflictedItemFromUri(
@@ -577,7 +583,7 @@ async function handleAutoMerge(
 ) {
 	await requireTextMergeable(conflictedItem, documentUri);
 	throwIfSkippedWouldClobber(
-		await performAutoMerge(conflictedItem, documentUri),
+		await performAutoMergeOnDisk(conflictedItem, documentUri, false),
 		documentUri,
 	);
 	conflictedFilesProvider.refresh();
@@ -589,7 +595,7 @@ async function handleAutoMerge(
 // the UI reflects the change alongside the agent's own result. force lets
 // the agent explicitly pre-agree to overwriting a file that has diverged
 // from both the pre-merge conflict markers and the auto-merge result —
-// see performAutoMerge.
+// see performAutoMergeOnDisk.
 async function handleApplyAutomergeSingle(
 	location: ConflictLocation & { force?: boolean },
 	conflictedFilesProvider: ConflictedFilesProvider,
@@ -597,10 +603,10 @@ async function handleApplyAutomergeSingle(
 	const conflictedItem = resolveConflictedItem(location);
 	await requireTextMergeable(conflictedItem, conflictedItem.uri);
 	const result = throwIfSkippedWouldClobber(
-		await performAutoMerge(
+		await performAutoMergeOnDisk(
 			conflictedItem,
 			conflictedItem.uri,
-			location.force === undefined ? {} : { force: location.force },
+			location.force ?? false,
 		),
 		conflictedItem.uri,
 	);
@@ -654,7 +660,7 @@ async function collectAutoMergeableFiles(): Promise<ConflictedFileEntry[]> {
 // the total considered.
 async function handleAutoMergeAll(
 	conflictedFilesProvider: ConflictedFilesProvider,
-	options: { force?: boolean } = {},
+	force: boolean,
 ): Promise<AutoMergeAllResult> {
 	const conflictedFiles = await collectAutoMergeableFiles();
 	const totalCount = conflictedFiles.length;
@@ -680,10 +686,10 @@ async function handleAutoMergeAll(
 			};
 			let result: AutoMergeResult;
 			try {
-				result = await performAutoMerge(
+				result = await performAutoMergeOnDisk(
 					repoContext,
 					entry.change.uri,
-					options,
+					force,
 				);
 			} catch (error: unknown) {
 				throw new AutoMergeAllAbortedError(
@@ -949,7 +955,12 @@ async function handleSmartAdd(
 
 async function readSavedDocument(uri: Uri): Promise<string> {
 	const document = await workspace.openTextDocument(uri);
-	await document.save();
+	if (!(await document.save())) {
+		throw new Error(
+			`Failed to save ${uri.fsPath}; it was not added. VS Code detected ` +
+				"an external change — resolve the save conflict and try again.",
+		);
+	}
 	return document.getText();
 }
 
@@ -973,18 +984,23 @@ async function handleTreeAutoMerge(
 async function handleActiveEditorAutoMerge(
 	conflictedFilesProvider: ConflictedFilesProvider,
 ) {
-	const documentUri = getActiveDocumentUri();
-	if (!documentUri) {
+	const document = getActiveDocument();
+	if (!document) {
 		throw new Error("Weld auto-merge: no active text editor.");
 	}
 	const conflictedItem = await resolveConflictedItemFromUri(
-		documentUri,
+		document.uri,
 		"Weld auto-merge",
 	);
 	if (!conflictedItem) {
 		return;
 	}
-	await handleAutoMerge(conflictedItem, documentUri, conflictedFilesProvider);
+	await requireTextMergeable(conflictedItem, document.uri);
+	throwIfSkippedWouldClobber(
+		await performAutoMergeOnDocument(conflictedItem, document, false),
+		document.uri,
+	);
+	conflictedFilesProvider.refresh();
 }
 
 async function handleTreeCheckoutConflicted(
@@ -1056,7 +1072,13 @@ async function handleActiveEditorSmartAdd(
 	if (editor.document.isUntitled) {
 		return;
 	}
-	await editor.document.save();
+	if (!(await editor.document.save())) {
+		throw new Error(
+			`Failed to save ${editor.document.uri.fsPath}; it was not added. ` +
+				"VS Code detected an external change — resolve the save " +
+				"conflict and try again.",
+		);
+	}
 	const conflictedItem = await resolveConflictedItemFromUri(
 		editor.document.uri,
 		"git add resolved file",
@@ -1274,7 +1296,10 @@ function registerCommands(
 			},
 		),
 		commands.registerCommand("meld-auto-merge.autoMergeAll", async () => {
-			const result = await handleAutoMergeAll(conflictedFilesProvider);
+			const result = await handleAutoMergeAll(
+				conflictedFilesProvider,
+				false,
+			);
 			if (result.totalCount === 0) {
 				window.showInformationMessage(
 					"No unmerged files to auto-merge.",
@@ -1425,7 +1450,8 @@ export function activate(context: ExtensionContext): WeldExtensionApi {
 	setupGitRepoWatchers(context, conflictedFilesProvider, telemetry);
 	registerAgentTools(
 		context,
-		(options) => handleAutoMergeAll(conflictedFilesProvider, options),
+		(options) =>
+			handleAutoMergeAll(conflictedFilesProvider, options.force ?? false),
 		(location) =>
 			handleApplyAutomergeSingle(location, conflictedFilesProvider),
 	);

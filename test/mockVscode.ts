@@ -1,4 +1,5 @@
-import { readFileSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 
 type CommandCallback = (...args: unknown[]) => unknown;
 type MessageImplementation = (
@@ -10,6 +11,11 @@ type ProgressTask = (progress: {
 }) => Promise<unknown>;
 type OpenTextDocumentImplementation = (uri: Uri) => Promise<unknown>;
 type ApplyEditImplementation = (edit: WorkspaceEdit) => Promise<boolean>;
+type FsReadFileImplementation = (uri: Uri) => Promise<Uint8Array>;
+type FsWriteFileImplementation = (
+	uri: Uri,
+	content: Uint8Array,
+) => Promise<void>;
 
 interface MockTextDocument {
 	readonly uri: Uri;
@@ -85,6 +91,14 @@ let executeCommandImpl: CommandCallback = () => Promise.resolve(undefined);
 let openTextDocumentImpl: OpenTextDocumentImplementation = () =>
 	Promise.reject(new Error("not implemented"));
 let applyEditImpl: ApplyEditImplementation = () => Promise.resolve(false);
+// workspace.fs.readFile/writeFile default to real disk I/O: several existing
+// callers (agentConflicts.ts, gitUtils.ts) genuinely read real fixture files
+// their tests create on disk. A test whose fixture paths are fake (e.g.
+// "/work/repo/a.txt") must opt in via mockVscodeSetFsReadFile/WriteFile
+// instead of silently hitting ENOENT against a path that was never real.
+let fsReadFileImpl: FsReadFileImplementation = (uri) => readFile(uri.fsPath);
+let fsWriteFileImpl: FsWriteFileImplementation = () =>
+	Promise.reject(new Error("not implemented"));
 let configurationValues = new Map<string, unknown>();
 let activeTextEditorValue: unknown;
 let getExtensionImpl: (extensionId: string) => unknown;
@@ -232,7 +246,9 @@ const workspace = {
 				return Promise.reject(error);
 			}
 		},
-		readFile: (uri: Uri) => Promise.resolve(readFileSync(uri.fsPath)),
+		readFile: (uri: Uri) => fsReadFileImpl(uri),
+		writeFile: (uri: Uri, content: Uint8Array) =>
+			fsWriteFileImpl(uri, content),
 		delete: () => Promise.reject(new Error("not implemented")),
 	},
 	onDidSaveTextDocument: (listener: (document: unknown) => void) => {
@@ -406,6 +422,18 @@ function mockVscodeSetApplyEdit(implementation: ApplyEditImplementation): void {
 	applyEditImpl = implementation;
 }
 
+function mockVscodeSetFsReadFile(
+	implementation: FsReadFileImplementation,
+): void {
+	fsReadFileImpl = implementation;
+}
+
+function mockVscodeSetFsWriteFile(
+	implementation: FsWriteFileImplementation,
+): void {
+	fsWriteFileImpl = implementation;
+}
+
 function mockVscodeSetExecuteCommand(implementation: CommandCallback): void {
 	executeCommandImpl = implementation;
 }
@@ -450,6 +478,8 @@ function mockVscodeReset(): void {
 	executeCommandImpl = () => Promise.resolve(undefined);
 	openTextDocumentImpl = () => Promise.reject(new Error("not implemented"));
 	applyEditImpl = () => Promise.resolve(false);
+	fsReadFileImpl = (uri) => readFile(uri.fsPath);
+	fsWriteFileImpl = () => Promise.reject(new Error("not implemented"));
 	configurationValues = new Map();
 	activeTextEditorValue = undefined;
 	getExtensionImpl = defaultGetExtension;
@@ -472,6 +502,8 @@ export {
 	mockVscodeSetConfiguration,
 	mockVscodeSetErrorMessageResult,
 	mockVscodeSetExecuteCommand,
+	mockVscodeSetFsReadFile,
+	mockVscodeSetFsWriteFile,
 	mockVscodeSetGetExtension,
 	mockVscodeSetInformationMessageResult,
 	mockVscodeSetOpenTextDocument,

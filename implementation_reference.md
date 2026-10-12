@@ -120,6 +120,11 @@ Located in `src/webview/ui/`.
   replacement, adversarial copied-context edits, truncation, whole-file
   replacement, variable-width merge/diff3/zdiff3 marker scans, and bounded
   stage/current result responses for a real large conflict.
+- `test/vscode/suite/merge_editor.test.ts` covers real default-editor and
+  three-view-tab coexistence, the VS Code save result used by Save & Complete
+  Merge, and the provider message sent by that button. It checks the document,
+  working-tree bytes, and staged Git blob separately for Weld-resolvable
+  conflicts and external disk changes.
 
 Test coverage with jest, mutations with stryker, fuzz testing with jazzer should be kept up to date.
 
@@ -161,21 +166,31 @@ Granular performance telemetry is **opt-in only** and has zero production impact
 ## Auto-Merge Candidate Classification
 
 - `src/webview/autoMerge.ts`
-  - `performAutoMerge()` runs the 3-way text merge and applies the result
-    via a `WorkspaceEdit`, refusing (`skippedWouldClobber`, unless `force`)
-    to overwrite a file whose live content is neither the pre-merge
-    conflict markers nor already the auto-merge result, and staging the
-    file once `remainingConflicts` is 0. It assumes its caller already
-    confirmed the file is a text-merge candidate — a delete/modify or
-    both-deleted conflict has no readable stage 2 or 3, and fetching it
-    unconditionally throws deep in Git's plumbing instead of failing
-    clearly. It is the single implementation shared by `src/extension.ts`
-    (tree/command auto-merge, `autoMergeAll`, the `weld_apply_automerge*`
-    agent tools) and `MeldCustomEditorProvider._maybeApplyAutoMerge` in
-    `src/webview/meldWebviewPanel.ts` (auto-merge on editor open) — it
-    lives under `src/webview/` rather than in `extension.ts` because the
-    editor path cannot import from `src/extension` (`.dependency-cruiser.js`
-    forbids it).
+  - `performAutoMergeOnDisk()` and `performAutoMergeOnDocument()` both run the
+    3-way text merge via the shared `runAutoMerge()` + `AutoMergeTarget`
+    (`{read, write, ensureSaved}`) internals — no shared function takes a
+    `"disk" | "document"` mode flag; callers pick the function that matches
+    their target instead, and `force` is a required `boolean` on both (never
+    optional/defaulted). `performAutoMergeOnDisk` reads/writes the
+    working-tree file directly; agent tools, tree actions, auto-merge-all,
+    and auto-merge-on-open all use it, and refuse (`skippedWouldClobber`,
+    unless `force`) when those bytes are neither the pre-merge conflict
+    markers nor the auto-merge result. `performAutoMergeOnDocument` is the
+    exception, used only by the active-editor command: it takes an already
+    open `TextDocument`, applies a `WorkspaceEdit` to it, calls
+    `document.save()`, and stages only after that save succeeds. Both assume
+    their caller already confirmed the file is a text-merge candidate — a
+    delete/modify or both-deleted conflict has no readable stage 2 or 3, and
+    fetching it unconditionally throws deep in Git's plumbing instead of
+    failing clearly. This is the single implementation shared by
+    `src/extension.ts` (tree/active-editor auto-merge, `autoMergeAll`, the
+    `weld_apply_automerge*` agent tools) and
+    `MeldCustomEditorProvider._maybeApplyAutoMerge` in
+    `src/webview/meldWebviewPanel.ts` (auto-merge on editor open, which is
+    disk-oriented — VS Code's own external-file-change handling is what
+    brings an open document back in sync with that write) — it lives under
+    `src/webview/` rather than in `extension.ts` because the editor path
+    cannot import from `src/extension` (`.dependency-cruiser.js` forbids it).
 - `src/extension.ts`
   - `requireTextMergeable()` is the single classification path (via
     `ConflictedItem.conflictStatus()`, the same classifier
@@ -186,7 +201,7 @@ Granular performance telemetry is **opt-in only** and has zero production impact
     to fall back to.
   - `collectAutoMergeableFiles()` is `handleAutoMergeAll`'s upfront filter:
     it narrows the batch's candidate list to `conflictStatus()`'s
-    `bothModified` before `performAutoMerge` is ever called, so an
+    `bothModified` before `performAutoMergeOnDisk` is ever called, so an
     ineligible file is never attempted rather than attempted-then-caught.
     `weld_list_conflicts` and the tree view are unaffected by this filter —
     they still enumerate every `ConflictKind` (`agentConflicts.ts`); only
@@ -258,6 +273,7 @@ Granular performance telemetry is **opt-in only** and has zero production impact
 
 - `src/webview/meldWebviewPanel.ts`
   - `_formatWebviewException()` turns exceptions thrown while handling webview messages into structured error payloads. The ready callback title is intentionally explicit: `Error: exception during ready callback`.
+  - `_runQueuedEditStep()` is the other producer of that same `"error"` payload. `_handleMessage`'s `"contentChanged"`/`"save"` cases deliberately do not await their own work (the webview applies edits optimistically and isn't waiting on a reply — see `_setupPerEditorListeners`'s "no acknowledgment" point), so a failure inside a queued edit/save step can never reach `_handleMessage`'s own `try`/`catch`. `_runQueuedEditStep` reports it directly and always resolves — never rejects — the step's promise: `editState.editQueue` is a running chain every later message re-chains onto via `.then()`, and `.then()` on a rejected promise skips its callback, so a rejected step would otherwise silently no-op every subsequent edit and save on that document, not just the one that failed.
 
 - `src/webview/ui/App.tsx`
   - `LoadingError` renders structured error payloads as an alert while the merge editor is still waiting for initial diff data.

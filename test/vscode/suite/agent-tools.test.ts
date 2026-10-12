@@ -24,6 +24,7 @@ import {
 	buildBaseDiffPayload,
 	buildDiffPayload,
 } from "../../../src/webview/diffPayload.ts";
+import { runGit } from "../../runGit.ts";
 import {
 	cleanupTempFixture,
 	getConflictedItem,
@@ -68,6 +69,30 @@ const INVALID_MAX_SECTION_LINES_ERROR_REGEX =
 	/maxSectionLines must be a nonnegative safe integer/u;
 const WOULD_CLOBBER_ERROR_REGEX = /Pass force to overwrite it anyway/u;
 const WELD_SENTINEL = "(??)";
+const WELD_RESOLVABLE_RESULT = "A\nB\nREMOTE\nD\n";
+
+// `git add` resolves an unmerged index even when it stages the wrong bytes.
+// The absence of stages 1/2/3 is therefore not evidence that stage 0 is the
+// auto-merge candidate; inspect the blob itself in every authority test.
+function stagedFileContent(repoPath: string, path: string): string {
+	return runGit(["show", `:0:${path}`], repoPath);
+}
+
+async function replaceDocument(
+	document: import("vscode").TextDocument,
+	text: string,
+): Promise<void> {
+	const edit = new WorkspaceEdit();
+	edit.replace(
+		document.uri,
+		new Range(
+			document.positionAt(0),
+			document.positionAt(document.getText().length),
+		),
+		text,
+	);
+	assert.equal(await workspace.applyEdit(edit), true);
+}
 
 async function invokeTextTool(name: string, input: object): Promise<string> {
 	const result = await lm.invokeTool(name, {
@@ -125,6 +150,19 @@ interface ApplyAutomergeResult {
 	staged: boolean;
 }
 
+interface ApplyAutomergeAllResult {
+	files: Array<{
+		path: string;
+		outcome:
+			| "merged"
+			| "autoResolutionsAlreadyApplied"
+			| "skippedWouldClobber";
+		remainingConflicts: number;
+		staged: boolean;
+	}>;
+	totalCount: number;
+}
+
 async function invokeApplyAutomerge(
 	input: object,
 ): Promise<ApplyAutomergeResult> {
@@ -138,6 +176,16 @@ async function invokeApplyAutomerge(
 	);
 	assert.ok("staged" in parsed && typeof parsed.staged === "boolean");
 	return parsed as ApplyAutomergeResult;
+}
+
+async function invokeApplyAutomergeAll(): Promise<ApplyAutomergeAllResult> {
+	const parsed: unknown = JSON.parse(
+		await invokeTextTool("weld_apply_automerge_all", {}),
+	);
+	assert.ok(parsed && typeof parsed === "object", "expected result object");
+	assert.ok("files" in parsed && Array.isArray(parsed.files));
+	assert.ok("totalCount" in parsed && typeof parsed.totalCount === "number");
+	return parsed as ApplyAutomergeAllResult;
 }
 
 async function invokeStageResolved(
@@ -389,6 +437,36 @@ describe("Agent Tools: Single-file auto-merge", () => {
 			},
 			{ closeBeforeCleanup: true },
 		));
+});
+
+describe("Agent Tools: partial auto-merge staging", () => {
+	it("leaves a partial merge unstaged on disk", () =>
+		withConflictRepo(
+			"weld-agent-automerge-partial-disk-",
+			makeConflict,
+			async (repoPath) => {
+				const before = workingTreeContent(repoPath, "tracked.txt");
+				assert.ok(before?.includes("<<<<<<<"));
+				await withListToolEnabled(async () => {
+					const result = await invokeApplyAutomerge({
+						repositoryRoot: Uri.file(repoPath).toString(),
+						path: "tracked.txt",
+					});
+					assert.ok(result.remainingConflicts > 0);
+					assert.equal(result.staged, false);
+				});
+				assert.deepEqual(
+					lsFilesStages(repoPath, "tracked.txt"),
+					new Set([1, 2, 3]),
+				);
+				assert.ok(
+					workingTreeContent(repoPath, "tracked.txt")?.includes(
+						"<<<<<<<",
+					),
+				);
+			},
+			{ closeBeforeCleanup: true },
+		));
 
 	it("reports the count across multiple independent conflicts in one file", () =>
 		withConflictRepo(
@@ -424,16 +502,13 @@ describe("Agent Tools: Single-file auto-merge", () => {
 			{ closeBeforeCleanup: true },
 		));
 
-	// Regression guard: performAutoMerge used to overwrite the live document
-	// unconditionally, computed only from Git's index stages — an edit
-	// already made to the file (by hand or another tool) since the conflict
-	// was created was silently destroyed. A single named file has no "skip
-	// and continue" to fall back to, so it rejects instead; force
-	// pre-agrees to the overwrite.
-	it("rejects a clobbering write, but force overwrites it", () =>
+	// Disk content is authoritative for an agent operation. A non-forced call
+	// preserves a prior disk edit; force replaces and stages that disk edit,
+	// rather than merely changing an unsaved TextDocument.
+	it("rejects a clobbering disk write, while force replaces and stages disk", () =>
 		withConflictRepo(
 			"weld-agent-automerge-clobber-",
-			makeConflict,
+			makeWeldResolvableConflict,
 			async (repoPath) => {
 				const filePath = join(repoPath, "tracked.txt");
 				const edit = "someone's actual edit\n";
@@ -459,21 +534,82 @@ describe("Agent Tools: Single-file auto-merge", () => {
 						force: true,
 					});
 					assert.equal(result.kind, "merged");
-					// applyEdit changes the open document buffer, not disk,
-					// until something saves it — read the live document the
-					// same way the merge itself does, not the file on disk.
-					const document = await workspace.openTextDocument(
-						Uri.file(filePath),
-					);
-					assert.notEqual(
-						document.getText(),
-						edit,
-						"force must overwrite the edit",
-					);
+					assert.equal(result.staged, true);
 				});
+				assert.equal(
+					workingTreeContent(repoPath, "tracked.txt"),
+					WELD_RESOLVABLE_RESULT,
+				);
+				assert.equal(
+					stagedFileContent(repoPath, "tracked.txt"),
+					WELD_RESOLVABLE_RESULT.trim(),
+				);
 			},
 			{ closeBeforeCleanup: true },
 		));
+});
+
+describe("Agent Tools: batch auto-merge authority", () => {
+	it("continues past an externally edited file and stages only the safe candidate", async () => {
+		const safeRepoPath = await makeRepo("weld-agent-automerge-all-safe-");
+		const editedRepoPath = await makeRepo(
+			"weld-agent-automerge-all-edited-",
+		);
+		try {
+			makeWeldResolvableConflict(safeRepoPath);
+			makeWeldResolvableConflict(editedRepoPath);
+			await openRepoInGitExtension(safeRepoPath);
+			await openRepoInGitExtension(editedRepoPath);
+			const safeRepo = getGitApi().getRepository(Uri.file(safeRepoPath));
+			const editedRepo = getGitApi().getRepository(
+				Uri.file(editedRepoPath),
+			);
+			assert.ok(safeRepo);
+			assert.ok(editedRepo);
+			await Promise.all([
+				waitForMergeChanges(safeRepo, 1),
+				waitForMergeChanges(editedRepo, 1),
+			]);
+			const externalEdit = "agent's prior disk edit\n";
+			await writeFile(join(editedRepoPath, "tracked.txt"), externalEdit);
+
+			await withListToolEnabled(async () => {
+				const result = await invokeApplyAutomergeAll();
+				assert.equal(result.totalCount, 2);
+				assert.deepEqual(
+					result.files.map((file) => file.outcome).sort(),
+					["merged", "skippedWouldClobber"],
+				);
+			});
+
+			assert.equal(
+				workingTreeContent(safeRepoPath, "tracked.txt"),
+				WELD_RESOLVABLE_RESULT,
+			);
+			assert.equal(
+				stagedFileContent(safeRepoPath, "tracked.txt"),
+				WELD_RESOLVABLE_RESULT.trim(),
+			);
+			assert.equal(
+				workingTreeContent(editedRepoPath, "tracked.txt"),
+				externalEdit,
+			);
+			assert.deepEqual(
+				lsFilesStages(editedRepoPath, "tracked.txt"),
+				new Set([1, 2, 3]),
+			);
+		} finally {
+			const closePromises = [
+				waitForRepoClose(safeRepoPath),
+				waitForRepoClose(editedRepoPath),
+			];
+			await Promise.all([
+				rm(safeRepoPath, { recursive: true, force: true }),
+				rm(editedRepoPath, { recursive: true, force: true }),
+			]);
+			await Promise.all(closePromises);
+		}
+	});
 });
 
 describe("Agent Tools: Auto-merge staging", () => {
@@ -494,7 +630,253 @@ describe("Agent Tools: Auto-merge staging", () => {
 						new Set(),
 						"expected the fully auto-merged file to be staged",
 					);
+					assert.equal(
+						stagedFileContent(repoPath, "tracked.txt"),
+						WELD_RESOLVABLE_RESULT.trim(),
+						"stage 0 must be Weld's candidate, not merely any blob that clears the conflict",
+					);
 				});
+			},
+			{ closeBeforeCleanup: true },
+		));
+});
+
+describe("Agent Tools: auto-merge already applied on disk", () => {
+	it("stages exactly the existing candidate without rewriting it", () =>
+		withConflictRepo(
+			"weld-agent-automerge-already-applied-",
+			makeWeldResolvableConflict,
+			async (repoPath) => {
+				const uri = Uri.file(join(repoPath, "tracked.txt"));
+				await writeFile(uri.fsPath, WELD_RESOLVABLE_RESULT);
+				await withListToolEnabled(async () => {
+					const result = await invokeApplyAutomerge({
+						repositoryRoot: Uri.file(repoPath).toString(),
+						path: "tracked.txt",
+					});
+					assert.equal(result.kind, "autoResolutionsAlreadyApplied");
+					assert.equal(result.remainingConflicts, 0);
+					assert.equal(result.staged, true);
+				});
+				assert.equal(
+					workingTreeContent(repoPath, "tracked.txt"),
+					WELD_RESOLVABLE_RESULT,
+				);
+				assert.equal(
+					stagedFileContent(repoPath, "tracked.txt"),
+					WELD_RESOLVABLE_RESULT.trim(),
+				);
+			},
+			{ closeBeforeCleanup: true },
+		));
+
+	it("stages an existing disk candidate without replacing a dirty buffer", () =>
+		withConflictRepo(
+			"weld-agent-automerge-already-applied-dirty-",
+			makeWeldResolvableConflict,
+			async (repoPath) => {
+				const uri = Uri.file(join(repoPath, "tracked.txt"));
+				const document = await workspace.openTextDocument(uri);
+				const userBuffer = "user's unsaved candidate-adjacent edit\n";
+				await replaceDocument(document, userBuffer);
+				await writeFile(uri.fsPath, WELD_RESOLVABLE_RESULT);
+
+				await withListToolEnabled(async () => {
+					const result = await invokeApplyAutomerge({
+						repositoryRoot: Uri.file(repoPath).toString(),
+						path: "tracked.txt",
+					});
+					assert.equal(result.kind, "autoResolutionsAlreadyApplied");
+					assert.equal(result.staged, true);
+				});
+
+				assert.equal(document.getText(), userBuffer);
+				assert.equal(document.isDirty, true);
+				assert.equal(
+					stagedFileContent(repoPath, "tracked.txt"),
+					WELD_RESOLVABLE_RESULT.trim(),
+				);
+				assert.equal(await document.save(), false);
+			},
+			{ closeBeforeCleanup: true },
+		));
+});
+
+describe("Agent Tools: authoritative disk with dirty VS Code documents", () => {
+	// This is the ordinary VS Code baseline: an agent writes/stages the disk
+	// file while a user has an unsaved buffer. The buffer is not rewritten;
+	// saving it later is VS Code's external-change conflict, not Weld's.
+	it("stages an agent's disk resolution without changing a dirty user buffer", () =>
+		withConflictRepo(
+			"weld-agent-disk-authority-",
+			makeWeldResolvableConflict,
+			async (repoPath) => {
+				const uri = Uri.file(join(repoPath, "tracked.txt"));
+				const document = await workspace.openTextDocument(uri);
+				const userBuffer = "user's unsaved resolution\n";
+				const agentDiskResolution = "agent's on-disk resolution\n";
+				await replaceDocument(document, userBuffer);
+				assert.equal(document.isDirty, true);
+				await writeFile(uri.fsPath, agentDiskResolution);
+
+				await withListToolEnabled(async () => {
+					const result = await invokeStageResolved({
+						repositoryRoot: Uri.file(repoPath).toString(),
+						paths: ["tracked.txt"],
+					});
+					assert.deepEqual(result.files, [
+						{ path: "tracked.txt", staged: true },
+					]);
+				});
+
+				assert.equal(document.getText(), userBuffer);
+				assert.equal(document.isDirty, true);
+				assert.equal(
+					workingTreeContent(repoPath, "tracked.txt"),
+					agentDiskResolution,
+				);
+				assert.equal(
+					stagedFileContent(repoPath, "tracked.txt"),
+					agentDiskResolution.trim(),
+				);
+				assert.equal(
+					await document.save(),
+					false,
+					"VS Code, not Weld, must protect the dirty buffer from the external disk write",
+				);
+			},
+			{ closeBeforeCleanup: true },
+		));
+
+	// An explicit auto-merge is an agent-like disk operation. A dirty editor is
+	// not permission to stage its unsaved text, nor a reason to decline a merge
+	// of the still-unmodified working-tree conflict.
+});
+
+describe("Agent Tools: authoritative disk auto-merge", () => {
+	it("auto-merges the authoritative disk file while preserving a dirty user buffer", () =>
+		withConflictRepo(
+			"weld-agent-automerge-dirty-buffer-",
+			makeWeldResolvableConflict,
+			async (repoPath) => {
+				const uri = Uri.file(join(repoPath, "tracked.txt"));
+				const document = await workspace.openTextDocument(uri);
+				const userBuffer = "user's unsaved resolution\n";
+				await replaceDocument(document, userBuffer);
+
+				await withListToolEnabled(async () => {
+					const result = await invokeApplyAutomerge({
+						repositoryRoot: Uri.file(repoPath).toString(),
+						path: "tracked.txt",
+					});
+					assert.equal(result.kind, "merged");
+					assert.equal(result.staged, true);
+				});
+
+				assert.equal(document.getText(), userBuffer);
+				assert.equal(document.isDirty, true);
+				assert.equal(
+					workingTreeContent(repoPath, "tracked.txt"),
+					WELD_RESOLVABLE_RESULT,
+				);
+				assert.equal(
+					stagedFileContent(repoPath, "tracked.txt"),
+					WELD_RESOLVABLE_RESULT.trim(),
+				);
+				assert.equal(await document.save(), false);
+			},
+			{ closeBeforeCleanup: true },
+		));
+
+	it("auto-merge all uses the same disk authority with a dirty document", () =>
+		withConflictRepo(
+			"weld-agent-automerge-all-dirty-buffer-",
+			makeWeldResolvableConflict,
+			async (repoPath) => {
+				const uri = Uri.file(join(repoPath, "tracked.txt"));
+				const document = await workspace.openTextDocument(uri);
+				const userBuffer = "user's unsaved batch-resolution\n";
+				await replaceDocument(document, userBuffer);
+
+				await withListToolEnabled(async () => {
+					const result = await invokeApplyAutomergeAll();
+					assert.equal(result.totalCount, 1);
+					assert.equal(result.files.length, 1);
+					assert.deepEqual(
+						result.files[0] && {
+							path: result.files[0].path,
+							outcome: result.files[0].outcome,
+							remainingConflicts:
+								result.files[0].remainingConflicts,
+							staged: result.files[0].staged,
+						},
+						{
+							path: "tracked.txt",
+							outcome: "merged",
+							remainingConflicts: 0,
+							staged: true,
+						},
+					);
+				});
+
+				assert.equal(document.getText(), userBuffer);
+				assert.equal(
+					workingTreeContent(repoPath, "tracked.txt"),
+					WELD_RESOLVABLE_RESULT,
+				);
+				assert.equal(
+					stagedFileContent(repoPath, "tracked.txt"),
+					WELD_RESOLVABLE_RESULT.trim(),
+				);
+			},
+			{ closeBeforeCleanup: true },
+		));
+});
+
+describe("Agent Tools: forced authoritative disk auto-merge", () => {
+	// Once an agent has changed disk content, it is authoritative. The normal
+	// tool must refuse; force means replace disk with M, while the user's dirty
+	// buffer still stays intact and VS Code mediates its later save.
+	it("force replaces and stages disk bytes, never a dirty user buffer", () =>
+		withConflictRepo(
+			"weld-agent-force-disk-authority-",
+			makeWeldResolvableConflict,
+			async (repoPath) => {
+				const uri = Uri.file(join(repoPath, "tracked.txt"));
+				const document = await workspace.openTextDocument(uri);
+				const userBuffer = "user's unsaved resolution\n";
+				const agentDiskEdit = "agent's prior disk edit\n";
+				await replaceDocument(document, userBuffer);
+				await writeFile(uri.fsPath, agentDiskEdit);
+
+				await withListToolEnabled(async () => {
+					await assert.rejects(
+						invokeApplyAutomerge({
+							repositoryRoot: Uri.file(repoPath).toString(),
+							path: "tracked.txt",
+						}),
+						WOULD_CLOBBER_ERROR_REGEX,
+					);
+					const result = await invokeApplyAutomerge({
+						repositoryRoot: Uri.file(repoPath).toString(),
+						path: "tracked.txt",
+						force: true,
+					});
+					assert.equal(result.kind, "merged");
+					assert.equal(result.staged, true);
+				});
+
+				assert.equal(document.getText(), userBuffer);
+				assert.equal(document.isDirty, true);
+				assert.equal(
+					workingTreeContent(repoPath, "tracked.txt"),
+					WELD_RESOLVABLE_RESULT,
+				);
+				assert.equal(
+					stagedFileContent(repoPath, "tracked.txt"),
+					WELD_RESOLVABLE_RESULT.trim(),
+				);
+				assert.equal(await document.save(), false);
 			},
 			{ closeBeforeCleanup: true },
 		));

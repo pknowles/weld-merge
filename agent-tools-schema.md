@@ -179,6 +179,27 @@ that a file has been auto-merged or is "already merged" as this implies there
 are no conflicts left. Instead, something like: all automatic resolutions have
 already been applied but not all conflicts are resolved.
 
+### Authoritative File Risks
+
+A risk in operations which make changes:
+
+1. Auto-merge may replace the contents of a file with the auto-merged result
+2. Automatically staging a file necessarily stages a state on disk, but does this match the authoritative state of the file
+
+Both of these operations can be highly dangerous as the user and agent may assume one thing but the result is something else.
+
+When agents read or edit a file, it appears they do operate on the on-disk
+version and do not go via vscode's TextDocument. When the user's open editor is
+dirty/unsaved I expect it stops seeing edits made by agents (auto-update from
+disk).
+
+Codex: "I have a filesystem patch tool for edits, and I’m required to use it for repository changes. It writes saved files on disk; it does not integrate with your currently open VS Code buffer."
+
+We need testing to probe all cases and permutations. In general we should match
+existing vscode behaviour so users are not surprised. E.g. if an agent changes
+the on-disk file a user is editing in-memory and commits it, the same would
+happen for auto-merge completing and staging a file.
+
 ## Compactness
 
 Compactness is a correctness requirement. The response must be cheaper than
@@ -421,3 +442,277 @@ Illustrative only; the integration tests enforce exact shapes and sizes.
 - `test/vscode/suite/agent-tools.test.ts`: block format, GUI parity, disk
   mapping, elision, stray markers, inline listing, response-size budgets,
   stage-resolved verification and staging.
+
+## Auto-merge state semantics and test contract
+
+This section is a test plan and desired contract. It deliberately does not
+amend the user-written purpose statement at the start of this document.
+
+The phrase “Weld fully resolves” is not, by itself, enough to specify an
+expected result. It means only that Weld can derive a marker-free candidate
+from Git's base, local, and remote index stages. Whether that candidate may be
+applied, saved, or staged depends on the live VS Code document and the working
+tree file.
+
+### The three relevant inputs
+
+- **Git stages (`G`)** are the source for the candidate `M`: Weld reads the
+  base/local/remote conflict stages and calculates an auto-merge result. It
+  never derives `M` from an editor buffer or from arbitrary working-tree text.
+- **The VS Code `TextDocument` (`D`)** is a potentially dirty user buffer. It
+  can differ from disk after user edits, and it must be left to VS Code's
+  normal external-change/save-conflict handling when a disk-oriented operation
+  changes `F`.
+- **The working-tree file (`F`)** is what Git stages and what VS Code saves.
+  It can differ from `D` after a tool, agent, or other process writes the file
+  on disk. VS Code owns the conflict/overwrite interaction when a dirty
+  `TextDocument.save()` encounters that condition; Weld must not reimplement
+  it with a separate filesystem guard or dialog.
+
+For the cases below, `I` is the exact pre-merge conflict reconstruction from
+the Git stages, and `M` is Weld's candidate. “Clean” means no Git conflict
+markers or Weld sentinels remain; it is separate from whether Weld could solve
+every conflict. For agent-facing operations, `F` is authoritative: this is the
+same model as an agent editing, staging, and committing a path directly on
+disk. A dirty `D` does not silently become the target file merely because it is
+open in VS Code.
+
+### Auto-merge decisions
+
+The following table applies to the tree command, targeted LM tool, and
+batch/“all” variants. They operate on the working-tree file, just as an agent
+editing a file directly would. The active-editor command is intentionally
+different: it operates on the open `TextDocument`, saves it through VS Code,
+and stages only after that save succeeds. A dirty active document that is not
+the original conflict is therefore refused rather than overwritten. The custom
+editor's on-open action has its own decision because it is implicit rather
+than expressly requested by the user or agent.
+
+| Live document / disk state | Expected auto-merge result | User-visible result |
+| --- | --- | --- |
+| `F = I`, with no editor or with an open clean editor | Replace `F` with `M`; if clean, stage exactly `M`. A clean open editor may update through VS Code's ordinary file watching. | Normal success or partial-merge result. |
+| `F = I`, with an open dirty default or Weld editor (`D != F`) | Still replace `F` with `M` and, if clean, stage exactly `M`. Do not replace `D`. A subsequent user save follows VS Code's external-change behavior. | The operation has the same disk semantics as an agent direct edit; no custom Weld overwrite dialog. |
+| `F = M` | Do not rewrite it. Stage only if the stage-0 blob is exactly `M`. | “Already applied”/success, not a second rewrite. |
+| `F` is neither `I` nor `M`, regardless of `D` | Do not replace or stage that disk edit without explicit `force`. A command or targeted LM tool reports a would-clobber error; batch/all reports this file as skipped and continues. | Clear error for a single target, or a skipped entry for batch/all. |
+| `F` is neither `I` nor `M`, and targeted LM auto-merge uses `force` | Replace `F` with `M`, stage exactly `M` if clean, and leave a dirty `D` alone. | Explicit forced disk operation; later user save receives VS Code's normal external-change handling. |
+
+Every mutating case must assert all of `D`, `F`, and the stage-0 Git blob. A
+test that checks only whether Git's unmerged stages disappear can falsely pass
+after staging unrelated disk content. `force` authorizes overwriting the
+authoritative disk file; it does not authorize silently overwriting a dirty
+VS Code buffer.
+
+### Completing a three-way merge
+
+“Save & Complete Merge” has a different boundary from auto-merge. Its handler
+first rejects a document with unresolved markers/sentinels; in that case it
+must not call save and VS Code has no overwrite decision to make. For a clean
+document, the expected sequence is:
+
+1. Call `TextDocument.save()`.
+2. Only if it succeeds, run the existing `smartAdd` path.
+3. Dispose the three-way panel only after staging succeeds.
+
+If an external process modified `F` after the three-way panel was opened while
+the user has unsaved clean edits in `D`, `save()` is the point at which VS Code
+detects the conflict. Expected behavior is the native VS Code save-conflict
+experience (or a `false` save result), followed by **no staging and no panel
+close**. The user may choose VS Code's overwrite/reconcile action; a later
+successful save may then be staged normally. Weld must neither preempt that UI
+with its own disk watcher nor treat a failed save as permission to `git add`.
+
+### Required coverage by entry point
+
+Tests should use the existing VS Code extension-host infrastructure and real
+`TextDocument`/custom-editor tabs. The matrix is state coverage, not a demand
+to create a Cartesian product of duplicate tests.
+
+| Entry point | Required state partitions | Expected assertion |
+| --- | --- | --- |
+| Active-editor command | clean active document; dirty active document; disk changed after conflict | Edit and save `D` through VS Code, then assert `F` and stage 0. A dirty non-conflict document is refused and remains unchanged. |
+| Tree command | unopened; default editor open/clean; default editor dirty; disk changed after conflict | Assert `D`, `F`, stage-0 blob, Git stages, and the visible command error where applicable. |
+| Auto-merge all | mixture of `F = I`, dirty open documents, and externally edited files | Safe files continue and stage their candidate blob; unsafe files are returned as skips, not overwritten or staged. |
+| Targeted and batch LM tools | the same states, plus direct-agent disk edit + dirty document, and explicit `force` | Tool response distinguishes applied, already-applied, skipped, and forced operations. On every reported stage, `git show :0:path` equals the reported candidate. |
+| Opening the real three-way custom editor | default editor already open; dirty document; clean conflict | Both tabs share one document; opening does not clobber dirty text; clean auto-merge is reflected in every open tab. Implicit open must not have broader overwrite authority than an explicit operation. |
+| “Save & Complete Merge” | clean manually resolved document; unresolved markers; external disk edit after panel open | Respectively save/stage/close; reject before save; or invoke VS Code's native save-conflict behavior and leave the file un-staged and panel open on failed save. |
+
+For command handlers that surface exceptions through VS Code notifications,
+tests should assert the domain outcome and the retained text rather than assume
+`executeCommand` itself rejects. LM tools, by contrast, must return their
+structured failure/skip information to the caller. After each disk mutation
+with dirty `D`, tests must call `document.save()` and assert VS Code's native
+external-change result. This is both the behavioral baseline and a guard
+against replacing VS Code's handling with a Weld-specific dialog.
+
+### Executable authority coverage checklist
+
+The following case IDs are the finite coverage set. A test may cover more than
+one ID only when its setup and assertions explicitly establish both states.
+Every `apply` case asserts `D`, `F`, and `:0:path`; every `reject`/`skip` case
+asserts that the pre-operation disk bytes and unmerged index stages remain.
+
+| ID | Entry point | State and required outcome |
+| --- | --- | --- |
+| A1–A3 | Targeted LM | `F = I` with document absent, clean, and dirty: apply/stage `M`; preserve dirty `D`. |
+| A4–A6 | Targeted LM | `F = M` with document absent, clean, and dirty: no rewrite; stage exactly `M`; preserve dirty `D`. |
+| A7–A9 | Targeted LM | `F = E` (external/agent edit) with document absent, clean, and dirty: reject and preserve `E`; `force` applies/stages `M` and preserves dirty `D`. |
+| B1–B4 | LM all | One safe `F = I`, one `F = E`, plus dirty-open variants: safe paths apply/stage `M`; unsafe paths report `skippedWouldClobber`; the batch continues. |
+| C1–C2 | Command Palette active file | Clean active document containing `I`: replace and save `D` through VS Code, then stage `M`. A dirty active document that differs from `I` is refused; it, `F`, and the unmerged index entries remain unchanged. (There is no active-file command without a document.) |
+| C4–C5 | Command Palette active file | `F = E` with clean and dirty documents: VS Code save failure or a visible refusal; no stage-0 mutation. |
+| D1–D3 | Tree action | `F = I`, `F = M`, and `F = E`: same behavior as targeted LM without `force`. |
+| E1–E3 | Custom editor opening | Default editor already open; dirty document; externally diverged disk: tabs share `D`, implicit opening preserves dirty data, and it never gains broader overwrite authority. |
+| F1–F3 | Complete merge | clean resolved save/stage/close; unresolved markers reject before save; external disk edit after panel open produces native save conflict and prevents stage/close. |
+| G1–G2 | Partial merge | targeted and batch paths leave remaining markers on disk and preserve unmerged Git stages; no stage-0 blob is created. |
+| H1 | Direct agent disk baseline | Dirty `D`, agent writes and stages `F`: `D` survives and its subsequent save is handled by VS Code. |
+
+The tests do not try to manufacture a disk write at the exact instant between
+checking a file and running `git add`. Every normal mutating case instead reads
+the staged blob afterward and compares it with the expected result.
+
+### Failing examples for review
+
+These are the failures currently observed by the VS Code-host tests. They are
+examples for deciding the intended product behavior, not proposed fixes.
+
+#### 1. A normal fully resolvable auto-merge stages the old file
+
+Starting point: the working-tree file contains Git conflict markers (`F = I`)
+and no editor is open. An agent explicitly calls the targeted
+`weld_apply_automerge` LM tool for this path. That tool reads Git's conflict
+stages and computes the fully resolved candidate `M`.
+
+Current behavior: Weld changes an in-memory VS Code document to `M`, then runs
+`git add`. The file on disk is still `I`, so Git stages `I` and clears its
+unmerged entries. Weld reports `staged: true`, even though the staged blob is
+not `M`.
+
+Expected behavior to review: write `M` to disk first, then stage it. On success
+the file on disk and Git's stage-0 blob must both equal `M`.
+
+User: yes, the LM tool result should be written to the on-disk version
+
+Related case: If the user has an open document and runs auto-merge current file
+from the command palette, it should actually change the in-memory TextDocument.
+
+#### 2. Batch auto-merge stages the wrong bytes for its safe file
+
+Starting point: two repositories are open. In one, `tracked.txt` is `I` and
+Weld can resolve it to `M`. In the other, an agent has already replaced
+`tracked.txt` on disk with unrelated text `E`. The agent explicitly calls the
+`weld_apply_automerge_all` LM tool.
+
+Current behavior: the batch correctly treats `E` as a file to skip, but its
+supposedly merged safe file has the same document-versus-disk problem as
+example 1. The batch result can say that it merged and staged the safe file
+without Git's staged blob being `M`.
+
+Expected behavior to review: continue past `E`, leave its disk content and
+unmerged stages unchanged, and write/stage exactly `M` for the safe file.
+
+User: are you saying that we stage a file even though it's been skipped? Can you
+stop with the terrible "safe file" invented jargon!?
+
+#### 3. A dirty editor prevents auto-merge of an unchanged disk conflict
+
+Starting point: the file on disk is still the original conflict `F = I`. The
+user has a dirty VS Code buffer with unrelated unsaved text `D = U`. The
+covered calls are: an agent calls targeted `weld_apply_automerge`; an agent
+calls `weld_apply_automerge_all`; or the user explicitly runs Weld Auto-Merge
+from the Command Palette for the active file.
+
+Current behavior: targeted LM auto-merge and LM auto-merge-all inspect `D`,
+conclude it is neither `I` nor `M`, and refuse or skip. Nothing is merged on
+disk. The active-editor command is deliberately excluded: it is supposed to
+operate on that document.
+
+Expected behavior to review: because the two agent operations are
+disk-oriented, write and stage `M` on disk while leaving `D = U` alone. If the
+user later saves their buffer, VS Code should perform its usual
+external-file-change handling. Weld should not display its own overwrite
+dialog.
+
+User: correct; LM tools operate on disk files. User dirty file is an orthogonal
+issue. Note that the user calling Auto Merge Current File is the edge case that
+happens to the in-memory version whereas "Auto-Merge All Conflicting Files"
+operates on the on-disk versions.
+
+#### 4. An already-resolved disk file is rejected because an editor is dirty
+
+Starting point: an agent has already written Weld's exact candidate to disk
+(`F = M`). A user still has a dirty, different buffer (`D = U`). The agent
+then explicitly calls targeted `weld_apply_automerge` to stage the already
+applied automatic resolutions.
+
+Current behavior: Weld reads `D`, treats it as a clobber risk, and rejects the
+operation. It does not stage the already-resolved disk file.
+
+Expected behavior to review: leave both files alone: keep `D = U`, leave
+`F = M` unchanged, and stage exactly `M`. A later user save is VS Code's
+responsibility.
+
+User: sounds right.
+
+#### 5. Forced auto-merge changes the buffer but stages unrelated disk text
+
+Starting point: the user has dirty text `D = U`; an agent has separately
+written unrelated disk text `F = E`; the agent explicitly calls targeted
+`weld_apply_automerge` with `force: true`.
+
+Current behavior: Weld replaces the open buffer with `M`, but does not write
+`M` to disk before `git add`. Git therefore stages `E`, while the buffer says
+`M`. The tool reports success and staging even though no one location contains
+the result it claims to have staged.
+
+Expected behavior to review: `force` should mean “replace the disk file with
+`M` and stage `M`.” It should not replace the user's dirty buffer. Afterward,
+`F` and stage 0 equal `M`, while `D` remains `U`; a later save uses VS Code's
+normal external-change handling.
+
+User: sounds right.
+
+#### 6. Save & Complete Merge continues after VS Code rejects the save
+
+Starting point: a three-way merge panel has a clean, manually resolved dirty
+buffer `D = R`. An agent or other process then writes different disk text
+`F = E`. The user clicks **Save & Complete Merge** in that panel.
+
+Current behavior: `document.save()` returns false because VS Code detects the
+external change. The completion handler currently continues to `smartAdd`
+instead of stopping. That can stage `E` and close the panel although `R` was
+never saved.
+
+Expected behavior to review: stop immediately when save returns false. Leave
+the panel open, leave Git unmerged, and let VS Code present its ordinary
+external-change/save-resolution behavior. Only a later successful save may be
+followed by staging and panel disposal.
+
+User: sounds right. We need to audit the code for all ignored return values such
+as this. Ideally warnings/errors/linting could help us here.
+
+Status: all six examples above are fixed (`performAutoMergeOnDisk` /
+`performAutoMergeOnDocument` in `src/webview/autoMerge.ts`;
+`_handleCompleteMerge` in `src/webview/meldWebviewPanel.ts`). The requested
+audit of ignored return values found two more instances of the same bug class,
+also fixed:
+
+- `readSavedDocument` and `handleActiveEditorSmartAdd` in `src/extension.ts`
+  (the tree/URI/active-editor "Git Add" command) ignored `document.save()`'s
+  return value and would stage whatever was actually on disk while believing
+  it had verified the in-memory text. Both now throw when `save()` returns
+  `false`.
+- `MeldCustomEditorProvider._handleMessage`'s `"contentChanged"` and `"save"`
+  cases (`src/webview/meldWebviewPanel.ts`) ignored `workspace.applyEdit()`'s
+  and `document.save()`'s return values. Worse, because `_handleMessage`
+  deliberately does not await these steps (the webview applies edits
+  optimistically and isn't waiting on a reply), a thrown error inside a
+  queued step would never reach `_handleMessage`'s own `try`/`catch`, and
+  would silently poison `editState.editQueue` forever — every later edit or
+  save chained onto that same queue would no-op, since `.then()` on a
+  rejected promise skips its callback. `_runQueuedEditStep` now reports a
+  failed step directly to the webview's own `"error"` message channel and
+  always resolves (never rejects) the queue, so one failed edit/save can
+  never wedge every later one.
+
+No general lint rule enforces this (`no-floating-promises`-style checks catch
+an unawaited promise, not a checked-but-discarded boolean); this was a manual
+audit of every `.save()`/`applyEdit()` call site in the affected files.

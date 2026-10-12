@@ -1,3 +1,4 @@
+import { TextDecoder, TextEncoder } from "node:util";
 import {
 	afterEach,
 	beforeEach,
@@ -31,10 +32,11 @@ import {
 	mockVscodeSetApplyEdit,
 	mockVscodeSetConfiguration,
 	mockVscodeSetExecuteCommand,
+	mockVscodeSetFsReadFile,
+	mockVscodeSetFsWriteFile,
 	mockVscodeSetInformationMessageResult,
 	mockVscodeSetOpenTextDocument,
 	mockVscodeSetWarningMessageResult,
-	type WorkspaceEdit,
 	window,
 } from "./mockVscode.ts";
 
@@ -391,10 +393,16 @@ function registered(command: string): (...args: unknown[]) => Promise<unknown> {
 		await Promise.resolve(mockVscodeGetCommand(command)(...args));
 }
 
-function documentFor(uri: unknown, text: string, isUntitled = false) {
+function documentFor(
+	uri: unknown,
+	text: string,
+	isUntitled = false,
+	isDirty = false,
+) {
 	return {
 		uri,
 		isUntitled,
+		isDirty,
 		getText: () => text,
 		positionAt: (offset: number) => ({ offset }),
 		save: jest.fn<() => Promise<boolean>>().mockResolvedValue(true),
@@ -648,12 +656,19 @@ describe("extension auto-merge commands", () => {
 		const conflictText =
 			"<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> other\n";
 		mockBuildInitialConflictedState.mockResolvedValue(conflictText);
-		const document = documentFor(target.uri, conflictText);
-		mockVscodeSetOpenTextDocument(() => Promise.resolve(document));
-		const edits: WorkspaceEdit[] = [];
-		mockVscodeSetApplyEdit((edit) => {
-			edits.push(edit);
-			return Promise.resolve(true);
+		// handleTreeAutoMerge is disk-oriented (performAutoMergeOnDisk): it
+		// reads and writes the file directly, not through a TextDocument —
+		// see webview/autoMerge.ts.
+		mockVscodeSetFsReadFile(() =>
+			Promise.resolve(new TextEncoder().encode(conflictText)),
+		);
+		const writes: Array<{ path: string; content: string }> = [];
+		mockVscodeSetFsWriteFile((uri, content) => {
+			writes.push({
+				path: uri.fsPath,
+				content: new TextDecoder().decode(content),
+			});
+			return Promise.resolve();
 		});
 
 		await registered("meld-auto-merge.autoMerge")(target);
@@ -665,15 +680,186 @@ describe("extension auto-merge commands", () => {
 		expect(mockFetchConflictStages).toHaveBeenCalledWith(
 			target.conflictedItem,
 		);
-		expect(edits[0]?.replacements[0]).toMatchObject({
-			uri: target.uri,
-		});
-		expect(edits[0]?.replacements[0]?.text).toContain("local");
+		expect(writes[0]?.path).toBe(target.uri.fsPath);
+		expect(writes[0]?.content).toContain("local");
 		expect(refresh).toHaveBeenCalled();
 		// base/local/remote differ on the same line with no shared content,
 		// so the merge leaves it unresolved — never stage a file that still
 		// has conflict markers in it.
 		expect(repo.addMock).not.toHaveBeenCalled();
+	});
+});
+
+describe("extension active-editor auto-merge command", () => {
+	it("auto-merges the active document through performAutoMergeOnDocument, not disk", async () => {
+		const repo = makeRepo("/work/repo", ["a.txt"]);
+		installGitApi(makeGitApi([repo]));
+		activateWeld();
+		mockConflictedItemFromUri.mockImplementation((uri: Uri) =>
+			Promise.resolve(makeConflictedItem(repo, uri)),
+		);
+		// Non-overlapping edits on different lines: base/local/remote here
+		// let the 3-way merge fully resolve on its own — mirrors the fixture
+		// "extension auto-merge staging" already uses for the disk path.
+		mockFetchConflictStages.mockResolvedValue({
+			base: "one\ntwo\nthree\n",
+			local: "one changed\ntwo\nthree\n",
+			remote: "one\ntwo\nthree changed\n",
+		});
+		const conflictText =
+			"<<<<<<< HEAD\none changed\n=======\none\n>>>>>>> other\ntwo\n" +
+			"<<<<<<< HEAD\nthree\n=======\nthree changed\n>>>>>>> other\n";
+		mockBuildInitialConflictedState.mockResolvedValue(conflictText);
+		const document = documentFor(
+			Uri.file("/work/repo/a.txt"),
+			conflictText,
+		);
+		mockVscodeSetActiveTextEditor({ document });
+		// A read/write on workspace.fs here would mean the active-editor
+		// command fell through to the disk-oriented path by mistake.
+		mockVscodeSetFsReadFile(() =>
+			Promise.reject(new Error("must not read disk directly")),
+		);
+		mockVscodeSetFsWriteFile(() =>
+			Promise.reject(new Error("must not write disk directly")),
+		);
+		mockVscodeSetApplyEdit(() => Promise.resolve(true));
+
+		await registered("meld-auto-merge.autoMerge")();
+
+		expect(document.save).toHaveBeenCalled();
+		expect(repo.addMock).toHaveBeenCalledWith(["/work/repo/a.txt"]);
+	});
+
+	it("refuses a dirty active document that differs from the pre-merge conflict", async () => {
+		const repo = makeRepo("/work/repo", ["a.txt"]);
+		installGitApi(makeGitApi([repo]));
+		activateWeld();
+		mockConflictedItemFromUri.mockImplementation((uri: Uri) =>
+			Promise.resolve(makeConflictedItem(repo, uri)),
+		);
+		const conflictText =
+			"<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> other\n";
+		// buildInitialConflictedState returning the raw conflict text means
+		// the active document ("user's own edit" below) matches neither the
+		// pre-merge conflict nor the auto-merge result — the skippedWouldClobber
+		// branch runAutoMerge takes before ever calling target.write.
+		mockBuildInitialConflictedState.mockResolvedValue(conflictText);
+		const document = documentFor(
+			Uri.file("/work/repo/a.txt"),
+			"user's own edit\n",
+		);
+		mockVscodeSetActiveTextEditor({ document });
+
+		await expect(registered("meld-auto-merge.autoMerge")()).rejects.toThrow(
+			"Refusing to auto-merge",
+		);
+
+		expect(document.save).not.toHaveBeenCalled();
+		expect(repo.addMock).not.toHaveBeenCalled();
+	});
+});
+
+describe("extension active-editor auto-merge command failure paths", () => {
+	it("throws when applying the merged edit to the active document is rejected", async () => {
+		const repo = makeRepo("/work/repo", ["a.txt"]);
+		installGitApi(makeGitApi([repo]));
+		activateWeld();
+		mockConflictedItemFromUri.mockImplementation((uri: Uri) =>
+			Promise.resolve(makeConflictedItem(repo, uri)),
+		);
+		mockFetchConflictStages.mockResolvedValue({
+			base: "one\ntwo\nthree\n",
+			local: "one changed\ntwo\nthree\n",
+			remote: "one\ntwo\nthree changed\n",
+		});
+		const conflictText =
+			"<<<<<<< HEAD\none changed\n=======\none\n>>>>>>> other\ntwo\n" +
+			"<<<<<<< HEAD\nthree\n=======\nthree changed\n>>>>>>> other\n";
+		mockBuildInitialConflictedState.mockResolvedValue(conflictText);
+		const document = documentFor(
+			Uri.file("/work/repo/a.txt"),
+			conflictText,
+		);
+		mockVscodeSetActiveTextEditor({ document });
+		mockVscodeSetApplyEdit(() => Promise.resolve(false));
+
+		// The contract, not the wording: VS Code refused to apply the edit,
+		// so the command must fail loudly rather than treat it as a success —
+		// it must not save a document that was never actually updated with
+		// the merge result, and it must not stage anything.
+		await expect(
+			registered("meld-auto-merge.autoMerge")(),
+		).rejects.toThrow();
+
+		expect(document.save).not.toHaveBeenCalled();
+		expect(repo.addMock).not.toHaveBeenCalled();
+	});
+
+	it("throws when saving the active document after a merged edit is rejected", async () => {
+		const repo = makeRepo("/work/repo", ["a.txt"]);
+		installGitApi(makeGitApi([repo]));
+		activateWeld();
+		mockConflictedItemFromUri.mockImplementation((uri: Uri) =>
+			Promise.resolve(makeConflictedItem(repo, uri)),
+		);
+		mockFetchConflictStages.mockResolvedValue({
+			base: "one\ntwo\nthree\n",
+			local: "one changed\ntwo\nthree\n",
+			remote: "one\ntwo\nthree changed\n",
+		});
+		const conflictText =
+			"<<<<<<< HEAD\none changed\n=======\none\n>>>>>>> other\ntwo\n" +
+			"<<<<<<< HEAD\nthree\n=======\nthree changed\n>>>>>>> other\n";
+		mockBuildInitialConflictedState.mockResolvedValue(conflictText);
+		const document = documentFor(
+			Uri.file("/work/repo/a.txt"),
+			conflictText,
+		);
+		document.save.mockResolvedValue(false);
+		mockVscodeSetActiveTextEditor({ document });
+		mockVscodeSetApplyEdit(() => Promise.resolve(true));
+
+		// The contract, not the wording: a refused save (e.g. an external
+		// change raced it) must fail the command loudly rather than stage a
+		// file whose disk bytes were never actually confirmed written.
+		await expect(
+			registered("meld-auto-merge.autoMerge")(),
+		).rejects.toThrow();
+
+		expect(repo.addMock).not.toHaveBeenCalled();
+	});
+
+	it("re-saves an already-resolved dirty active document without re-applying the merge", async () => {
+		const repo = makeRepo("/work/repo", ["a.txt"]);
+		installGitApi(makeGitApi([repo]));
+		activateWeld();
+		mockConflictedItemFromUri.mockImplementation((uri: Uri) =>
+			Promise.resolve(makeConflictedItem(repo, uri)),
+		);
+		// base/local/remote agree once the local-side insertion is kept, so
+		// Weld's candidate is exactly this text — the document already shows
+		// it, so runAutoMerge takes the "autoResolutionsAlreadyApplied" path
+		// and must still flush a dirty document before staging.
+		mockFetchConflictStages.mockResolvedValue({
+			base: "A\nB\nC\nD\n",
+			local: "A\nB\nC\nREMOTE\nD\n",
+			remote: "A\nB\nC\nD\n",
+		});
+		const resolvedText = "A\nB\nC\nREMOTE\nD\n";
+		const document = documentFor(
+			Uri.file("/work/repo/a.txt"),
+			resolvedText,
+			false,
+			true,
+		);
+		mockVscodeSetActiveTextEditor({ document });
+		mockVscodeSetApplyEdit(() => Promise.resolve(true));
+
+		await registered("meld-auto-merge.autoMerge")();
+
+		expect(document.save).toHaveBeenCalled();
+		expect(repo.addMock).toHaveBeenCalledWith(["/work/repo/a.txt"]);
 	});
 });
 
@@ -698,10 +884,10 @@ describe("extension auto-merge staging", () => {
 			"<<<<<<< HEAD\none changed\n=======\none\n>>>>>>> other\ntwo\n" +
 			"<<<<<<< HEAD\nthree\n=======\nthree changed\n>>>>>>> other\n";
 		mockBuildInitialConflictedState.mockResolvedValue(conflictText);
-		mockVscodeSetOpenTextDocument(() =>
-			Promise.resolve(documentFor(target.uri, conflictText)),
+		mockVscodeSetFsReadFile(() =>
+			Promise.resolve(new TextEncoder().encode(conflictText)),
 		);
-		mockVscodeSetApplyEdit(() => Promise.resolve(true));
+		mockVscodeSetFsWriteFile(() => Promise.resolve());
 
 		await registered("meld-auto-merge.autoMerge")(target);
 
@@ -720,20 +906,20 @@ describe("extension auto-merge staging", () => {
 			"conflictedSubmodule",
 			makeConflictedItem(repo, Uri.file("/work/repo/sub")),
 		);
-		// Real marker text so performAutoMerge's live-content safety check
-		// passes and the failure under test — applyEdit rejecting — is what
-		// actually triggers, not an unrelated WouldClobberEditError.
+		// Real marker text so performAutoMergeOnDisk's live-content safety
+		// check passes and the failure under test — writeFile rejecting — is
+		// what actually triggers, not an unrelated WouldClobberEditError.
 		const conflictText =
 			"<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> other\n";
 		mockBuildInitialConflictedState.mockResolvedValue(conflictText);
-		mockVscodeSetOpenTextDocument(() =>
-			Promise.resolve(documentFor(textTarget.uri, conflictText)),
+		mockVscodeSetFsReadFile(() =>
+			Promise.resolve(new TextEncoder().encode(conflictText)),
 		);
-		mockVscodeSetApplyEdit(() => Promise.resolve(false));
+		mockVscodeSetFsWriteFile(() => Promise.reject(new Error("disk full")));
 
 		await expect(
 			registered("meld-auto-merge.autoMerge")(textTarget),
-		).rejects.toThrow("Failed to apply merged text");
+		).rejects.toThrow("disk full");
 		await registered("meld-auto-merge.autoMerge")(submoduleTarget);
 
 		expect(window.showErrorMessage).toHaveBeenCalledWith(
@@ -756,15 +942,15 @@ describe("extension auto-merge-all command", () => {
 		const firstRepo = makeRepo("/work/one", ["a.txt"]);
 		const secondRepo = makeRepo("/work/two", ["b.txt"]);
 		installGitApi(makeGitApi([firstRepo, secondRepo]));
-		// Real marker text so performAutoMerge's live-content safety check
-		// passes for both files.
+		// Real marker text so performAutoMergeOnDisk's live-content safety
+		// check passes for both files.
 		const conflictText =
 			"<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> other\n";
 		mockBuildInitialConflictedState.mockResolvedValue(conflictText);
-		mockVscodeSetOpenTextDocument((uri) =>
-			Promise.resolve(documentFor(uri, conflictText)),
+		mockVscodeSetFsReadFile(() =>
+			Promise.resolve(new TextEncoder().encode(conflictText)),
 		);
-		mockVscodeSetApplyEdit(() => Promise.resolve(true));
+		mockVscodeSetFsWriteFile(() => Promise.resolve());
 		await registered("meld-auto-merge.autoMergeAll")();
 		expect(mockVscodeProgressReports()).toEqual([
 			{ message: "Merging file:///work/one/a.txt..." },
@@ -790,13 +976,13 @@ describe("extension auto-merge-all command", () => {
 		const conflictText =
 			"<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> other\n";
 		mockBuildInitialConflictedState.mockResolvedValue(conflictText);
-		mockVscodeSetOpenTextDocument((uri) =>
-			Promise.resolve(documentFor(uri, conflictText)),
+		mockVscodeSetFsReadFile(() =>
+			Promise.resolve(new TextEncoder().encode(conflictText)),
 		);
-		mockVscodeSetApplyEdit((edit) =>
-			Promise.resolve(
-				edit.replacements[0]?.uri.fsPath.endsWith("a.txt") === true,
-			),
+		mockVscodeSetFsWriteFile((uri) =>
+			uri.fsPath.endsWith("a.txt")
+				? Promise.resolve()
+				: Promise.reject(new Error("disk full")),
 		);
 		await expect(
 			registered("meld-auto-merge.autoMergeAll")(),
@@ -817,10 +1003,12 @@ describe("extension agent tool registration", () => {
 		const conflictText =
 			"<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> other\n";
 		mockBuildInitialConflictedState.mockResolvedValue(conflictText);
-		mockVscodeSetOpenTextDocument((uri) =>
-			Promise.resolve(documentFor(uri, conflictText)),
+		// performAutoMergeOnDisk reads and writes the file directly rather
+		// than through a TextDocument — see webview/autoMerge.ts.
+		mockVscodeSetFsReadFile(() =>
+			Promise.resolve(new TextEncoder().encode(conflictText)),
 		);
-		mockVscodeSetApplyEdit(() => Promise.resolve(true));
+		mockVscodeSetFsWriteFile(() => Promise.resolve());
 
 		expect(mockRegisterAgentTools).toHaveBeenCalledTimes(1);
 		const applyAutomergeAll = mockRegisterAgentTools.mock.calls[0]?.[1];
@@ -852,12 +1040,12 @@ describe("extension agent tool registration", () => {
 		const conflictText =
 			"<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> other\n";
 		mockBuildInitialConflictedState.mockResolvedValue(conflictText);
-		const document = documentFor(
-			Uri.file("/work/repo/a.txt"),
-			conflictText,
+		// performAutoMergeOnDisk reads and writes the file directly rather
+		// than through a TextDocument — see webview/autoMerge.ts.
+		mockVscodeSetFsReadFile(() =>
+			Promise.resolve(new TextEncoder().encode(conflictText)),
 		);
-		mockVscodeSetOpenTextDocument(() => Promise.resolve(document));
-		mockVscodeSetApplyEdit(() => Promise.resolve(true));
+		mockVscodeSetFsWriteFile(() => Promise.resolve());
 
 		expect(mockRegisterAgentTools).toHaveBeenCalledTimes(1);
 		const applyAutomergeSingle = mockRegisterAgentTools.mock.calls[0]?.[2];
