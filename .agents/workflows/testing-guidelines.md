@@ -53,7 +53,7 @@ Stop here and ask the user to check your progress.
 Review before and after implementing.
 
 10. Do your tests test real project code? I.e. you're not reimplementing anything.
-11. Do your tests verify output and results? I.e. they are not verifying implementation details.
+11. Do your tests verify meaningful output and results? I.e. they are not verifying implementation details and are not just touching code for "coverage".
 12. Do you have a broad sampling of input data to pipeclean all the code paths, both common and edge cases?
 
 ## Mistakes

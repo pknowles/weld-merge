@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import process from "node:process";
 
 const coverageThresholds = JSON.parse(
 	readFileSync(
@@ -6,6 +7,11 @@ const coverageThresholds = JSON.parse(
 		"utf8",
 	),
 );
+
+const focusedTestPathRegex = /^(test|src)\//;
+const hasFocusedTestPath = process.argv
+	.slice(2)
+	.some((arg) => !arg.startsWith("-") && focusedTestPathRegex.test(arg));
 
 export default {
 	preset: "ts-jest",
@@ -17,11 +23,19 @@ export default {
 	collectCoverageFrom: [
 		"src/**/*.{ts,tsx}",
 		"!src/**/*.d.ts",
-		"!src/extension.ts", // Extension entry point often hard to test without vscode-test
+		// extension.ts command behavior is covered by Jest through activate()
+		// and the mocked VS Code API; VS Code host tests cover integration.
 	],
-	coverageThreshold: {
-		global: coverageThresholds,
-	},
+	// Enforce ratcheted global thresholds for full Jest coverage runs. Focused
+	// coverage commands still report the target file's lines without failing
+	// because unrelated source files were not exercised by that narrow run.
+	...(hasFocusedTestPath
+		? {}
+		: {
+				coverageThreshold: {
+					global: coverageThresholds,
+				},
+			}),
 	testPathIgnorePatterns: [
 		"/node_modules/",
 		"/test/benchmarking/",
