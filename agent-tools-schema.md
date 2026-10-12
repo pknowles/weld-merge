@@ -200,6 +200,15 @@ existing vscode behaviour so users are not surprised. E.g. if an agent changes
 the on-disk file a user is editing in-memory and commits it, the same would
 happen for auto-merge completing and staging a file.
 
+**File race conditions are not our problem to solve**
+
+Only mentioning because an agent suggested a lock file for writing files, which
+is the wrong direction. Yes, there is a possible race between checking file's
+contents and performing an auto merge. Many tools are like this and the
+cost/over-engineering to fix it would be more flaky and more of a surprise to
+users than the simple expectation that users/agents don't work concurrently on
+files.
+
 ## Compactness
 
 Compactness is a correctness requirement. The response must be cheaper than

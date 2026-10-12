@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { commands, Uri } from "vscode";
 import type {
@@ -12,7 +11,12 @@ import {
 	createConflictedItemFromUri,
 	getGitApi,
 } from "../../../src/repoContext.ts";
-import { assertSafeGitCwd, runGit } from "../../runGit.ts";
+import {
+	assertSafeGitCwd,
+	getTestTempRoot,
+	mkdtempUnderTestRoot,
+	runGit,
+} from "../../runGit.ts";
 
 const LS_FILES_STAGE_REGEX = /^\S+ \S+ (\d+)\t/;
 
@@ -44,7 +48,7 @@ function assertUnmergedPaths(repoPath: string, expectedPaths: string[]): void {
 }
 
 async function makeRepoFixture(prefix: string): Promise<TempRepoFixture> {
-	const repoPath = await mkdtemp(join(tmpdir(), prefix));
+	const repoPath = await mkdtempUnderTestRoot(prefix);
 	runGit(["init"], repoPath);
 	runGit(["config", "user.name", "Weld Test"], repoPath);
 	runGit(["config", "user.email", "weld-test@example.com"], repoPath);
@@ -60,7 +64,7 @@ async function makeRepo(prefix: string): Promise<string> {
 }
 
 function assertSafeTempFixtureCleanupPath(cleanupPath: string): void {
-	if (dirname(cleanupPath) !== tmpdir()) {
+	if (dirname(cleanupPath) !== getTestTempRoot()) {
 		throw new Error(
 			`Refusing to remove test fixture outside temp root: ${cleanupPath}`,
 		);
@@ -85,7 +89,7 @@ async function makeSubmoduleConflictFixture(
 }
 
 async function makeSubmoduleConflictRepo(prefix: string): Promise<string> {
-	const rootPath = await mkdtemp(join(tmpdir(), prefix));
+	const rootPath = await mkdtempUnderTestRoot(prefix);
 	const subSourcePath = join(rootPath, "subsrc");
 	const repoPath = join(rootPath, "parent");
 	await mkdir(subSourcePath);
@@ -143,7 +147,7 @@ async function makeSubmoduleConflictRepo(prefix: string): Promise<string> {
 async function makeSubmoduleAndTextConflictRepo(
 	prefix: string,
 ): Promise<string> {
-	const rootPath = await mkdtemp(join(tmpdir(), prefix));
+	const rootPath = await mkdtempUnderTestRoot(prefix);
 	const subSourcePath = join(rootPath, "subsrc");
 	const repoPath = join(rootPath, "parent");
 	await mkdir(subSourcePath);

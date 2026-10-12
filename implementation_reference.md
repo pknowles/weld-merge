@@ -93,7 +93,15 @@ Located in `src/webview/ui/`.
 - For VS Code integration tests, use ./test/vscode/*
 - For browser webview integration tests, use ./test/webview-integration/*
 - For browser benchmarks, use Playwright with ./test/benchmarking/
-- xvfb may be used if real windows MUST be displayed
+- xvfb may be used if real windows MUST be displayed. On a Wayland host,
+  `--ozone-platform=x11` alone is not reliable enough to stop Electron/Chromium
+  from still finding and preferring the host's real Wayland compositor over
+  the Xvfb display — `test/vscode/runTest.ts` also passes `extensionTestsEnv`
+  to clear `WAYLAND_DISPLAY`/force `XDG_SESSION_TYPE=x11` for the spawned VS
+  Code process specifically, since `runTests()` otherwise hands it a full copy
+  of the driver process's own (real) environment. Confirmed by directly
+  observing a stray test window on the desktop with only the CLI flag set;
+  both layers together fixed it.
 - `test/vscode/launchTelemetrySuite/launch_telemetry.test.ts` runs in its own
   VS Code extension host with two conflicted repositories already in the
   workspace, enables the hidden `weld.launchTelemetry` setting, then reads
@@ -144,14 +152,32 @@ Test coverage with jest, mutations with stryker, fuzz testing with jazzer should
   `test-output/` directory when the owning tool allows it. Jest coverage,
   Stryker temp/report files, Playwright artifacts, and benchmark metrics are
   configured there; VS Code download caches and fuzz corpora/crash artifacts
-  remain tool-owned exceptions.
+  remain tool-owned exceptions. **Ephemeral test fixtures are the deliberate
+  exception to this**: see `test/runGit.ts` below — they must NOT go under
+  `test-output/` or anywhere else inside the project checkout.
 - `scripts/run_stryker_guarded.ts` is the `npm run test:mutate` entrypoint. It
   runs Stryker in the active checkout, refuses to start with unmerged index
   entries, and fails after mutation testing if tracked Git status changed.
-- `test/runGit.ts` gates test Git commands to paths under `tmpdir()`. VS Code
-  integration helpers and the Remote-SSH runner use this guard so conflict
-  fixtures cannot accidentally run mutating Git commands in the project
-  checkout.
+- `test/runGit.ts` is the single shared root for every ephemeral test
+  fixture directory across the whole project — Jest (`submoduleConflict.test.ts`,
+  `windowsLineEndings.test.ts`), the VS Code host suite (`helpers.ts`,
+  `tree_view.test.ts`), the Remote-SSH runner, and `scripts/test_restored_tabs.ts`
+  all create their temp repos via its `mkdtempUnderTestRoot`/`mkdtempUnderTestRootSync`
+  rather than calling `tmpdir()` directly. The root itself is a fixed path
+  (`tmpdir()/weld-test`) computed identically and independently by every
+  process — including a driver process (`test/vscode/runTest.ts`) and the VS
+  Code extension host it spawns as a child — with no IPC needed, since the
+  path never changes. `assertSafeGitCwd` (also here) and `helpers.ts`'s
+  `assertSafeTempFixtureCleanupPath` both gate against this same root so
+  fixtures cannot accidentally run mutating Git commands or get deleted
+  outside it. This root is deliberately NOT under `test-output/` despite that
+  being the project's general convention for tool output (see above): a path
+  gitignored by this repo is skipped by VS Code's file watcher by default,
+  and several VS Code-host tests depend on the Git extension or VS Code
+  itself noticing filesystem changes inside these fixtures (e.g. a deleted
+  `.git` directory). An earlier attempt at `<repo>/test-output/tmp/` broke
+  exactly one such test deterministically; see the comment in `runGit.ts` for
+  the full account before ever moving this back under the project directory.
 
 ## Benchmarking Telemetry
 

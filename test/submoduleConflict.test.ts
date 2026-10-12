@@ -1,5 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	type CancellationToken,
@@ -38,7 +37,7 @@ import {
 } from "../src/submoduleConflict.ts";
 import type { ConflictedFilesProvider } from "../src/treeView.ts";
 import { SubmoduleConflictEditorProvider } from "../src/webview/submoduleConflictEditor.ts";
-import { runGit } from "./runGit.ts";
+import { mkdtempUnderTestRootSync, runGit } from "./runGit.ts";
 
 interface SubmoduleRepoFixture {
 	parentPath: string;
@@ -220,7 +219,7 @@ function installGitApi(repository: GitApiRepository): () => void {
 function makeSubmoduleConflictRepo(
 	options: { preBaseCommit: boolean } = { preBaseCommit: false },
 ): SubmoduleRepoFixture {
-	const root = mkdtempSync(join(tmpdir(), "weld-submodule-conflict-"));
+	const root = mkdtempUnderTestRootSync("weld-submodule-conflict-");
 	const subSource = join(root, "subsrc");
 	const parentPath = join(root, "parent");
 	runGit(["init", "-q", "-b", "main", subSource], root);
@@ -290,7 +289,7 @@ function makeSubmoduleConflictRepo(
 }
 
 function makeTextConflictRepo(): TextConflictRepoFixture {
-	const parentPath = mkdtempSync(join(tmpdir(), "weld-text-conflict-"));
+	const parentPath = mkdtempUnderTestRootSync("weld-text-conflict-");
 	runGit(["init", "-q", "-b", "main"], parentPath);
 	runGit(["config", "user.name", "Weld Test"], parentPath);
 	runGit(["config", "user.email", "weld-test@example.com"], parentPath);
@@ -317,7 +316,7 @@ function makeTextConflictRepo(): TextConflictRepoFixture {
 }
 
 function makeRemovedSubmoduleDuringTextConflictRepo(): RemovedSubmoduleRepoFixture {
-	const root = mkdtempSync(join(tmpdir(), "weld-removed-submodule-"));
+	const root = mkdtempUnderTestRootSync("weld-removed-submodule-");
 	const subSource = join(root, "subsrc");
 	const parentPath = join(root, "parent");
 	runGit(["init", "-q", "-b", "main", subSource], root);
@@ -699,7 +698,7 @@ beforeAll(() => {
 
 describe("repoContext repository acquisition", () => {
 	it("resolves immediately when the repository first-status registry is populated", async () => {
-		const root = mkdtempSync(join(tmpdir(), "weld-ready-repo-"));
+		const root = mkdtempUnderTestRootSync("weld-ready-repo-");
 		const fileUri = Uri.file(join(root, "tracked.txt"));
 		const repository = makeRepository(root, fileUri);
 		const restoreGitApi = installGitApi(repository);
@@ -717,7 +716,7 @@ describe("repoContext repository acquisition", () => {
 	});
 
 	it("resolves document conflicts through Git API root acquisition without exposing null", async () => {
-		const root = mkdtempSync(join(tmpdir(), "weld-conflicted-item-"));
+		const root = mkdtempUnderTestRootSync("weld-conflicted-item-");
 		const fileUri = Uri.file(join(root, "tracked.txt"));
 		const repository = makeRepository(root, fileUri);
 		const restoreGitApi = installGitApi(repository);
@@ -782,7 +781,7 @@ describe("repoContext Git API initialization", () => {
 	});
 
 	it("waits for the Git API initialized event before opening repositories", async () => {
-		const root = mkdtempSync(join(tmpdir(), "weld-api-init-"));
+		const root = mkdtempUnderTestRootSync("weld-api-init-");
 		const fileUri = Uri.file(join(root, "tracked.txt"));
 		const repository = makeRepository(root, fileUri);
 		const mutableExtensions = extensions as unknown as MutableExtensions;
@@ -849,7 +848,7 @@ describe("repoContext Git API initialization", () => {
 
 describe("repoContext panel disposal", () => {
 	it("rejects pending repository acquisition when the repository closes", async () => {
-		const root = mkdtempSync(join(tmpdir(), "weld-closed-repo-"));
+		const root = mkdtempUnderTestRootSync("weld-closed-repo-");
 		const repository = makeRepository(
 			root,
 			Uri.file(join(root, "tracked.txt")),
@@ -910,7 +909,7 @@ describe("repoContext panel disposal", () => {
 	});
 
 	it("rejects with EditorDisposedError when the panel closes during acquisition", async () => {
-		const root = mkdtempSync(join(tmpdir(), "weld-disposed-repo-"));
+		const root = mkdtempUnderTestRootSync("weld-disposed-repo-");
 		const repository = makeRepository(
 			root,
 			Uri.file(join(root, "tracked.txt")),
@@ -966,7 +965,7 @@ describe("repoContext panel disposal", () => {
 
 describe("repoContext repository acquisition errors", () => {
 	it("throws a typed repository-unavailable error when Git cannot open the resolved root", async () => {
-		const root = mkdtempSync(join(tmpdir(), "weld-unavailable-repo-"));
+		const root = mkdtempUnderTestRootSync("weld-unavailable-repo-");
 		const mutableExtensions = extensions as unknown as MutableExtensions;
 		const originalGetExtension = mutableExtensions.getExtension;
 		const gitApi = {

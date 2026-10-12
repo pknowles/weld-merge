@@ -9,7 +9,7 @@ description: Resolve conflicts from a git merge/rebase/cherry-pick using Weld Me
 2. If conflicts remain, `weld_list_conflicts` can quickly show what's left. These need resolving by editing files like any other. Small results include diffs directly. If the resolution of the intent of both sides is clear it can be written directly. Due to the diff algorithm, some blocks may still be listed as conflicted after you have resolved them. The result reports remaining conflict markers.
 3. Larger conflicts require a separate `weld_get_conflict` call. Passing `includeBaseDiffs: true` is recommended to see diffs of both branches and understand their separate intent that needs combining.
 4. Verify there are no more conflict markers (`weld_stage_resolved` does both this and stages changes) and the intent of both branches is maintained so that features from both branches still work - see General Conflict Resolution.
-5. Continue with the user's instructions.
+5. Lint/format/test etc. appropriately and continue with the user's instructions.
 
 # General Conflict Resolution
 
@@ -18,3 +18,5 @@ Ask "what result preserves the intended changes from both histories?" The intend
 Prefer resolving the source inputs and regenerating checked-in generated files rather than manually merging generated files.
 
 If conflicts are severe, it may be an indication of an earlier mistake and worth a sanity check before blindly resolving conflicts. E.g. histories with duplicates or cherry-picking in the wrong order.
+
+For all but the simplest conflicts, appropriately test any code or review docs that were modified to verify the resolution does in fact faithfully perform the intent of both branches.

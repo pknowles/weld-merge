@@ -2,17 +2,16 @@ import { execFileSync } from "node:child_process";
 import {
 	chmodSync,
 	mkdirSync,
-	mkdtempSync,
 	readFileSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
-import path, { isAbsolute, relative, resolve } from "node:path";
+import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { runTests, runVSCodeCommand } from "@vscode/test-electron";
 import Xvfb from "xvfb";
+import { assertSafeGitCwd, mkdtempUnderTestRootSync } from "../runGit.ts";
 
 const SSH_IMAGE = "weld-remote-ssh-test:local";
 const SSH_USER = "weld";
@@ -72,25 +71,8 @@ function runGit(args: string[], cwd: string): string {
 	return run("git", args, { cwd });
 }
 
-function assertSafeGitCwd(cwd: string): void {
-	const absoluteCwd = resolve(cwd);
-	const absoluteTempRoot = resolve(tmpdir());
-	const tempRelativePath = relative(absoluteTempRoot, absoluteCwd);
-	if (
-		tempRelativePath.length > 0 &&
-		!tempRelativePath.startsWith("..") &&
-		!isAbsolute(tempRelativePath)
-	) {
-		return;
-	}
-
-	throw new Error(
-		`Refusing to run test Git command outside temp dir: ${cwd}`,
-	);
-}
-
 function createConflictedRepo(): string {
-	const repoPath = mkdtempSync(path.join(tmpdir(), "weld-remote-repo-"));
+	const repoPath = mkdtempUnderTestRootSync("weld-remote-repo-");
 	chmodSync(repoPath, 0o755);
 	runGit(["init"], repoPath);
 	runGit(["config", "user.name", "Weld Remote Test"], repoPath);
@@ -340,7 +322,7 @@ async function main(): Promise<void> {
 	const currentDir = path.dirname(currentFile);
 	const extensionDevelopmentPath = path.resolve(currentDir, "../..");
 	const extensionTestsPath = path.resolve(currentDir, "suite/index.cjs");
-	const tempRoot = mkdtempSync(path.join(tmpdir(), "weld-remote-ssh-"));
+	const tempRoot = mkdtempUnderTestRootSync("weld-remote-ssh-");
 	const userDataDir = path.join(tempRoot, "user-data");
 	const repoPath = createConflictedRepo();
 	let container: StartedContainer | null = null;

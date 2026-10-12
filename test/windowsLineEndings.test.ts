@@ -1,7 +1,6 @@
 // Copyright (C) 2026 Pyarelal Knowles
 
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "@jest/globals";
 import { Uri } from "vscode";
@@ -12,7 +11,7 @@ import { Merger } from "../src/matchers/merge.ts";
 import type { GitApiRepository } from "../src/repoContext.ts";
 import { extractConflictLabels } from "../src/webview/conflictLabels.ts";
 import { buildInitialConflictedState } from "../src/webview/diffPayload.ts";
-import { runGit } from "./runGit.ts";
+import { mkdtempUnderTestRoot, runGit } from "./runGit.ts";
 
 // These tests force Git's CRLF checkout-conversion path in a temp repo rather
 // than relying on running on Windows: setting core.autocrlf=true makes Git
@@ -36,7 +35,7 @@ const CARRIAGE_RETURN_REGEX = /\r/g;
 // a "\r" from (see merge.ts::_handleConflictInMerger's empty-region branch
 // and gitTextMerger.ts's literal marker pushes).
 async function makeCrlfConflictRepo(autocrlf: boolean): Promise<string> {
-	const repoPath = await mkdtemp(join(tmpdir(), "weld-crlf-"));
+	const repoPath = await mkdtempUnderTestRoot("weld-crlf-");
 	runGit(["init", "-b", "main"], repoPath);
 	runGit(["config", "user.name", "Weld Test"], repoPath);
 	runGit(["config", "user.email", "weld-test@example.com"], repoPath);
@@ -195,9 +194,8 @@ describe("Windows line-ending conversion: stage fetch", () => {
 			// before it can take effect; delete and re-checkout to force Git to
 			// re-smudge with the now-active conversion (`checkout -f` and
 			// `checkout -- path` are no-ops while Git sees no diff to resolve).
-			const scratchPath = await mkdtemp(
-				join(tmpdir(), "weld-crlf-scratch-"),
-			);
+			const scratchPath =
+				await mkdtempUnderTestRoot("weld-crlf-scratch-");
 			try {
 				runGit(["clone", repoPath, scratchPath], scratchPath);
 				runGit(["config", "core.autocrlf", "true"], scratchPath);
