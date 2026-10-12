@@ -103,6 +103,11 @@ Granular performance telemetry is **opt-in only** and has zero production impact
 
 - `src/treeView.ts`
   - `GitFile.conflictedItem` keeps the VS Code Git API repository context attached to conflict-tree command arguments, so commands do not rediscover the repository from the URI.
+  - `parseMergeMsgConflicts()` parses the conflict block from `.git/MERGE_MSG`
+    for resolved-file recovery. It accepts Git's commented `#\tpath` entries
+    and un-commented `\tpath` entries, ignores malformed indentation, stops at
+    the first non-comment non-empty line after the conflict block begins, and
+    deduplicates paths while preserving first-seen order.
 
 - `src/gitUtils.ts`
   - `execGit()` runs Git commands and returns stdout.

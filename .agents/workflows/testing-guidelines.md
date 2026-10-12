@@ -10,6 +10,9 @@ description:
 - Do not test that the code does what the code does. This is far worse than useless. See the writing tests section below.
 - **Never Duplicate Production Code in Tests.** Use utility functions or refactor dependencies instead of copy/pasting.
 - Don't copy or reimplement project code in tests - then you're testing tests which is worse than pointless.
+- **Exact values are only valid when they come from the spec, not from the implementation.** Ask: "If I replaced this with a valid alternative implementation, would this test still pass?" If no, the test is brittle. Two categories to keep separate:
+  - *Spec-defined values* (safe to assert exactly): coordinate mappings with a documented contract, error messages required by protocol, output format invariants (e.g. "line 40px into a 20px-per-line grid must return line 2.0").
+  - *Algorithm-output values* (derive from content, not coordinates): if the expected value was obtained by running the current code or reading the formula, verify semantic correctness (correct content, correct relationships) rather than intermediate numeric outputs.
 - Fix broken tests/lint warnings immediately, even if unrelated to your current step. Stop and debug. Do NOT skip tests without proof of external fault and explicit user permission.
 - **The project comes first.** Make the project as good as it can; don't sacrifice anything to make your life easier testing it. We fill figure out a way to test whatever the project does.
 - **Take Ownership of Failures:** Claiming its "pre-existing" doesn't help because at the end of the day the test is still failing. Check with the user that another agent isn't working concurrently and then fix it.

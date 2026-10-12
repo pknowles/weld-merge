@@ -153,12 +153,12 @@ Target files:
 
 ### Work Checklist
 
-- [ ] Add or strengthen `diffPayload` tests for normal both-modified conflicts.
-- [ ] Add `diffPayload` tests for both-added conflicts where base is absent.
+- [x] Add or strengthen `diffPayload` tests for normal both-modified conflicts.
+- [x] Add `diffPayload` tests for both-added conflicts where base is absent.
 - [ ] Add `diffPayload` tests for diff3 labels and normal conflict labels.
 - [ ] Assert auto-merge replacement only happens when `git merge-file -p`
       output exactly matches the working file.
-- [ ] Assert payload file order, labels, line arrays, diff arrays, and commit
+- [x] Assert payload file order, labels, line arrays, diff arrays, and commit
       metadata exactly.
 - [ ] Add `meldWebviewPanel` message protocol tests for `ready`.
 - [ ] Add message protocol tests for webview edits, save, base diff,
@@ -166,16 +166,16 @@ Target files:
 - [ ] Assert exact outbound `postMessage` command names and payload shapes.
 - [ ] Add tests where the ready callback throws and verify the webview receives
       the structured error title and message.
-- [ ] Add `treeView` parser tests for valid `MERGE_MSG` conflict blocks.
-- [ ] Add `treeView` parser tests for malformed indentation, missing headers,
+- [x] Add `treeView` parser tests for valid `MERGE_MSG` conflict blocks.
+- [x] Add `treeView` parser tests for malformed indentation, missing headers,
       duplicate paths, and non-comment termination lines.
 - [ ] Add tree item tests for Git API mismatch: repository is mid-conflict but
       merge changes are empty.
 - [ ] Add tree item tests where reading `MERGE_MSG` throws and verify an
       `ErrorTreeItem`, not an empty list.
-- [ ] Add `gitUtils` tests for normal `.git` directories and gitdir pointer
+- [x] Add `gitUtils` tests for normal `.git` directories and gitdir pointer
       files with relative paths.
-- [ ] Add `gitUtils` tests for conflict state detection across merge, rebase,
+- [x] Add `gitUtils` tests for conflict state detection across merge, rebase,
       cherry-pick, and no-operation states.
 - [ ] Add `repoContext` tests for unsupported schemes, unavailable Git API,
       repository close during acquisition, and panel disposal during
@@ -215,41 +215,41 @@ Target files:
 
 For each applicable algorithm, add curated examples covering:
 
-- [ ] Identical files.
-- [ ] Insert at start, middle, and end.
-- [ ] Delete at start, middle, and end.
-- [ ] Replace with the same line count.
-- [ ] Replace with fewer lines.
-- [ ] Replace with more lines.
-- [ ] Delete every line.
-- [ ] Empty base with non-empty sides.
-- [ ] Repeated equal lines around changes.
+- [x] Identical files.
+- [x] Insert at start, middle, and end.
+- [x] Delete at start, middle, and end.
+- [x] Replace with the same line count.
+- [x] Replace with fewer lines.
+- [x] Replace with more lines.
+- [x] Delete every line.
+- [x] Empty base with non-empty sides.
+- [x] Repeated equal lines around changes.
 - [ ] Leading blank lines.
 - [ ] Trailing blank lines.
 - [ ] Contiguous blank blocks inside a change.
 - [ ] Conflict marker text as ordinary file content.
-- [ ] Local-only change.
-- [ ] Remote-only change.
-- [ ] Same local and remote change.
-- [ ] Overlapping incompatible local and remote changes.
+- [x] Local-only change.
+- [x] Remote-only change.
+- [x] Same local and remote change.
+- [x] Overlapping incompatible local and remote changes.
 
 ### Work Checklist
 
 - [ ] Add helper assertions that apply opcodes to source content and compare
       the reconstructed target.
-- [ ] Add exact opcode assertions for small stable examples.
-- [ ] Add merge result assertions for all same-change and conflict examples.
-- [ ] Add `consumeBlankLines` or public-behavior tests that kill blank-line
+- [x] Add exact opcode assertions for small stable examples.
+- [x] Add merge result assertions for all same-change and conflict examples.
+- [x] Add `consumeBlankLines` or public-behavior tests that kill blank-line
       boundary mutants without copying production trimming logic.
-- [ ] Strengthen Myers tests for prefix/suffix boundaries and overlapping
+- [x] Strengthen Myers tests for prefix/suffix boundaries and overlapping
       repeated sequences.
 - [ ] Strengthen sync-point matcher tests where sync points are at start, end,
       adjacent positions, and inside repeated blocks.
 - [ ] Upgrade fuzz tests so they assert reconstruction, monotonicity, bounds,
       identity, and convergence invariants, not only "does not throw".
-- [ ] Add highlight tests for single-character insert, delete, and replace.
-- [ ] Add highlight tests for multi-line replacements and trailing newlines.
-- [ ] Assert exact `startLine`, `startColumn`, `endLine`, `endColumn`,
+- [x] Add highlight tests for single-character insert, delete, and replace.
+- [x] Add highlight tests for multi-line replacements and trailing newlines.
+- [x] Assert exact `startLine`, `startColumn`, `endLine`, `endColumn`,
       `isWholeLine`, and `tag` for highlight fixtures.
 
 ### Verification
@@ -291,7 +291,7 @@ Target files:
 - [ ] Add fixtures for gaps before, between, and after chunks.
 - [ ] Add fixtures for zero-width insert and delete chunks.
 - [ ] Add fixtures for reversed diffs and multi-hop five-pane mappings.
-- [ ] Assert exact mapped values at chunk starts, midpoints, ends, and just
+- [x] Assert exact mapped values at chunk starts, midpoints, ends, and just
       outside boundaries.
 - [ ] Add fake Monaco editor tests with constant line heights.
 - [ ] Add fake Monaco editor tests with variable line heights.
@@ -304,7 +304,7 @@ Target files:
 - [ ] Assert exact clipboard text for empty selection and non-empty selection.
 - [ ] Assert exact `executeEdits` ranges and final model content after cut and
       paste.
-- [ ] Add app hook navigation tests for previous/next conflict boundaries,
+- [x] Add app hook navigation tests for previous/next conflict boundaries,
       missing conflicts, and wrap/no-wrap behavior if supported.
 
 ### Verification
@@ -341,9 +341,9 @@ Target files:
       compare updates, and conflict-lost updates.
 - [ ] Assert the final visible/editor state after each host message.
 - [ ] Assert exact outbound host messages for toolbar/config actions.
-- [ ] Add tests that compare final merged content after applying
+- [x] Add tests that compare final merged content after applying
       `mergedPaneEdits` changes.
-- [ ] Add tests for full replacement range generation on empty, one-line, and
+- [x] Add tests for full replacement range generation on empty, one-line, and
       multi-line documents.
 - [ ] Strengthen `editorActions` tests to assert both `executeEdits` ranges and
       final editor content.
@@ -416,25 +416,119 @@ Target files:
 Done when submodule tests kill failure-path, graph-coordinate, and
 message-routing mutants.
 
+## The Two-Environment Problem (Important Context)
+
+The project has two completely separate test environments with no shared coverage
+metrics today:
+
+**Jest** (webview, matchers, pure functions):
+- Mutation score from Stryker measures quality here.
+- Covers: diffutil, myers, merge, highlightUtil, scrollMapping, appHooks,
+  mergedPaneEdits, editorActions, diffPayload, useClipboardOverrides, etc.
+- Does NOT run VS Code-coupled code at all.
+
+**VS Code integration** (`npm run test:vscode`, Mocha inside extension host):
+- ~4000 lines of tests in `test/vscode/suite/` exercising real Git repos,
+  real document edits, real extension activation.
+- Covers: resolveCustomTextEditor, conflict detection, delete/modify handling,
+  pane contents, submodule conflicts, tree view, git utilities.
+- Coverage is completely invisible — we do not know what `meldWebviewPanel.ts`,
+  `repoContext.ts`, etc. actually exercise.
+
+**Consequence:** Stryker mutation scores only measure half the codebase. The
+93-NoCoverage mutants in `repoContext.ts` and 293 in `meldWebviewPanel.ts` are
+not NoCoverage because nobody tests them — the VS Code tests do — but because
+Stryker never sees the extension host process.
+
+### How To Get Verifiable VS Code Coverage Metrics
+
+The extension is bundled by esbuild to `out/extension.js` with `--sourcemap`.
+V8 native coverage works against this without instrumentation:
+
+```sh
+# Build with source maps (already the default)
+npm run build:extension
+
+# Run VS Code tests with V8 coverage collection
+NODE_V8_COVERAGE=test-output/coverage/vscode \
+npm run test:vscode
+
+# Merge V8 output to LCOV using c8
+npx c8 report \
+  --reporter=lcov \
+  --reporter=text \
+  --include='out/extension.js' \
+  test-output/coverage/vscode
+```
+
+Known issues to solve first:
+- The extension host may exit before V8 flushes coverage. Add a short delay
+  (`await new Promise(r => setTimeout(r, 500))`) at the end of the Mocha suite
+  root hook, or hook into `process.on('beforeExit')` in `runTest.ts`.
+- esbuild bundles everything into one file; the LCOV report will be against
+  `out/extension.js` line numbers until `c8` resolves source maps. Make sure
+  `--all` is passed to c8 to include non-executed files.
+- c8 needs to know the original source root: `--src src/`.
+
+Once working, add a `test:vscode:coverage` script and run it in Phase 6.
+
+### Right Next Targets (by real bug risk, not mutation score)
+
+The VS Code integration tests already cover the high-risk paths in
+`resolveCustomTextEditor` and conflict detection well. The genuine gaps — paths
+that would cause silent data loss or confusing user-facing failures — are:
+
+1. **`completeMerge` in `meldWebviewPanel.ts`** — the path that calls
+   `getUnresolvedReasons`, blocks on markers, then `document.save()` and
+   `smartAdd`. A regression here means the user thinks they completed the merge
+   but the conflict file was not staged. Add to `merge_editor.test.ts`:
+   - Blocked case: file contains `<<<<<<<`, expect error message shown
+   - Happy path: clean file, save called, panel disposed
+
+2. **`contentChanged` queue ordering** — the serialized edit queue with echo
+   suppression (`classifyDocumentChange`) is already unit tested. The integration
+   of it with a real document is not: rapid sequential edits should produce
+   exactly the final content, with no dropped or duplicated edit. The comment
+   in `_setupPerEditorListeners` explicitly warns about the race condition.
+   Add to `merge_editor.test.ts`: send multiple `contentChanged` messages before
+   the previous `applyEdit` resolves, verify the final document text.
+
+3. **`App.tsx` `updateConfig` message** — sets `syntaxHighlighting` and
+   `baseCompareHighlighting`. The JS handler exists but no test sends this
+   message. Low risk but easy to add to `webview_react.test.tsx`.
+
+**Do not** chase mutation scores in `meldWebviewPanel.ts` with Jest unit tests —
+the VS Code coupling is fundamental, not accidental. The right metric for that
+file is VS Code coverage via c8, not Stryker.
+
 ## Phase 6: Quality Ratchets And Completion
 
+- [ ] Add `test:vscode:coverage` npm script using `NODE_V8_COVERAGE` + `c8`.
+- [ ] Solve the extension-host-exit-before-flush timing issue.
+- [ ] Run `test:vscode:coverage` and record baseline VS Code coverage per file.
+- [ ] Add `completeMerge` integration tests to `merge_editor.test.ts`.
+- [ ] Add `contentChanged` queue-ordering integration test.
 - [ ] Re-run full Jest: `npx jest --runInBand`.
 - [ ] Re-run full mutation: `npx stryker run`.
 - [ ] Compare mutation score against the Phase 0 baseline.
-- [ ] Add per-subsystem mutation notes for any file still below the threshold.
-- [ ] For each remaining survivor, document whether it is an equivalent mutant,
-      accepted low-value mutant, missing test, or production design smell.
+- [ ] For each remaining Stryker survivor, document whether it is an equivalent
+      mutant, accepted low-value mutant, missing test, or production design smell.
+      Do NOT write tests that only verify a lookup table or trivial getter.
 - [ ] Raise Stryker thresholds only after the suite is stable.
 - [ ] Run `npm run pre-checkin`.
-- [ ] Update `TODO.md` only for real follow-up work that cannot be completed in
-      this makeover.
 - [ ] Update `implementation_reference.md` with any new test files or important
       workflow changes.
 
-Done when the mutation score is above the agreed threshold, the remaining
-survivors are triaged, and `npm run pre-checkin` passes.
+Done when Stryker score is above threshold for Jest-reachable code, VS Code
+coverage is measured and recorded (not necessarily perfect), `completeMerge`
+and edit-queue paths are covered, and `npm run pre-checkin` passes.
 
 ## Definition Of Done For A Test Change
+
+Before writing a test, answer: **what user-visible or protocol-visible thing
+breaks if the code is wrong?** If the answer is "the log message has the wrong
+string" or "the enum lookup returns a different number," the test is not worth
+writing.
 
 - [ ] The test fails against at least one plausible wrong behavior.
 - [ ] The assertion checks a user-visible, protocol-visible, or domain-visible
@@ -443,7 +537,7 @@ survivors are triaged, and `npm run pre-checkin` passes.
       path.
 - [ ] The test does not copy non-trivial production logic.
 - [ ] The relevant targeted Jest command passes.
-- [ ] The relevant targeted Stryker run kills the intended mutants or the
-      survivors are explicitly triaged.
+- [ ] For Stryker: the run kills the intended mutants or survivors are explicitly
+      triaged as equivalent/accepted.
 - [ ] Documentation is updated if the test locks in architecture or workflow
       expectations.

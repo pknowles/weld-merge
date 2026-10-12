@@ -32,6 +32,14 @@ class Uri {
 		return new Uri(value.scheme, value.path, value.query ?? "");
 	}
 
+	with(change: { scheme?: string; path?: string; query?: string }): Uri {
+		return new Uri(
+			change.scheme ?? this.scheme,
+			change.path ?? this.path,
+			change.query ?? this.query,
+		);
+	}
+
 	static joinPath(base: Uri, ...segments: string[]): Uri {
 		const suffix = segments
 			.flatMap((segment) => segment.split("/"))
