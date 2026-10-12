@@ -2,6 +2,56 @@
 
 ## New Ideas and Features
 
+### Agent / LLM Integration
+
+Expose weld-merge to VS Code Agent Mode / Copilot through VS Code Language
+Model Tools (`contributes.languageModelTools`), gated behind `weld.agent.enable`
+(default off) since some users won't want AI/agent interaction. Already
+implemented for `weld_apply_automerge_all`, `weld_apply_automerge`,
+`weld_list_conflicts`, and `weld_get_conflict`.
+
+No MCP integration for now. Weld's useful agent operations depend on VS Code
+extension-host APIs such as the Git API, `workspace.applyEdit`, and editor UI.
+An MCP version would need either a separate headless implementation or a socket
+bridge back into the extension host, which adds remote-development and
+multi-instance complexity without helping the primary Copilot-in-VS-Code
+workflow.
+
+Design principle: Weld's tools are shortcuts for information/computation an
+agent could otherwise only get by running Weld's own deterministic algorithms
+(listing conflicts, reading conflict regions, running Weld's auto-merge). They
+must not become a channel for the model to write arbitrary or model-chosen
+content into files — that belongs to the editor's native file-editing tools,
+which already work fine once an agent has the conflict info Weld provides. Do
+not add a "resolve/apply this specific text" tool; if a tool would let the
+model author the replacement content (a full text override, or even a
+side-selection edit that a native edit could just as easily perform once
+`weld_get_conflict` has supplied exact line ranges and content), that's out of
+scope for weld-merge's LM tools.
+
+Remaining Language Model Tools:
+- `weld_open_3view` — open the 3-view diff editor for a file (read-only, no
+  state changes); requires design work to support opening without an active
+  conflict in git state (see annoyance note about re-opening the 3-view editor)
+
+#### `weld_get_conflict` / `weld_list_conflicts` (implemented)
+
+The shipped response shape is the diff3-style block design documented in
+`agent-tools-schema.md` (see its "Purpose and Intent" and `## weld_get_conflict`
+sections for the authoritative contract) — `ConflictBlock` with `range`/`note`/
+`text`/`autoMergeView`, opt-in `includeBaseDiffs`, and `weld_list_conflicts`'
+`strayMarkers`/commit-identifier fields. An earlier draft of this design
+(`current`/`unresolvedHunks`/`rawGitAccess`/`maxStageLines`/a separate
+"auto-merge suggestions" tier) was superseded before shipping and no longer
+exists in the code; do not resurrect that vocabulary.
+
+Scenario coverage (adversarial disk edits, marker-style variation, truncation,
+elision budgets, both-added/deleted/submodule kinds) lives in real-repo
+fixtures in `test/vscode/suite/agent-tools.test.ts` and
+`test/vscode/suite/helpers.ts` — see that file for what's covered.
+
+### Take-all Buttons
+
 Buttons to copy local or remote into merged would avoid having to copy/paste.
 
 ## Annoyances
@@ -286,6 +336,67 @@ Gemini's summary of jscpd (currently thresholded in `.jscpd.json`):
   - *Ratchet render-count baselines after the real fix*: `test/webview_render_count.test.tsx` pins today's App-level render counts via React's `Profiler` API. Observed today: mount + `loadDiff` = 5 commits; single user edit in merged = 1 commit. The per-edit number is already optimal — but it's only that low because the test runs a single edit inside one `act()` batch; multi-pane scroll sync, layout change cascades, and the `renderTrigger` global invalidator (every Monaco `onDidChangeContent` / `onDidLayoutChange` bumps App) will show up as soon as realistic scenarios are tested. Add scenarios (initial scroll, `fullSync`, compare-with-base toggle, typing with layout changes) as `renderTrigger` is removed, and lower the `EXPECTED_*` constants at the top of that file each time. Do not raise a baseline to accommodate a new regression.
 
 Rename _mergeCache. It's more of a "current merged change list" than a cache. Maybe mergedDiffChunks?
+
+## ~~Test helpers should await `repository.status()`~~ — done for `waitForRepoClose`; `waitForMergeChanges` genuinely needs its timeout
+
+Investigated while debugging a stale `expectedConflictCount` that caused a real 10s stall (see
+the `8544d4a9`/`8f18d5de` fixups on `pknowles/lm-tools`). Two separate waits in
+`test/vscode/suite/helpers.ts`, two different verdicts after reading VS Code's bundled git
+extension source (`extensions/git/dist/main.js`):
+
+- **`waitForRepoClose` in `withConflictRepo`'s `closeBeforeCleanup` path: fixed.** The
+  `git.close` command's `Model#close` disposes the repository synchronously — one function body,
+  no `await`, that fires `onDidCloseRepository` as its last step — so `await
+  commands.executeCommand("git.close", repo)` already guarantees the repository is unregistered
+  by the time it resolves. The separate `waitForRepoClose` race was redundant scaffolding for
+  this call site specifically; removed it there (kept for the other cleanup path, which deletes
+  the repo directory with a raw `rm()` that the extension only notices via its own filesystem
+  watcher — genuinely external latency).
+- **`waitForMergeChanges` after `openRepoInGitExtension`/`makeConflictFn`: not fixable the same
+  way, timeout is correct here.** `GitApiRepository.status()` does await its own
+  `updateModelState()` (which rebuilds `mergeChanges`) before returning, so *if* a test could
+  call `status()` itself after writing the conflicting files, that would be awaitable instead of
+  racing `onDidChange`. But the actual latency callers wait through is the extension's own
+  debounced filesystem-watcher-triggered refresh (see the "the debounce window, before
+  waitForMergeChanges resolves" comment in `merge_editor.test.ts`) — `openRepository()`'s
+  promise resolving does not itself guarantee that debounced scan has run. This is genuinely
+  the "unknown-latency external event" case a timeout is the right tool for, not a design smell;
+  correcting the earlier overbroad claim in this TODO's first draft.
+
+## ~~Marker-detection duplication: `getUnresolvedReasons` vs `scanMarkers`~~ — done
+
+Found while checking `weld_stage_resolved`'s factoring against the existing UI "Stage
+Resolved" path (`handleSmartAdd` in `extension.ts`): two independent implementations of "does
+this text contain leftover conflict-marker syntax" that could disagree on edge-case text
+(`getUnresolvedReasons` in `gitUtils.ts`, exact 7-char markers and line-start-only `(??)`, used
+by the UI's Stage Resolved button; `scanMarkers` in `agentConflicts.ts`, looser matching, used
+by `weld_list_conflicts`/`weld_stage_resolved`). Unified (2026-09-14): `scanStrayMarkers` in
+`gitUtils.ts` is now the single detector. `getUnresolvedReasons` is now a thin wrapper over it
+(maps ranges to reason strings); `agentConflicts.ts`'s `contextStopLine` keeps its own separate,
+deliberately more permissive regexes (any run of the marker character, even length 1), since
+being over-eager there only shortens rendered context, never produces a wrong `git add`. See
+`gitUtils.test.ts`'s `scanStrayMarkers` describe block, including the "agrees with
+getUnresolvedReasons" test that pins the exact invariant this was for.
+
+First draft of the unification hardcoded the exact default marker length (7 chars), copying
+`getUnresolvedReasons`'s existing rule — missed that git's `conflict-marker-size` gitattribute
+lets a repo configure other lengths, and the old `scanMarkers` (any run length) handled that
+correctly while `getUnresolvedReasons` was already broken for it, pre-existing. Caught via
+self-review before commit finished (`makeContextConflictWithMarkerStyle` in
+`test/vscode/suite/helpers.ts` already covers 4/9/10-char markers, though only through
+`weld_get_conflict`, not `weld_list_conflicts`'s `strayMarkers` — so the regression wasn't
+caught by the existing test run). Landed as a `{4,}` length floor rather than an exact
+length — see `GIT_MARKER_START_REGEX`'s comment in `gitUtils.ts` for the reasoning and the
+noted alternative below.
+
+**Open follow-up, not done:** the fully correct fix is reading each file's actual configured
+`conflict-marker-size` (via `git check-attr conflict-marker-size -- <path>`, since it's
+resolved through gitattributes pattern matching across `.gitattributes` /
+`.git/info/attributes` / the global attributes file — not a simple config lookup) rather than
+guessing a length floor. Not done: an extra subprocess call on every stray-marker scan, for a
+config nobody in this codebase's test suite or experience has seen set below the default. Worth
+doing if a real false negative from the `{4,}` floor ever surfaces (e.g. someone configures
+`conflict-marker-size` below 4, which is legal per git — "any positive integer").
 
 ## Testing Improvements
 

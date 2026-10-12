@@ -1,6 +1,10 @@
 import { describe, expect, it } from "@jest/globals";
 import { Uri } from "vscode";
-import { getUnresolvedReasons, parseGitDirPointer } from "../src/gitUtils.ts";
+import {
+	getUnresolvedReasons,
+	parseGitDirPointer,
+	scanStrayMarkers,
+} from "../src/gitUtils.ts";
 
 // ─── getUnresolvedReasons ─────────────────────────────────────────────────────
 
@@ -54,6 +58,81 @@ describe("getUnresolvedReasons", () => {
 	it("detects ||||||| (diff3 base marker) as a conflict marker", () => {
 		const text = "||||||| base\n";
 		expect(getUnresolvedReasons(text)).toContain("merge conflict markers");
+	});
+});
+
+// ─── scanStrayMarkers ─────────────────────────────────────────────────────────
+
+describe("scanStrayMarkers", () => {
+	it("returns nothing for clean content", () => {
+		expect(
+			scanStrayMarkers("normal file content\nno markers here"),
+		).toEqual([]);
+	});
+
+	it("reports a full marker block as one range, not three", () => {
+		const text =
+			"before\n<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> b\nafter";
+		const markers = scanStrayMarkers(text);
+		expect(markers).toEqual([{ range: [2, 7], kind: "gitMarker" }]);
+	});
+
+	it("reports a standalone marker line outside any block as its own range", () => {
+		const text = "before\n=======\nafter";
+		expect(scanStrayMarkers(text)).toEqual([
+			{ range: [2, 3], kind: "gitMarker" },
+		]);
+	});
+
+	it("reports an unclosed block through end of file", () => {
+		const text = "<<<<<<< HEAD\nlocal\n=======\nremote";
+		const markers = scanStrayMarkers(text);
+		expect(markers).toEqual([{ range: [1, 5], kind: "gitMarker" }]);
+	});
+
+	it("reports a Weld (??) sentinel as its own range, separate from git markers", () => {
+		const text = "<<<<<<< HEAD\n(??) also here\n=======\n>>>>>>> b";
+		const markers = scanStrayMarkers(text);
+		expect(markers).toContainEqual({ range: [2, 3], kind: "weldSentinel" });
+		expect(markers).toContainEqual({ range: [1, 5], kind: "gitMarker" });
+	});
+
+	it("does not detect markers that appear mid-line", () => {
+		const text = "prefix <<<<<<< not a marker\nprefix (??) also not";
+		expect(scanStrayMarkers(text)).toEqual([]);
+	});
+
+	// git's conflict-marker-size gitattribute lets a repo configure a marker
+	// length other than the default 7 (this codebase's own
+	// makeContextConflictWithMarkerStyle test fixture covers 4/9/10). Matching
+	// a floor rather than the exact default is what makes those non-default
+	// lengths detectable at all — see GIT_MARKER_START_REGEX's comment in
+	// gitUtils.ts for why 4 specifically, and the noted TODO.md follow-up for
+	// reading the real configured length instead of guessing a floor.
+	for (const markerLength of [4, 7, 9, 10]) {
+		it(`detects a configured ${markerLength}-character marker length`, () => {
+			const start = "<".repeat(markerLength);
+			const middle = "=".repeat(markerLength);
+			const end = ">".repeat(markerLength);
+			const text = `${start} HEAD\nlocal\n${middle}\nremote\n${end} branch`;
+			const markers = scanStrayMarkers(text);
+			expect(markers).toEqual([{ range: [1, 6], kind: "gitMarker" }]);
+		});
+	}
+
+	it("does not detect a marker shorter than the length floor (known limitation)", () => {
+		const text = "<<< HEAD\nlocal\n===\nremote\n>>> branch";
+		expect(scanStrayMarkers(text)).toEqual([]);
+	});
+
+	it("agrees with getUnresolvedReasons on whether text has stray markers", () => {
+		const clean = "clean text\nno markers";
+		const withMarkers =
+			"<<<<<<< HEAD\nlocal\n=======\nremote\n>>>>>>> b\n(??) also";
+		expect(scanStrayMarkers(clean)).toEqual([]);
+		expect(getUnresolvedReasons(clean)).toEqual([]);
+		expect(scanStrayMarkers(withMarkers).length).toBeGreaterThan(0);
+		expect(getUnresolvedReasons(withMarkers).length).toBeGreaterThan(0);
 	});
 });
 

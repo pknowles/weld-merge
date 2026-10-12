@@ -123,6 +123,14 @@ interface GitApi {
 	toGitUri(uri: Uri, ref: string): Uri;
 }
 
+// A repository-relative file location, as agent tools address a conflict:
+// the repository's root URI (so multiple open repositories are unambiguous)
+// plus the file's path within it.
+interface ConflictLocation {
+	repositoryRoot: string;
+	path: string;
+}
+
 // Possibly-conflicted file or submodule
 interface ConflictedItem {
 	repository: GitApiRepository; // api, awkwardly grouped
@@ -604,6 +612,7 @@ function conflictedItemFromUri(uri: Uri): ConflictedItem | null {
 
 export type {
 	ConflictedItem,
+	ConflictLocation,
 	GitApiChange,
 	GitApiRepository,
 	GitConflictStage,
