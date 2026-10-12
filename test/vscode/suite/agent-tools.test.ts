@@ -402,11 +402,12 @@ describe("Agent Tools: Settings (VS Code host)", () => {
 		}
 	});
 
-	it("LM tool setting defaults to false", () => {
-		const enabled = workspace
-			.getConfiguration("weld")
-			.get<boolean>("agent.enable");
-		assert.equal(enabled, false);
+	it("LM tool setting defaults to enabled", () => {
+		const extension = extensions.getExtension("pknowles.meld-auto-merge");
+		assert.ok(extension, "expected Weld extension to be installed");
+		const configuration = extension.packageJSON.contributes.configuration
+			.properties as Record<string, { default?: boolean }>;
+		assert.equal(configuration["weld.agent.enable"]?.default, true);
 	});
 });
 

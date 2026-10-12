@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.0.14] - 2026-10-11 (pre-release)
+
+### Added
+- **AI Merge-Resolution Tools (pre-release)**: Weld Merge now exposes VS Code Language Model Tools for discovering conflicts, inspecting compact diff3-style conflict context, applying Weld's deterministic auto-merge, and staging files only after verifying no conflict markers remain. The tools are enabled by default through `weld.agent.enable`.
+- **Agent Guidance**: Added the `resolve-merge-conflicts` chat skill and a formal tool-response schema so supporting agents can use the tools consistently.
+- **Coverage Pipeline**: Added unified Jest, VS Code-host, restored-tab, and browser-webview coverage collection, with checked-in thresholds and higher-value command/tree-view coverage.
+
+### Changed
+- **Auto-Merge Safety**: Auto-merge now distinguishes document and disk targets, classifies mergeable text conflicts before operating, and refuses to overwrite changed content unless explicitly forced.
+- **Conflict Marker Validation**: The UI and agent tools share one marker/sentinel detector before a resolved file is staged.
+
 ## [0.0.13] - 2026-08-30
 
 ### Fixed

@@ -220,7 +220,7 @@
 		},
 		"chatSkills": [
 			{
-				"path": "./skills/resolve-merge-conflicts",
+				"path": "./skills/resolve-merge-conflicts/SKILL.md",
 				"when": "config.weld.agent.enable"
 			}
 		],
